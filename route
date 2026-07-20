@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# Roteador local de modelos: o Plano-Orchestrator-4B (Katanemo, base Qwen3-4B)
-# classifica cada prompt e abre a CLI interativa do modelo escolhido numa janela
-# do Ghostty. O classificador roda local no Ollama. Escolhido por benchmark no
-# M2 Pro (192 prompts): 92% de acuracia, acima de Mellum2-12B e Arch-Router-1.5B.
+# Roteador local de modelos: um classificador local (definido em config.json; por
+# padrao o Plano-Orchestrator-4B rodando no Ollama) decide qual modelo deve atender
+# cada prompt e abre a CLI interativa dele numa janela do Ghostty.
+#
+# Toda a config (modelo, endpoint, rotas, criterios, mapeamento CLI, parametros)
+# vive no config.json ao lado deste script. Editar rotas nao exige tocar no codigo.
 #
 # Uso:
 #   route "prompt"          # dry-run: so mostra a rota escolhida
 #   route --run "prompt"    # decide E abre a CLI interativa no Ghostty
 #
-# Requer: modelo baixado no Ollama:
+# Requer: modelo do config baixado no Ollama (ex.):
 #   ollama pull hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M
 set -euo pipefail
 
@@ -17,15 +19,21 @@ if [[ "${1:-}" == "--run" ]]; then RUN=true; shift; fi
 PROMPT="${1:-}"
 [[ -z "$PROMPT" ]] && { echo "uso: $0 [--run] \"prompt\""; exit 1; }
 
-MODEL="hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M"
-DEFAULT_ROUTE="glm"      # fallback p/ lista vazia: no benchmark, os 'none' do Plano eram tarefas glm (mecanicas)
+# config.json ao lado do script (resolve mesmo chamado via PATH de outro diretorio).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG="$SCRIPT_DIR/config.json"
+[[ -f "$CONFIG" ]] || { echo "erro: config nao encontrado em $CONFIG" >&2; exit 3; }
+jq empty "$CONFIG" 2>/dev/null || { echo "erro: config.json invalido ($CONFIG)" >&2; exit 3; }
 
-# Politica: mesmas 4 rotas/descricoes do router-system-v2.txt, no formato do Plano
-# (uma rota por linha, cada uma um objeto JSON {name, description}).
-ROUTES='{"name":"claude","description":"deep reasoning, software architecture, large refactors, critical analysis/review, high-quality writing, high-stakes decisions requiring judgment"}
-{"name":"codex","description":"hands-on coding, writing or editing concrete code, scripts, agentic multi-step engineering, autonomous execution"}
-{"name":"minimax","description":"open-ended general tasks and long-form drafts/summaries of non-trivial prose where some nuance helps; needs judgment, synthesis or nuanced prose"}
-{"name":"glm","description":"simple high-volume low-cost mechanical tasks: classification, data extraction, translation, multilingual, simple list generation; deterministic/bulk"}'
+MODEL=$(jq -r '.model' "$CONFIG")
+ENDPOINT=$(jq -r '.endpoint // "http://localhost:11434/api/chat"' "$CONFIG")
+DEFAULT_ROUTE=$(jq -r '.default_route // "glm"' "$CONFIG")
+
+# Rotas no formato do Plano (uma linha por rota: {name, description}).
+ROUTES=$(jq -c '.routes[] | {name, description}' "$CONFIG")
+# Opcoes de geracao e schema restrito (enum com os nomes das rotas do config).
+OPTS=$(jq -c '.options // {temperature:0, num_predict:32}' "$CONFIG")
+SCHEMA=$(jq -c '{type:"object",properties:{route:{type:"array",items:{type:"string",enum:[.routes[].name]}}},required:["route"]}' "$CONFIG")
 
 # Conversa no formato esperado pelo Plano.
 CONV=$(jq -n --arg p "$PROMPT" '[{role:"user",content:$p}]')
@@ -56,30 +64,23 @@ If no routes are needed, return an empty list for route.
 EOF
 PLANO_PROMPT=$(printf "$TMPL" "$ROUTES" "$CONV")
 
-# Schema restrito: forca a saida a {"route":[...]} com valores so das 4 rotas.
-# Corta o decode (saida curta e deterministica) e impede rota invalida. num_predict baixo idem.
-SCHEMA='{"type":"object","properties":{"route":{"type":"array","items":{"type":"string","enum":["claude","codex","minimax","glm"]}}},"required":["route"]}'
-# Chama o Plano via /api/chat. think:false (o Qwen3 poe a resposta em thinking se ligado).
-BODY=$(jq -n --arg m "$MODEL" --arg c "$PLANO_PROMPT" --argjson schema "$SCHEMA" \
-  '{model:$m, messages:[{role:"user",content:$c}], stream:false, format:$schema, think:false, options:{temperature:0, num_predict:32}}')
-RESP=$(curl -s http://localhost:11434/api/chat -d "$BODY")
+# Chama o modelo. think:false (o Qwen3 poe a resposta em thinking se ligado).
+BODY=$(jq -n --arg m "$MODEL" --arg c "$PLANO_PROMPT" --argjson schema "$SCHEMA" --argjson opts "$OPTS" \
+  '{model:$m, messages:[{role:"user",content:$c}], stream:false, format:$schema, think:false, options:$opts}')
+RESP=$(curl -s "$ENDPOINT" -d "$BODY")
 
 # route[] pode trazer mais de uma (multi-intent); usamos a primeira.
 ROUTE=$(echo "$RESP" | jq -r '.message.content | fromjson | .route[0] // empty' 2>/dev/null || true)
 EXTRA=$(echo "$RESP" | jq -r '.message.content | fromjson | .route[1:] | join(", ")' 2>/dev/null || true)
 
 if [[ -z "$ROUTE" ]]; then
-  echo "aviso: Plano devolveu lista vazia; usando fallback '$DEFAULT_ROUTE'" >&2
+  echo "aviso: modelo devolveu lista vazia; usando fallback '$DEFAULT_ROUTE'" >&2
   ROUTE="$DEFAULT_ROUTE"
 fi
 
-case "$ROUTE" in
-  claude)  CLI="cld" ;;
-  codex)   CLI="cdx" ;;
-  minimax) CLI="m3"  ;;
-  glm)     CLI="glm" ;;
-  *) echo "rota invalida: '$ROUTE' (resposta: $RESP)"; exit 2 ;;
-esac
+# Mapeia rota -> alias da CLI (campo 'cli' no config).
+CLI=$(jq -r --arg r "$ROUTE" '.routes[] | select(.name==$r) | .cli' "$CONFIG")
+[[ -z "$CLI" ]] && { echo "rota invalida: '$ROUTE' (resposta: $RESP)" >&2; exit 2; }
 
 echo "rota:     $ROUTE  ->  $CLI"
 [[ -n "$EXTRA" ]] && echo "tambem:   $EXTRA"

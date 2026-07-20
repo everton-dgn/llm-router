@@ -36,9 +36,10 @@ Mapeamento (rótulo do classificador → alias do `~/.zshrc`):
 | `minimax` | `m3`  | Claude Code + MiniMax-M3  |
 | `glm`     | `glm` | Claude Code + GLM-5.2     |
 
-Para trocar o alias de um rótulo, edite o `case` dentro do `route`. Para ajustar os
-critérios de roteamento, edite as descrições das rotas na variável `ROUTES`. Se o modelo
-não escolher nenhuma rota, o fallback é `glm` (no benchmark, as abstenções eram tarefas
+Tudo isso é configurável no `config.json` ao lado do `route`: o modelo, o endpoint, as 4
+rotas (nome, descrição e alias da CLI), o fallback (`default_route`) e os parâmetros de
+geração (`options`). Editar rotas ou critérios não exige tocar no script. Se o modelo não
+escolher nenhuma rota, usa-se o `default_route` (no benchmark, as abstenções eram tarefas
 mecânicas).
 
 ## Por que o Plano-Orchestrator-4B

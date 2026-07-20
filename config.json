@@ -1,0 +1,28 @@
+{
+  "model": "hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M",
+  "endpoint": "http://localhost:11434/api/chat",
+  "default_route": "glm",
+  "options": { "temperature": 0, "num_predict": 32 },
+  "routes": [
+    {
+      "name": "claude",
+      "cli": "cld",
+      "description": "deep reasoning, software architecture, large refactors, critical analysis/review, high-quality writing, high-stakes decisions requiring judgment"
+    },
+    {
+      "name": "codex",
+      "cli": "cdx",
+      "description": "hands-on coding, writing or editing concrete code, scripts, agentic multi-step engineering, autonomous execution"
+    },
+    {
+      "name": "minimax",
+      "cli": "m3",
+      "description": "open-ended general tasks and long-form drafts/summaries of non-trivial prose where some nuance helps; needs judgment, synthesis or nuanced prose"
+    },
+    {
+      "name": "glm",
+      "cli": "glm",
+      "description": "simple high-volume low-cost mechanical tasks: classification, data extraction, translation, multilingual, simple list generation; deterministic/bulk"
+    }
+  ]
+}
