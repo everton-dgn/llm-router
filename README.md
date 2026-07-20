@@ -4,13 +4,14 @@ Roteador local de modelos. Dado um prompt, um classificador local
 (Plano-Orchestrator-4B, baseado no Qwen3-4B e executado pelo Ollama) escolhe a
 rota inicial entre Claude, Codex, MiniMax e GLM.
 
-O comando tem três modos:
+O comando tem três modos de execução e um help:
 
 | Modo | Comportamento |
 |------|---------------|
 | padrão | Dry-run: mostra a rota escolhida e encerra |
 | `--run` | Abre a CLI interativa em uma janela do Ghostty |
 | `--auto` | Executa a tarefa em modo headless, verifica o resultado e escala quando necessário |
+| `help` ou `--help` | Mostra modos, rotas, cascade, verificadores, exemplos e requisitos |
 
 O dry-run e o `--run` mantêm o comportamento original. O cascade só é iniciado
 quando `--auto` é informado.
@@ -21,6 +22,7 @@ quando `--auto` é informado.
 route "otimiza essa query lenta"
 route --run "otimiza essa query lenta"
 route --auto "corrija o bug e valide a alteração"
+route --help
 ```
 
 No modo padrão, o comando apenas mostra a decisão. Com `--run`, ele carrega o
@@ -34,19 +36,25 @@ diagnóstico ou para desabilitar o gate com `null`.
 
 ## Como o roteamento funciona
 
-O `route` monta a política com as descrições de `routes`, chama o endpoint
-`/api/chat` do Ollama com `think:false` e restringe a resposta por JSON Schema
-aos nomes configurados. O classificador devolve `{"route": [...]}`; o primeiro
-item é usado. Uma lista vazia aciona `default_route`.
+O `route` envia ao Plano as intenções semânticas de `routing`, chama o endpoint
+`/api/chat` do Ollama com `think:false` e restringe a resposta por JSON Schema a
+exatamente uma intenção configurada. Depois, mapeia essa intenção ao executor
+real. Uma resposta vazia ou inválida encerra com erro, sem escolher um modelo por
+fallback.
 
-Mapeamento atual para o modo interativo:
+Mapeamento atual:
 
-| Rótulo | Alias | CLI aberta |
-|--------|-------|------------|
-| `claude` | `cld` | Claude Code com Opus |
-| `codex` | `cdx` | Codex CLI com `gpt-5.6-sol` |
-| `minimax` | `m3` | Claude Code com MiniMax-M3 |
-| `glm` | `glm` | Claude Code com GLM-5.2 |
+| Intenção | Rota | Alias | Executor | Uso principal |
+|----------|------|-------|----------|---------------|
+| `trivial_tasks` | `minimax` | `m3` | MiniMax M3 | Consultas simples, leitura, contagens, traduções e edições mecânicas |
+| `intermediate_engineering` | `glm` | `glm` | GLM 5.2 | Engenharia intermediária, scripts, debugging comum e mudanças contidas |
+| `complex_planning_only` | `claude` | `cld` | Claude Opus 4.8 com `xhigh` | Planejamento complexo e arquitetura sem implementação |
+| `hard_implementation_or_review` | `codex` | `cdx` | GPT 5.6 Sol com `xhigh` | Implementação difícil, debugging profundo, auditoria e code review |
+
+Os nomes das intenções descrevem a tarefa, não o fornecedor. Isso reduz a
+sobreposição semântica para o Plano-Orchestrator. Em pedidos mistos, a entrega
+final decide a rota: planejar e implementar segue para engenharia; code review e
+auditoria seguem para Codex.
 
 ## Cascade automático
 
@@ -71,9 +79,9 @@ workspace entre tentativas.
 As ladders atuais são:
 
 ```text
-glm     -> glm -> minimax -> claude
-minimax -> minimax -> claude
-codex   -> codex -> claude
+minimax -> minimax -> glm   -> glm
+glm     -> glm     -> codex -> codex
+codex   -> codex   -> claude -> claude
 claude  -> claude
 ```
 
@@ -94,7 +102,7 @@ Os comandos configurados são equivalentes a:
 # Claude worker
 claude --print --output-format json --no-session-persistence \
   --append-system-prompt-file "${HOME}/.claude/system-prompt/append.md" \
-  --dangerously-skip-permissions --model opus --effort xhigh
+  --dangerously-skip-permissions --model claude-opus-4-8 --effort xhigh
 
 # MiniMax worker, com o ambiente ANTHROPIC_* definido em config.json
 claude --print --output-format json --no-session-persistence \
@@ -226,9 +234,16 @@ route --auto --verifier null "gere cinco nomes para o projeto"
 
 Toda a configuração fica em `config.json` ao lado do `route`.
 
+Cada item de `routing` contém:
+
+- `intent`, o rótulo semântico enviado ao Plano-Orchestrator;
+- `route`, o executor associado à intenção;
+- `description`, os limites e capacidades usados na classificação;
+- `help`, a descrição curta exibida por `route --help`.
+
 Cada item de `routes` contém:
 
-- `name`, `cli` e `description`, usados pelo roteador e pelo modo interativo;
+- `name`, `cli` e `display_name`, usados na execução e no help;
 - `headless.env`, com valores literais ou referências `from_env`;
 - `headless.worker` e `headless.judge`, com `argv`, `output_format` e
   `timeout_seconds`.
@@ -308,9 +323,10 @@ três modelos):
 | Mellum2-12B-A2.5B     | 87,0% (167/192)  | ~862 ms          | 8,1 GB |
 | Arch-Router-1.5B      | 80,2% (154/192)  | ~594 ms          | 1,0 GB |
 
-O Plano venceu em acurácia com 3x menos RAM que o Mellum. Requer `think:false` (o Qwen3 põe
-a resposta no campo `thinking` por padrão) e o formato nativo `<routes>`, com saída em lista
-`{"route": [...]}`.
+O Plano venceu em acurácia com 3x menos RAM que o Mellum. Requer `think:false`
+(o Qwen3 põe a resposta no campo `thinking` por padrão) e o formato nativo
+`<routes>`. O JSON Schema exige uma lista com exatamente uma intenção:
+`{"route": ["intent_name"]}`.
 
 ## Requisitos
 
@@ -338,12 +354,15 @@ O repositório vive em `~/www/ai/llm-router`. Exponha o `route` no PATH:
 export PATH="$HOME/www/ai/llm-router:$PATH"
 ```
 
-## Smoke test
+## Testes
 
 ```bash
 bash tests/smoke.sh
+bash tests/routing-eval.sh
 ```
 
 O smoke usa executores falsos e uma configuração temporária. Ele valida o
 cascade sem chamar Ollama, Claude, Codex, MiniMax ou GLM e sem consumir
-créditos.
+créditos. O `routing-eval.sh` chama somente o classificador local no Ollama e
+exige pelo menos 95% de acerto na matriz de regressão. Essa matriz valida a
+política do projeto; ela não substitui um benchmark independente dos modelos.

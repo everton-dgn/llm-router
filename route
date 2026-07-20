@@ -15,10 +15,68 @@
 #   ollama pull hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG="$SCRIPT_DIR/config.json"
+[[ -f "$CONFIG" ]] || { echo "erro: config nao encontrado em $CONFIG" >&2; exit 3; }
+jq empty "$CONFIG" 2>/dev/null || { echo "erro: config.json invalido ($CONFIG)" >&2; exit 3; }
+
+show_help() {
+  local command_name
+  command_name="$(basename "$0")"
+
+  cat <<EOF
+Uso: $command_name [--run | --auto [--verifier nome]] "prompt"
+     $command_name help
+     $command_name --help
+
+Modos:
+  padrão      Classifica o prompt, mostra a rota escolhida e encerra.
+  --run       Classifica e abre a CLI interativa em uma janela do Ghostty.
+  --auto      Executa a tarefa sem interface, verifica e escala se necessário.
+  --verifier  Sobrescreve o verificador do modo --auto.
+
+Rotas:
+EOF
+  jq -r '
+    .routing[] as $routing
+    | .routes[]
+    | select(.name == $routing.route)
+    | "  \($routing.route): \(.display_name)\n    \($routing.help)"
+  ' "$CONFIG"
+  cat <<EOF
+
+Cascade automático:
+EOF
+  jq -r '.auto.ladders | to_entries[] | "  \(.key): \(.value | join(" -> "))"' "$CONFIG"
+  cat <<EOF
+  Cada rota pode repetir uma vez antes de escalar.
+
+Verificadores:
+EOF
+  jq -r '.auto.verifiers | keys[] | "  \(.)"' "$CONFIG"
+  cat <<EOF
+
+Exemplos:
+  $command_name "quantos arquivos tem este projeto?"
+  $command_name --run "adicione validação ao formulário"
+  $command_name --auto "corrija a race condition e valide os testes"
+  $command_name --auto --verifier null "gere cinco nomes para o projeto"
+
+Requisitos:
+  Ollama e o modelo classificador configurado; jq e curl no PATH.
+  --run também requer Ghostty e os aliases cld, cdx, m3 e glm.
+  --auto também requer uv, trash e as CLIs dos workers autenticadas.
+EOF
+}
+
 MODE="dry-run"
 VERIFIER=""
 
 case "${1:-}" in
+  -h|--help|help)
+    show_help
+    exit 0
+    ;;
   --run)
     MODE="run"
     shift
@@ -36,7 +94,8 @@ esac
 
 PROMPT="${1:-}"
 [[ -z "$PROMPT" ]] && {
-  echo "uso: $0 [--run | --auto [--verifier nome]] \"prompt\""
+  echo "uso: $(basename "$0") [--run | --auto [--verifier nome]] \"prompt\""
+  echo "use '$(basename "$0") --help' para ver todos os modos e rotas"
   exit 1
 }
 
@@ -45,50 +104,33 @@ if [[ "$MODE" == "auto" ]]; then
   command -v trash >/dev/null 2>&1 || { echo "erro: trash nao encontrado no PATH" >&2; exit 3; }
 fi
 
-# config.json ao lado do script (resolve mesmo chamado via PATH de outro diretorio).
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG="$SCRIPT_DIR/config.json"
-[[ -f "$CONFIG" ]] || { echo "erro: config nao encontrado em $CONFIG" >&2; exit 3; }
-jq empty "$CONFIG" 2>/dev/null || { echo "erro: config.json invalido ($CONFIG)" >&2; exit 3; }
-
 MODEL=$(jq -r '.model' "$CONFIG")
 ENDPOINT=$(jq -r '.endpoint // "http://localhost:11434/api/chat"' "$CONFIG")
-DEFAULT_ROUTE=$(jq -r '.default_route // "glm"' "$CONFIG")
 
-# Rotas no formato do Plano (uma linha por rota: {name, description}).
-ROUTES=$(jq -c '.routes[] | {name, description}' "$CONFIG")
-# Opcoes de geracao e schema restrito (enum com os nomes das rotas do config).
+# Intencoes no formato do Plano (uma linha por preferencia: {name, description}).
+ROUTES=$(jq -c '.routing[] | {name:.intent, description}' "$CONFIG")
+# Opcoes de geracao e schema restrito a exatamente uma intencao configurada.
 OPTS=$(jq -c '.options // {temperature:0, num_predict:32}' "$CONFIG")
-SCHEMA=$(jq -c '{type:"object",properties:{route:{type:"array",items:{type:"string",enum:[.routes[].name]}}},required:["route"]}' "$CONFIG")
+SCHEMA=$(jq -c '{type:"object",properties:{route:{type:"array",minItems:1,maxItems:1,items:{type:"string",enum:[.routing[].intent]}}},required:["route"],additionalProperties:false}' "$CONFIG")
 
 # Conversa no formato esperado pelo Plano.
 CONV=$(jq -n --arg p "$PROMPT" '[{role:"user",content:$p}]')
 
 # Prompt de orquestracao do Plano (formato nativo do model card). %s = routes, conversation.
 read -r -d '' TMPL <<'EOF' || true
-You are a helpful assistant that selects the most suitable routes based on user intent.
-You are provided with a list of available routes enclosed within <routes></routes> XML tags:
+You are a routing classifier. Select exactly one route for every user request.
 <routes>
 %s
 </routes>
-
-You are also given the conversation context enclosed within <conversation></conversation> XML tags:
 <conversation>
 %s
 </conversation>
-
-## Instructions
-1. Analyze the latest user intent from the conversation.
-2. Compare it against the available routes to find which routes can help fulfill the request.
-3. Respond only with the exact route names from <routes>.
-4. If no routes can help or the intent is already fulfilled, return an empty list.
-
-## Response Format
-Return your answer strictly in JSON as follows:
-{"route": ["route_name_1", "route_name_2", "..."]}
-If no routes are needed, return an empty list for route.
+Match the latest user intent to the single most specific route name and description.
+For mixed intents, route by the requested final deliverable. Planning followed by implementation is implementation, not planning-only. Code review and audit always use the review route.
+Always return one route. Never return an empty list.
+Return strict JSON only: {"route":["route_name"]}
 EOF
-# TMPL e um formato controlado com tres placeholders %s.
+# TMPL é um formato controlado com dois placeholders %s.
 # shellcheck disable=SC2059
 PLANO_PROMPT=$(printf "$TMPL" "$ROUTES" "$CONV")
 
@@ -97,21 +139,18 @@ BODY=$(jq -n --arg m "$MODEL" --arg c "$PLANO_PROMPT" --argjson schema "$SCHEMA"
   '{model:$m, messages:[{role:"user",content:$c}], stream:false, format:$schema, think:false, options:$opts}')
 RESP=$(curl -s "$ENDPOINT" -d "$BODY")
 
-# route[] pode trazer mais de uma (multi-intent); usamos a primeira.
-ROUTE=$(echo "$RESP" | jq -r '.message.content | fromjson | .route[0] // empty' 2>/dev/null || true)
-EXTRA=$(echo "$RESP" | jq -r '.message.content | fromjson | .route[1:] | join(", ")' 2>/dev/null || true)
+INTENT=$(echo "$RESP" | jq -r '.message.content | fromjson | .route[0] // empty' 2>/dev/null || true)
+[[ -n "$INTENT" ]] || { echo "erro: classificador não devolveu uma rota válida" >&2; exit 2; }
 
-if [[ -z "$ROUTE" ]]; then
-  echo "aviso: modelo devolveu lista vazia; usando fallback '$DEFAULT_ROUTE'" >&2
-  ROUTE="$DEFAULT_ROUTE"
-fi
+# Mapeia a intenção semântica para o executor real.
+ROUTE=$(jq -r --arg intent "$INTENT" '.routing[] | select(.intent == $intent) | .route' "$CONFIG")
+[[ -n "$ROUTE" ]] || { echo "erro: intenção desconhecida: '$INTENT'" >&2; exit 2; }
 
 # Mapeia rota -> alias da CLI (campo 'cli' no config).
 CLI=$(jq -r --arg r "$ROUTE" '.routes[] | select(.name==$r) | .cli' "$CONFIG")
 [[ -z "$CLI" ]] && { echo "rota invalida: '$ROUTE' (resposta: $RESP)" >&2; exit 2; }
 
 echo "rota:     $ROUTE  ->  $CLI"
-[[ -n "$EXTRA" ]] && echo "tambem:   $EXTRA"
 
 if [[ "$MODE" == "run" ]]; then
   echo "abrindo $CLI no Ghostty..."

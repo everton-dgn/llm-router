@@ -1,13 +1,38 @@
 {
   "model": "hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M",
   "endpoint": "http://localhost:11434/api/chat",
-  "default_route": "glm",
   "options": { "temperature": 0, "num_predict": 32 },
+  "routing": [
+    {
+      "intent": "trivial_tasks",
+      "route": "minimax",
+      "help": "tarefas triviais, consultas read-only, contagens, listas, traduções e edições mecânicas",
+      "description": "basic direct low-risk tasks with no meaningful software implementation: factual answers, read-only repository inspection, counting or listing files, short summaries, translation, classification, formatting, naming, typo fixes, and one purely mechanical local edit"
+    },
+    {
+      "intent": "intermediate_engineering",
+      "route": "glm",
+      "help": "engenharia intermediária, scripts, features contidas, debugging comum, testes, APIs e banco",
+      "description": "default route for moderately complex scoped software work with clear requirements: contained code changes, small scripts, standard features, lint or test fixes, ordinary debugging in one component, controller, job, or module, routine refactors, APIs, databases, UI behavior, and code explanation. Use this for debugging unless the request explicitly signals a hard cross-module, concurrency, intermittent, security, or repository-wide problem"
+    },
+    {
+      "intent": "complex_planning_only",
+      "route": "claude",
+      "help": "planejamento complexo sem implementação, arquitetura, ADRs, migrações e decisões estratégicas",
+      "description": "planning-only deliverables for complex systems before implementation: architecture, system design, migrations, decomposition, specifications, ambiguous requirements, strategic trade-offs, threat models, and high-stakes plans across services. Use only when the requested final deliverable is a plan, design, ADR, strategy, or architecture. Never use when code implementation, modification, debugging, or review is also requested"
+    },
+    {
+      "intent": "hard_implementation_or_review",
+      "route": "codex",
+      "help": "implementação difícil, debugging profundo, concorrência, auditoria e code review",
+      "description": "difficult software implementation and every code review or audit: work explicitly described as difficult, critical, multi-module, cross-module, repository-wide, or central; concurrency, races, deadlocks, intermittent memory leaks; security, performance, regression, line-level and pull-request review. Use for multi-part requests that include planning followed by difficult implementation"
+    }
+  ],
   "routes": [
     {
       "name": "claude",
       "cli": "cld",
-      "description": "deep reasoning, software architecture, large refactors, critical analysis/review, high-quality writing, high-stakes decisions requiring judgment",
+      "display_name": "Claude Opus 4.8 (xhigh)",
       "headless": {
         "env": {
           "CLAUDE_CONFIG_DIR": "${HOME}/.claude"
@@ -20,7 +45,7 @@
             "--no-session-persistence",
             "--append-system-prompt-file", "${HOME}/.claude/system-prompt/append.md",
             "--dangerously-skip-permissions",
-            "--model", "opus",
+            "--model", "claude-opus-4-8",
             "--effort", "xhigh"
           ],
           "output_format": "claude_json",
@@ -33,7 +58,7 @@
             "--output-format", "json",
             "--no-session-persistence",
             "--tools", "",
-            "--model", "opus",
+            "--model", "claude-opus-4-8",
             "--effort", "xhigh"
           ],
           "output_format": "claude_json",
@@ -44,7 +69,7 @@
     {
       "name": "codex",
       "cli": "cdx",
-      "description": "hands-on coding, writing or editing concrete code, scripts, agentic multi-step engineering, autonomous execution",
+      "display_name": "GPT-5.6 Sol (xhigh)",
       "headless": {
         "env": {},
         "worker": {
@@ -88,7 +113,7 @@
     {
       "name": "minimax",
       "cli": "m3",
-      "description": "open-ended general tasks and long-form drafts/summaries of non-trivial prose where some nuance helps; needs judgment, synthesis or nuanced prose",
+      "display_name": "MiniMax M3",
       "headless": {
         "env": {
           "DISABLE_COMPACT": "1",
@@ -136,7 +161,7 @@
     {
       "name": "glm",
       "cli": "glm",
-      "description": "simple high-volume low-cost mechanical tasks: classification, data extraction, translation, multilingual, simple list generation; deterministic/bulk",
+      "display_name": "GLM 5.2",
       "headless": {
         "env": {
           "DISABLE_COMPACT": "1",
@@ -195,8 +220,8 @@
       "on": ["process_error", "timeout", "fail", "inconclusive"]
     },
     "ladders": {
-      "glm": ["glm", "minimax", "claude"],
-      "minimax": ["minimax", "claude"],
+      "glm": ["glm", "codex"],
+      "minimax": ["minimax", "glm"],
       "codex": ["codex", "claude"],
       "claude": ["claude"]
     },
