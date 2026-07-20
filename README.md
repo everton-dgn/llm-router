@@ -1,46 +1,301 @@
 # llm-router
 
-Roteador local de modelos. Dado um prompt, um classificador local (Plano-Orchestrator-4B,
-base Qwen3-4B, rodando no Ollama) decide qual modelo deve atender à tarefa e abre a CLI
-interativa dele numa janela nova do Ghostty, com o prompt já enviado, pronta para você
-interagir e aprovar permissões.
+Roteador local de modelos. Dado um prompt, um classificador local
+(Plano-Orchestrator-4B, baseado no Qwen3-4B e executado pelo Ollama) escolhe a
+rota inicial entre Claude, Codex, MiniMax e GLM.
 
-O classificador não executa a tarefa. Ele apenas escolhe a rota; quem faz o trabalho é a
-CLI do modelo escolhido, que abre para você trabalhar.
+O comando tem três modos:
+
+| Modo | Comportamento |
+|------|---------------|
+| padrão | Dry-run: mostra a rota escolhida e encerra |
+| `--run` | Abre a CLI interativa em uma janela do Ghostty |
+| `--auto` | Executa a tarefa em modo headless, verifica o resultado e escala quando necessário |
+
+O dry-run e o `--run` mantêm o comportamento original. O cascade só é iniciado
+quando `--auto` é informado.
 
 ## Uso
 
 ```bash
-route "otimiza essa query lenta"          # dry-run: só mostra a rota escolhida
-route --run "otimiza essa query lenta"     # abre a CLI do modelo numa janela do Ghostty
+route "otimiza essa query lenta"
+route --run "otimiza essa query lenta"
+route --auto "corrija o bug e valide a alteração"
 ```
 
-Sem `--run`, o comando apenas mostra a decisão e não abre nada. Com `--run`, abre a CLI
-interativa do modelo (via seus aliases do `~/.zshrc`) numa janela nova do Ghostty, com o
-prompt já enviado.
+No modo padrão, o comando apenas mostra a decisão. Com `--run`, ele carrega o
+alias correspondente do `~/.zshrc` e abre o Ghostty para uma sessão interativa.
 
-## Como funciona
+Com `--auto`, o `route` chama `auto_runner.py` pelo `uv`, no diretório em que o
+comando foi executado. Nenhuma janela é aberta e não há aprovação humana entre
+as tentativas. O perfil padrão `auto_select` escolhe sozinho entre gates
+determinísticos e o júri. `--verifier` existe como override avançado para
+diagnóstico ou para desabilitar o gate com `null`.
 
-O `route` monta a política de roteamento (4 rotas com descrição) no formato nativo do
-Plano-Orchestrator, chama o modelo via Ollama (`/api/chat`, com `think:false` e um schema
-JSON restrito às 4 rotas) e recebe de volta o rótulo da rota. O script mapeia esse rótulo
-para o alias da CLI correspondente e abre uma janela do Ghostty rodando `zsh -i` (para
-carregar os aliases) com a CLI e o prompt.
+## Como o roteamento funciona
 
-Mapeamento (rótulo do classificador → alias do `~/.zshrc`):
+O `route` monta a política com as descrições de `routes`, chama o endpoint
+`/api/chat` do Ollama com `think:false` e restringe a resposta por JSON Schema
+aos nomes configurados. O classificador devolve `{"route": [...]}`; o primeiro
+item é usado. Uma lista vazia aciona `default_route`.
 
-| Rótulo    | Alias | CLI aberta                |
-|-----------|-------|---------------------------|
-| `claude`  | `cld` | Claude Code (opus)        |
-| `codex`   | `cdx` | Codex CLI (gpt-5.6-sol)   |
-| `minimax` | `m3`  | Claude Code + MiniMax-M3  |
-| `glm`     | `glm` | Claude Code + GLM-5.2     |
+Mapeamento atual para o modo interativo:
 
-Tudo isso é configurável no `config.json` ao lado do `route`: o modelo, o endpoint, as 4
-rotas (nome, descrição e alias da CLI), o fallback (`default_route`) e os parâmetros de
-geração (`options`). Editar rotas ou critérios não exige tocar no script. Se o modelo não
-escolher nenhuma rota, usa-se o `default_route` (no benchmark, as abstenções eram tarefas
-mecânicas).
+| Rótulo | Alias | CLI aberta |
+|--------|-------|------------|
+| `claude` | `cld` | Claude Code com Opus |
+| `codex` | `cdx` | Codex CLI com `gpt-5.6-sol` |
+| `minimax` | `m3` | Claude Code com MiniMax-M3 |
+| `glm` | `glm` | Claude Code com GLM-5.2 |
+
+## Cascade automático
+
+Depois da classificação inicial, `--auto` segue este fluxo:
+
+1. Executa a rota escolhida como worker headless e captura stdout, stderr e
+   exit code.
+2. Detecta quais gates determinísticos se aplicam ao projeto e aos arquivos
+   alterados.
+3. Executa todos os gates selecionados. Sem gate aplicável, consulta o júri LLM.
+4. Se a tentativa reprovar, envia a saída anterior e o feedback ao próximo
+   worker. A política pode reamostrar uma vez na mesma rota antes de avançar na
+   ladder.
+5. Encerra ao obter aprovação ou atingir um teto de tentativas, sessões ou
+   tempo.
+
+A escalada reaproveita o resultado e as evidências da tentativa anterior. O
+modelo seguinte recebe instruções de reparo para corrigir o trabalho existente
+em vez de reiniciar a tarefa sem contexto. O runner não desfaz alterações do
+workspace entre tentativas.
+
+As ladders atuais são:
+
+```text
+glm     -> glm -> minimax -> claude
+minimax -> minimax -> claude
+codex   -> codex -> claude
+claude  -> claude
+```
+
+A repetição da mesma rota é controlada por `auto.retry_same_route`. Na
+configuração padrão, há no máximo uma repetição para `process_error`, `timeout`,
+`fail` ou verificação inconclusiva. Isso permite uma correção no mesmo modelo
+antes da escalada, inclusive quando um gate ou o júri reprova a tentativa.
+
+## Execução headless
+
+Cada rota declara comandos separados para worker e judge em
+`routes[].headless`. Os judges têm timeout menor e trabalham sem ferramentas ou
+com sandbox somente leitura. Os workers podem alterar o diretório da tarefa.
+
+Os comandos configurados são equivalentes a:
+
+```bash
+# Claude worker
+claude --print --output-format json --no-session-persistence \
+  --append-system-prompt-file "${HOME}/.claude/system-prompt/append.md" \
+  --dangerously-skip-permissions --model opus --effort xhigh
+
+# MiniMax worker, com o ambiente ANTHROPIC_* definido em config.json
+claude --print --output-format json --no-session-persistence \
+  --append-system-prompt-file "${HOME}/.claude/system-prompt/append.md" \
+  --dangerously-skip-permissions --model MiniMax-M3
+
+# GLM worker, com o ambiente ANTHROPIC_* definido em config.json
+claude --print --output-format json --no-session-persistence \
+  --append-system-prompt-file "${HOME}/.claude/system-prompt/append.md" \
+  --dangerously-skip-permissions --model glm-5.2
+
+# Codex worker; o prompt entra por stdin
+codex --ask-for-approval never exec --json --ephemeral \
+  --output-last-message "{output_file}" \
+  --model gpt-5.6-sol \
+  --config model_reasoning_effort=xhigh \
+  --config features.apps=false \
+  --sandbox workspace-write \
+  --cd "{cwd}" -
+```
+
+O runner monta `argv` diretamente, sem interpolar o prompt em um shell. Os
+placeholders `{cwd}`, `{project_root}` e `{output_file}` são preenchidos durante
+a execução.
+Variáveis sensíveis usam referências como `{"from_env":"MINIMAX_API_KEY"}`;
+o valor não fica gravado no repositório.
+
+## Verificação
+
+### Seleção automática
+
+`auto_select` é o verificador padrão. Antes da primeira tentativa, ele registra
+o `HEAD` e o hash dos arquivos que já estavam sujos. Depois do worker, compara o
+novo estado com esse baseline e avalia somente arquivos modificados durante a
+execução. Alterações preexistentes não acionam gates. O delta é comparado com as
+regras de `auto.verifiers.auto_select.rules`; o prompt não decide qual teste será
+usado.
+
+As regras incluídas são:
+
+| Regra | Condições principais | Gate |
+|-------|----------------------|------|
+| `llm-router-smoke` | Arquivos deste roteador alterados | `bash tests/smoke.sh` |
+| `pnpm-tests` | `package.json`, lockfile, `node_modules`, script `test` e JS/TS alterado | `pnpm test` |
+| `python-pytest` | Config Python, `tests`, `.venv` e código ou configuração Python alterada | `uv run --no-sync pytest` |
+| `rust-tests` | `Cargo.toml` e Rust alterado | `cargo test` |
+| `go-tests` | `go.mod` e Go alterado | `go test ./...` |
+
+Se duas stacks forem alteradas, os dois gates são executados. Se nenhuma regra
+for aplicável, o runner chama o júri. Diretórios fora de um repositório Git
+também seguem para o júri, pois não há diff confiável para selecionar testes.
+
+O uso normal não exige escolher um verificador:
+
+```bash
+route --auto "corrija o bug e valide a alteração"
+```
+
+### Gates determinísticos
+
+Há dois tipos de gate:
+
+- `command`: executa `argv` no diretório da tarefa. Exit code `0` aprova, códigos
+  listados em `error_exit_codes` indicam erro de infraestrutura e os demais
+  reprovam. `timeout_seconds`, `cwd` e `env` são opcionais.
+- `jq`: executa o `filter` sobre `source`, que pode ser o JSON de `output` ou o
+  texto bruto de `evidence`. Exit code `0` aprova, `1` reprova e os demais
+  indicam erro.
+
+Todos os gates selecionados precisam passar. Uma reprovação objetiva encerra a
+verificação daquela tentativa. Falha ao iniciar um processo, timeout ou exit
+code listado em `error_exit_codes` segue `on_gate_error`, que aceita outro
+verificador, `pass`, `fail` ou `inconclusive`. Na configuração atual, o júri
+decide esses erros.
+
+Novas stacks são adicionadas como regras, sem mudar o comando usado no dia a
+dia. Exemplo reduzido:
+
+```json
+{
+  "name": "ruby-tests",
+  "match": {
+    "files_all": ["Gemfile"],
+    "changed_any": ["*.rb", "**/*.rb"],
+    "commands_all": ["bundle"]
+  },
+  "gates": [
+    {
+      "type": "command",
+      "argv": ["bundle", "exec", "rspec"],
+      "cwd": "{project_root}",
+      "timeout_seconds": 600
+    }
+  ]
+}
+```
+
+### Júri cego
+
+O perfil `jury` usa maioria preguiçosa com quórum de dois. Os thresholds atuais
+são `0.85` para Codex e Claude, e `0.80` para GLM:
+
+1. Codex e Claude julgam separadamente, sem saber qual worker produziu a saída
+   e sem ver o voto um do outro.
+2. Se os dois votos válidos concordarem, a decisão está formada e GLM não é
+   chamado.
+3. Em divergência ou abstenção, GLM emite o terceiro voto às cegas.
+4. Sem quórum, o árbitro decide com threshold próprio. A configuração prefere
+   Codex e evita usar a mesma rota do worker; Claude é o fallback.
+
+Cada judge devolve `pass`, `fail` ou `abstain`, acompanhado de confiança,
+falhas observadas e instruções de reparo. Um voto abaixo do `threshold` vira
+abstenção. Em uma reprovação, o feedback do Codex é preferido quando ele
+integra os votos de falha; caso contrário, o runner usa as falhas da maioria.
+
+Sessões de judge e árbitro entram nos tetos de custo do modo automático.
+
+### Verificador nulo
+
+O perfil `null` sempre aprova a primeira execução que terminar com sucesso. Ele
+é um escape explícito para diagnóstico ou para uma execução em que o usuário
+queira assumir o risco de pular toda verificação:
+
+```bash
+route --auto --verifier null "gere cinco nomes para o projeto"
+```
+
+## Configuração
+
+Toda a configuração fica em `config.json` ao lado do `route`.
+
+Cada item de `routes` contém:
+
+- `name`, `cli` e `description`, usados pelo roteador e pelo modo interativo;
+- `headless.env`, com valores literais ou referências `from_env`;
+- `headless.worker` e `headless.judge`, com `argv`, `output_format` e
+  `timeout_seconds`.
+
+Os formatos de saída aceitos são `text`, `claude_json` e
+`codex_last_message`. O bloco `auto` contém:
+
+| Chave | Função |
+|-------|--------|
+| `max_worker_attempts` | Teto de tentativas de worker |
+| `max_judge_sessions` | Teto de sessões de judge e árbitro |
+| `max_total_sessions` | Teto somado de workers e judges |
+| `max_total_seconds` | Deadline global do cascade |
+| `feedback_max_chars` | Limite do feedback repassado ao worker |
+| `evidence_max_chars` | Limite de evidências entregues ao júri |
+| `retry_same_route` | Quantidade e motivos de reamostragem |
+| `ladders` | Ordem de escalada para cada rota inicial |
+| `verifiers` | Seleção automática, gates, júri, `null` e perfis adicionais |
+| `default_verifier` | Perfil usado quando `--verifier` não é informado |
+| `log` | Caminho e política de conteúdo do JSONL |
+
+Todos esses valores são configuráveis. Rotas, thresholds, ladders e tetos vêm
+do `config.json`.
+
+## Limites e erros
+
+A configuração padrão permite quatro tentativas de worker, doze sessões de
+judge, dezesseis sessões no total e 1.800 segundos por execução completa. Cada
+worker tem timeout de 900 segundos e cada judge, 300 segundos.
+
+Executável ausente, variável de ambiente obrigatória ausente, exit code
+diferente de zero, timeout e saída inválida são tratados separadamente.
+Processos são iniciados em grupo; quando o timeout expira, o runner encerra o
+grupo. O exit code final é `0` para aprovação, `1` para reprovação, teto ou
+deadline esgotado, e `2` para erro de uso ou configuração.
+
+## Logs
+
+O modo automático grava eventos JSONL em `logs/auto.jsonl`, caminho resolvido a
+partir do diretório do `config.json`. A pasta `logs/` é criada na primeira
+execução e está no `.gitignore`.
+
+Os eventos são `run_started`, `route_selected`, `worker_finished`,
+`verifier_selected`, `gate_finished`, `judge_finished`, `verification_finished`
+e `run_finished`.
+Eles registram rota, tentativas, durações, escaladas e resultado final. Hash e
+tamanho do prompt e da saída são sempre gravados. O conteúdo integral só entra
+no log quando `include_prompt` ou `include_output` está habilitado; ambos são
+`false` por padrão.
+
+## Segurança e permissões
+
+`--auto` trabalha sem humano no loop. Na configuração atual, Claude, MiniMax e
+GLM usam `--dangerously-skip-permissions`, enquanto o worker Codex usa
+`workspace-write`. Judges não recebem ferramentas no Claude Code, e o Codex
+judge usa sandbox `read-only`.
+
+Antes de executar uma tarefa automática:
+
+- use uma branch de trabalho e confira `git status`;
+- trate comandos de gates como código confiável, pois eles são executados no
+  diretório da tarefa;
+- mantenha tokens somente nas variáveis `MINIMAX_API_KEY` e `ZAI_API_KEY`;
+- revise o diff e o JSONL depois da execução;
+- defina tetos menores para tarefas de alto risco.
+
+O runner não faz rollback e não isola o workspace em um container.
 
 ## Por que o Plano-Orchestrator-4B
 
@@ -49,9 +304,9 @@ três modelos):
 
 | Modelo                | Acurácia         | Latência mediana | RAM    |
 |-----------------------|------------------|------------------|--------|
-| Plano-Orchestrator-4B | 92.2% (177/192)  | ~843 ms          | 2.5 GB |
-| Mellum2-12B-A2.5B     | 87.0% (167/192)  | ~862 ms          | 8.1 GB |
-| Arch-Router-1.5B      | 80.2% (154/192)  | ~594 ms          | 1.0 GB |
+| Plano-Orchestrator-4B | 92,2% (177/192)  | ~843 ms          | 2,5 GB |
+| Mellum2-12B-A2.5B     | 87,0% (167/192)  | ~862 ms          | 8,1 GB |
+| Arch-Router-1.5B      | 80,2% (154/192)  | ~594 ms          | 1,0 GB |
 
 O Plano venceu em acurácia com 3x menos RAM que o Mellum. Requer `think:false` (o Qwen3 põe
 a resposta no campo `thinking` por padrão) e o formato nativo `<routes>`, com saída em lista
@@ -66,14 +321,29 @@ a resposta no campo `thinking` por padrão) e o formato nativo `<routes>`, com s
   ollama pull hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M
   ```
 
-- Ghostty instalado (a CLI abre numa janela nova).
-- Os aliases `cld`, `cdx`, `m3` e `glm` definidos no `~/.zshrc`.
 - `jq` e `curl` disponíveis no PATH.
+- `uv` com Python disponível para `--auto`.
+- `trash` para limpar arquivos temporários de saída sem exclusão permanente.
+- CLIs `claude` e `codex` autenticadas para `--auto`.
+- `MINIMAX_API_KEY` e `ZAI_API_KEY` definidas para usar essas rotas headless.
+- Ghostty e os aliases `cld`, `cdx`, `m3` e `glm` no `~/.zshrc` para `--run`.
+
+Ghostty e os aliases são usados somente por `--run`.
 
 ## Instalação
 
-O repositório vive em `~/www/ai/llm-router` e o `route` é exposto via PATH no `~/.zshrc`:
+O repositório vive em `~/www/ai/llm-router`. Exponha o `route` no PATH:
 
 ```bash
 export PATH="$HOME/www/ai/llm-router:$PATH"
 ```
+
+## Smoke test
+
+```bash
+bash tests/smoke.sh
+```
+
+O smoke usa executores falsos e uma configuração temporária. Ele valida o
+cascade sem chamar Ollama, Claude, Codex, MiniMax ou GLM e sem consumir
+créditos.
