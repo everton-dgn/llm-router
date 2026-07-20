@@ -7,22 +7,340 @@
     {
       "name": "claude",
       "cli": "cld",
-      "description": "deep reasoning, software architecture, large refactors, critical analysis/review, high-quality writing, high-stakes decisions requiring judgment"
+      "description": "deep reasoning, software architecture, large refactors, critical analysis/review, high-quality writing, high-stakes decisions requiring judgment",
+      "headless": {
+        "env": {
+          "CLAUDE_CONFIG_DIR": "${HOME}/.claude"
+        },
+        "worker": {
+          "argv": [
+            "claude",
+            "--print",
+            "--output-format", "json",
+            "--no-session-persistence",
+            "--append-system-prompt-file", "${HOME}/.claude/system-prompt/append.md",
+            "--dangerously-skip-permissions",
+            "--model", "opus",
+            "--effort", "xhigh"
+          ],
+          "output_format": "claude_json",
+          "timeout_seconds": 900
+        },
+        "judge": {
+          "argv": [
+            "claude",
+            "--print",
+            "--output-format", "json",
+            "--no-session-persistence",
+            "--tools", "",
+            "--model", "opus",
+            "--effort", "xhigh"
+          ],
+          "output_format": "claude_json",
+          "timeout_seconds": 300
+        }
+      }
     },
     {
       "name": "codex",
       "cli": "cdx",
-      "description": "hands-on coding, writing or editing concrete code, scripts, agentic multi-step engineering, autonomous execution"
+      "description": "hands-on coding, writing or editing concrete code, scripts, agentic multi-step engineering, autonomous execution",
+      "headless": {
+        "env": {},
+        "worker": {
+          "argv": [
+            "codex",
+            "--ask-for-approval", "never",
+            "exec",
+            "--json",
+            "--ephemeral",
+            "--output-last-message", "{output_file}",
+            "--model", "gpt-5.6-sol",
+            "--config", "model_reasoning_effort=xhigh",
+            "--config", "features.apps=false",
+            "--sandbox", "workspace-write",
+            "--cd", "{cwd}",
+            "-"
+          ],
+          "output_format": "codex_last_message",
+          "timeout_seconds": 900
+        },
+        "judge": {
+          "argv": [
+            "codex",
+            "--ask-for-approval", "never",
+            "exec",
+            "--json",
+            "--ephemeral",
+            "--output-last-message", "{output_file}",
+            "--model", "gpt-5.6-sol",
+            "--config", "model_reasoning_effort=xhigh",
+            "--config", "features.apps=false",
+            "--sandbox", "read-only",
+            "--cd", "{cwd}",
+            "-"
+          ],
+          "output_format": "codex_last_message",
+          "timeout_seconds": 300
+        }
+      }
     },
     {
       "name": "minimax",
       "cli": "m3",
-      "description": "open-ended general tasks and long-form drafts/summaries of non-trivial prose where some nuance helps; needs judgment, synthesis or nuanced prose"
+      "description": "open-ended general tasks and long-form drafts/summaries of non-trivial prose where some nuance helps; needs judgment, synthesis or nuanced prose",
+      "headless": {
+        "env": {
+          "DISABLE_COMPACT": "1",
+          "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1000000",
+          "ANTHROPIC_BASE_URL": "https://api.minimax.io/anthropic",
+          "ANTHROPIC_AUTH_TOKEN": { "from_env": "MINIMAX_API_KEY" },
+          "ANTHROPIC_API_KEY": "",
+          "API_TIMEOUT_MS": "3000000",
+          "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+          "ANTHROPIC_DEFAULT_OPUS_MODEL": "MiniMax-M3",
+          "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M3",
+          "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M3",
+          "ANTHROPIC_MODEL": "MiniMax-M3",
+          "ANTHROPIC_SMALL_FAST_MODEL": "MiniMax-M3",
+          "CLAUDE_CODE_SUBAGENT_MODEL": "MiniMax-M3",
+          "CLAUDE_CONFIG_DIR": "${HOME}/.claude-openrouter"
+        },
+        "worker": {
+          "argv": [
+            "claude",
+            "--print",
+            "--output-format", "json",
+            "--no-session-persistence",
+            "--append-system-prompt-file", "${HOME}/.claude/system-prompt/append.md",
+            "--dangerously-skip-permissions",
+            "--model", "MiniMax-M3"
+          ],
+          "output_format": "claude_json",
+          "timeout_seconds": 900
+        },
+        "judge": {
+          "argv": [
+            "claude",
+            "--print",
+            "--output-format", "json",
+            "--no-session-persistence",
+            "--tools", "",
+            "--model", "MiniMax-M3"
+          ],
+          "output_format": "claude_json",
+          "timeout_seconds": 300
+        }
+      }
     },
     {
       "name": "glm",
       "cli": "glm",
-      "description": "simple high-volume low-cost mechanical tasks: classification, data extraction, translation, multilingual, simple list generation; deterministic/bulk"
+      "description": "simple high-volume low-cost mechanical tasks: classification, data extraction, translation, multilingual, simple list generation; deterministic/bulk",
+      "headless": {
+        "env": {
+          "DISABLE_COMPACT": "1",
+          "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1000000",
+          "ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic",
+          "ANTHROPIC_AUTH_TOKEN": { "from_env": "ZAI_API_KEY" },
+          "ANTHROPIC_API_KEY": "",
+          "API_TIMEOUT_MS": "3000000",
+          "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+          "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5.2",
+          "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.2",
+          "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-4.7",
+          "ANTHROPIC_MODEL": "glm-5.2",
+          "ANTHROPIC_SMALL_FAST_MODEL": "glm-4.7",
+          "CLAUDE_CODE_SUBAGENT_MODEL": "glm-5.2",
+          "CLAUDE_CONFIG_DIR": "${HOME}/.claude-openrouter"
+        },
+        "worker": {
+          "argv": [
+            "claude",
+            "--print",
+            "--output-format", "json",
+            "--no-session-persistence",
+            "--append-system-prompt-file", "${HOME}/.claude/system-prompt/append.md",
+            "--dangerously-skip-permissions",
+            "--model", "glm-5.2"
+          ],
+          "output_format": "claude_json",
+          "timeout_seconds": 900
+        },
+        "judge": {
+          "argv": [
+            "claude",
+            "--print",
+            "--output-format", "json",
+            "--no-session-persistence",
+            "--tools", "",
+            "--model", "glm-5.2"
+          ],
+          "output_format": "claude_json",
+          "timeout_seconds": 300
+        }
+      }
     }
-  ]
+  ],
+  "auto": {
+    "max_worker_attempts": 4,
+    "max_judge_sessions": 12,
+    "max_total_sessions": 16,
+    "max_total_seconds": 1800,
+    "feedback_max_chars": 20000,
+    "evidence_max_chars": 30000,
+    "default_verifier": "auto_select",
+    "retry_same_route": {
+      "max_retries": 1,
+      "on": ["process_error", "timeout", "fail", "inconclusive"]
+    },
+    "ladders": {
+      "glm": ["glm", "minimax", "claude"],
+      "minimax": ["minimax", "claude"],
+      "codex": ["codex", "claude"],
+      "claude": ["claude"]
+    },
+    "verifiers": {
+      "auto_select": {
+        "type": "auto_select",
+        "evaluation": "all_matches",
+        "rules": [
+          {
+            "name": "llm-router-smoke",
+            "match": {
+              "files_all": ["route", "auto_runner.py", "config.json", "tests/smoke.sh"],
+              "changed_any": ["route", "auto_runner.py", "config.json", "tests/smoke.sh"],
+              "commands_all": ["bash"]
+            },
+            "gates": [
+              {
+                "type": "command",
+                "argv": ["bash", "tests/smoke.sh"],
+                "cwd": "{project_root}",
+                "timeout_seconds": 180
+              }
+            ]
+          },
+          {
+            "name": "pnpm-tests",
+            "match": {
+              "files_all": ["package.json", "pnpm-lock.yaml", "node_modules"],
+              "changed_any": [
+                "package.json", "pnpm-lock.yaml",
+                "*.js", "*.jsx", "*.mjs", "*.cjs", "*.ts", "*.tsx", "*.vue", "*.svelte",
+                "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.tsx",
+                "**/*.vue", "**/*.svelte"
+              ],
+              "commands_all": ["pnpm"],
+              "json_keys_all": [
+                { "path": "package.json", "keys": ["scripts.test"] }
+              ]
+            },
+            "gates": [
+              {
+                "type": "command",
+                "argv": ["pnpm", "test"],
+                "cwd": "{project_root}",
+                "env": { "CI": "1" },
+                "timeout_seconds": 600
+              }
+            ]
+          },
+          {
+            "name": "python-pytest",
+            "match": {
+              "files_all": ["tests", ".venv"],
+              "files_any": ["pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"],
+              "changed_any": [
+                "pyproject.toml", "uv.lock", "pytest.ini", "setup.cfg", "tox.ini",
+                "requirements*.txt", "*.py", "**/*.py"
+              ],
+              "commands_all": ["uv"]
+            },
+            "gates": [
+              {
+                "type": "command",
+                "argv": ["uv", "run", "--no-sync", "pytest"],
+                "cwd": "{project_root}",
+                "env": { "CI": "1" },
+                "error_exit_codes": [2, 3, 4, 5],
+                "timeout_seconds": 600
+              }
+            ]
+          },
+          {
+            "name": "rust-tests",
+            "match": {
+              "files_all": ["Cargo.toml"],
+              "changed_any": ["Cargo.toml", "Cargo.lock", "*.rs", "**/*.rs"],
+              "commands_all": ["cargo"]
+            },
+            "gates": [
+              {
+                "type": "command",
+                "argv": ["cargo", "test"],
+                "cwd": "{project_root}",
+                "env": { "CI": "1" },
+                "timeout_seconds": 600
+              }
+            ]
+          },
+          {
+            "name": "go-tests",
+            "match": {
+              "files_all": ["go.mod"],
+              "changed_any": ["go.mod", "go.sum", "*.go", "**/*.go"],
+              "commands_all": ["go"]
+            },
+            "gates": [
+              {
+                "type": "command",
+                "argv": ["go", "test", "./..."],
+                "cwd": "{project_root}",
+                "env": { "CI": "1" },
+                "timeout_seconds": 600
+              }
+            ]
+          }
+        ],
+        "fallback": "jury",
+        "on_gate_error": "jury"
+      },
+      "layered": {
+        "type": "layered",
+        "gates": [],
+        "fallback": "jury",
+        "on_gate_error": "jury"
+      },
+      "jury": {
+        "type": "llm_jury",
+        "blind": true,
+        "evaluation": "lazy_majority",
+        "quorum": 2,
+        "judges": [
+          { "route": "codex", "threshold": 0.85 },
+          { "route": "claude", "threshold": 0.85 },
+          { "route": "glm", "threshold": 0.80 }
+        ],
+        "arbiter": {
+          "preferred_route": "codex",
+          "avoid_worker_route": true,
+          "fallback_route": "claude",
+          "threshold": 0.85
+        },
+        "feedback": {
+          "preferred_route": "codex",
+          "fallback": "majority_failures"
+        }
+      },
+      "null": {
+        "type": "null"
+      }
+    },
+    "log": {
+      "path": "logs/auto.jsonl",
+      "include_prompt": false,
+      "include_output": false
+    }
+  }
 }

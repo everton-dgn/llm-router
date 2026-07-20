@@ -9,15 +9,41 @@
 # Uso:
 #   route "prompt"          # dry-run: so mostra a rota escolhida
 #   route --run "prompt"    # decide E abre a CLI interativa no Ghostty
+#   route --auto "prompt"   # executa, verifica e escala sem interface grafica
 #
 # Requer: modelo do config baixado no Ollama (ex.):
 #   ollama pull hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M
 set -euo pipefail
 
-RUN=false
-if [[ "${1:-}" == "--run" ]]; then RUN=true; shift; fi
+MODE="dry-run"
+VERIFIER=""
+
+case "${1:-}" in
+  --run)
+    MODE="run"
+    shift
+    ;;
+  --auto)
+    MODE="auto"
+    shift
+    if [[ "${1:-}" == "--verifier" ]]; then
+      [[ -n "${2:-}" ]] || { echo "erro: --verifier exige um nome" >&2; exit 1; }
+      VERIFIER="$2"
+      shift 2
+    fi
+    ;;
+esac
+
 PROMPT="${1:-}"
-[[ -z "$PROMPT" ]] && { echo "uso: $0 [--run] \"prompt\""; exit 1; }
+[[ -z "$PROMPT" ]] && {
+  echo "uso: $0 [--run | --auto [--verifier nome]] \"prompt\""
+  exit 1
+}
+
+if [[ "$MODE" == "auto" ]]; then
+  command -v uv >/dev/null 2>&1 || { echo "erro: uv nao encontrado no PATH" >&2; exit 3; }
+  command -v trash >/dev/null 2>&1 || { echo "erro: trash nao encontrado no PATH" >&2; exit 3; }
+fi
 
 # config.json ao lado do script (resolve mesmo chamado via PATH de outro diretorio).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -62,6 +88,8 @@ Return your answer strictly in JSON as follows:
 {"route": ["route_name_1", "route_name_2", "..."]}
 If no routes are needed, return an empty list for route.
 EOF
+# TMPL e um formato controlado com tres placeholders %s.
+# shellcheck disable=SC2059
 PLANO_PROMPT=$(printf "$TMPL" "$ROUTES" "$CONV")
 
 # Chama o modelo. think:false (o Qwen3 poe a resposta em thinking se ligado).
@@ -85,9 +113,18 @@ CLI=$(jq -r --arg r "$ROUTE" '.routes[] | select(.name==$r) | .cli' "$CONFIG")
 echo "rota:     $ROUTE  ->  $CLI"
 [[ -n "$EXTRA" ]] && echo "tambem:   $EXTRA"
 
-if $RUN; then
+if [[ "$MODE" == "run" ]]; then
   echo "abrindo $CLI no Ghostty..."
   open -na Ghostty --args -e zsh -ic "${CLI} $(printf '%q' "$PROMPT")"
+elif [[ "$MODE" == "auto" ]]; then
+  AUTO_ARGS=(
+    --config "$CONFIG"
+    --route "$ROUTE"
+    --prompt "$PROMPT"
+    --cwd "$PWD"
+  )
+  [[ -n "$VERIFIER" ]] && AUTO_ARGS+=(--verifier "$VERIFIER")
+  exec uv run --no-project --no-python-downloads python "$SCRIPT_DIR/auto_runner.py" "${AUTO_ARGS[@]}"
 else
   echo "(dry-run; use --run para abrir a CLI)"
 fi
