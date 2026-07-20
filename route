@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Roteador local: Mellum 2 (Ollama) decide -> abre a CLI interativa do modelo.
+# Uso:
+#   route "prompt"          # dry-run: so mostra a rota escolhida
+#   route --run "prompt"    # decide E abre a CLI interativa numa janela do Ghostty
+set -euo pipefail
+
+RUN=false
+if [[ "${1:-}" == "--run" ]]; then RUN=true; shift; fi
+PROMPT="${1:-}"
+[[ -z "$PROMPT" ]] && { echo "uso: $0 [--run] \"prompt\""; exit 1; }
+
+# 1) Pergunta a rota ao Mellum via API do Ollama (saida JSON, sem streaming).
+DECISION=$(curl -s http://localhost:11434/api/generate -d "$(jq -n \
+  --arg m "mellum-router-v2" --arg p "$PROMPT" \
+  '{model:$m, prompt:$p, stream:false, format:"json"}')" | jq -r '.response')
+
+MODEL=$(echo "$DECISION" | jq -r '.model')
+REASON=$(echo "$DECISION" | jq -r '.reason // ""')
+
+# 2) Mapeia o rotulo do roteador -> alias da CLI interativa (definido no ~/.zshrc).
+case "$MODEL" in
+  claude)  CLI="cld" ;;   # Claude Code (opus)
+  codex)   CLI="cdx" ;;   # Codex CLI (gpt-5.6-sol)
+  minimax) CLI="m3"  ;;   # Claude Code + MiniMax-M3
+  glm)     CLI="glm" ;;   # Claude Code + GLM-5.2
+  *) echo "rota invalida: '$MODEL' (resposta: $DECISION)"; exit 2 ;;
+esac
+
+echo "rota:     $MODEL  ->  $CLI"
+echo "motivo:   $REASON"
+
+# 3) Abre a CLI interativa numa janela nova do Ghostty (so com --run).
+#    zsh -i carrega o ~/.zshrc para que os aliases (cld/cdx/m3/glm) existam.
+if $RUN; then
+  echo "abrindo $CLI no Ghostty..."
+  open -na Ghostty --args -e zsh -ic "${CLI} $(printf '%q' "$PROMPT")"
+else
+  echo "(dry-run; use --run para abrir a CLI)"
+fi
