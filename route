@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
-# Roteador local: Mellum 2 (Ollama) decide -> abre a CLI interativa do modelo.
+# Roteador local de modelos: o Plano-Orchestrator-4B (Katanemo, base Qwen3-4B)
+# classifica cada prompt e abre a CLI interativa do modelo escolhido numa janela
+# do Ghostty. O classificador roda local no Ollama. Escolhido por benchmark no
+# M2 Pro (192 prompts): 92% de acuracia, acima de Mellum2-12B e Arch-Router-1.5B.
+#
 # Uso:
 #   route "prompt"          # dry-run: so mostra a rota escolhida
-#   route --run "prompt"    # decide E abre a CLI interativa numa janela do Ghostty
+#   route --run "prompt"    # decide E abre a CLI interativa no Ghostty
+#
+# Requer: modelo baixado no Ollama:
+#   ollama pull hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M
 set -euo pipefail
 
 RUN=false
@@ -10,28 +17,73 @@ if [[ "${1:-}" == "--run" ]]; then RUN=true; shift; fi
 PROMPT="${1:-}"
 [[ -z "$PROMPT" ]] && { echo "uso: $0 [--run] \"prompt\""; exit 1; }
 
-# 1) Pergunta a rota ao Mellum via API do Ollama (saida JSON, sem streaming).
-DECISION=$(curl -s http://localhost:11434/api/generate -d "$(jq -n \
-  --arg m "mellum-router-v2" --arg p "$PROMPT" \
-  '{model:$m, prompt:$p, stream:false, format:"json"}')" | jq -r '.response')
+MODEL="hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M"
+DEFAULT_ROUTE="glm"      # fallback p/ lista vazia: no benchmark, os 'none' do Plano eram tarefas glm (mecanicas)
 
-MODEL=$(echo "$DECISION" | jq -r '.model')
-REASON=$(echo "$DECISION" | jq -r '.reason // ""')
+# Politica: mesmas 4 rotas/descricoes do router-system-v2.txt, no formato do Plano
+# (uma rota por linha, cada uma um objeto JSON {name, description}).
+ROUTES='{"name":"claude","description":"deep reasoning, software architecture, large refactors, critical analysis/review, high-quality writing, high-stakes decisions requiring judgment"}
+{"name":"codex","description":"hands-on coding, writing or editing concrete code, scripts, agentic multi-step engineering, autonomous execution"}
+{"name":"minimax","description":"open-ended general tasks and long-form drafts/summaries of non-trivial prose where some nuance helps; needs judgment, synthesis or nuanced prose"}
+{"name":"glm","description":"simple high-volume low-cost mechanical tasks: classification, data extraction, translation, multilingual, simple list generation; deterministic/bulk"}'
 
-# 2) Mapeia o rotulo do roteador -> alias da CLI interativa (definido no ~/.zshrc).
-case "$MODEL" in
-  claude)  CLI="cld" ;;   # Claude Code (opus)
-  codex)   CLI="cdx" ;;   # Codex CLI (gpt-5.6-sol)
-  minimax) CLI="m3"  ;;   # Claude Code + MiniMax-M3
-  glm)     CLI="glm" ;;   # Claude Code + GLM-5.2
-  *) echo "rota invalida: '$MODEL' (resposta: $DECISION)"; exit 2 ;;
+# Conversa no formato esperado pelo Plano.
+CONV=$(jq -n --arg p "$PROMPT" '[{role:"user",content:$p}]')
+
+# Prompt de orquestracao do Plano (formato nativo do model card). %s = routes, conversation.
+read -r -d '' TMPL <<'EOF' || true
+You are a helpful assistant that selects the most suitable routes based on user intent.
+You are provided with a list of available routes enclosed within <routes></routes> XML tags:
+<routes>
+%s
+</routes>
+
+You are also given the conversation context enclosed within <conversation></conversation> XML tags:
+<conversation>
+%s
+</conversation>
+
+## Instructions
+1. Analyze the latest user intent from the conversation.
+2. Compare it against the available routes to find which routes can help fulfill the request.
+3. Respond only with the exact route names from <routes>.
+4. If no routes can help or the intent is already fulfilled, return an empty list.
+
+## Response Format
+Return your answer strictly in JSON as follows:
+{"route": ["route_name_1", "route_name_2", "..."]}
+If no routes are needed, return an empty list for route.
+EOF
+PLANO_PROMPT=$(printf "$TMPL" "$ROUTES" "$CONV")
+
+# Schema restrito: forca a saida a {"route":[...]} com valores so das 4 rotas.
+# Corta o decode (saida curta e deterministica) e impede rota invalida. num_predict baixo idem.
+SCHEMA='{"type":"object","properties":{"route":{"type":"array","items":{"type":"string","enum":["claude","codex","minimax","glm"]}}},"required":["route"]}'
+# Chama o Plano via /api/chat. think:false (o Qwen3 poe a resposta em thinking se ligado).
+BODY=$(jq -n --arg m "$MODEL" --arg c "$PLANO_PROMPT" --argjson schema "$SCHEMA" \
+  '{model:$m, messages:[{role:"user",content:$c}], stream:false, format:$schema, think:false, options:{temperature:0, num_predict:32}}')
+RESP=$(curl -s http://localhost:11434/api/chat -d "$BODY")
+
+# route[] pode trazer mais de uma (multi-intent); usamos a primeira.
+ROUTE=$(echo "$RESP" | jq -r '.message.content | fromjson | .route[0] // empty' 2>/dev/null || true)
+EXTRA=$(echo "$RESP" | jq -r '.message.content | fromjson | .route[1:] | join(", ")' 2>/dev/null || true)
+
+if [[ -z "$ROUTE" ]]; then
+  echo "aviso: Plano devolveu lista vazia; usando fallback '$DEFAULT_ROUTE'" >&2
+  ROUTE="$DEFAULT_ROUTE"
+fi
+
+case "$ROUTE" in
+  claude)  CLI="cld" ;;
+  codex)   CLI="cdx" ;;
+  minimax) CLI="m3"  ;;
+  glm)     CLI="glm" ;;
+  *) echo "rota invalida: '$ROUTE' (resposta: $RESP)"; exit 2 ;;
 esac
 
-echo "rota:     $MODEL  ->  $CLI"
-echo "motivo:   $REASON"
+echo "rota:     $ROUTE  ->  $CLI"
+[[ -n "$EXTRA" ]] && echo "tambem:   $EXTRA"
 
-# 3) Abre a CLI interativa numa janela nova do Ghostty (so com --run).
-#    zsh -i carrega o ~/.zshrc para que os aliases (cld/cdx/m3/glm) existam.
 if $RUN; then
   echo "abrindo $CLI no Ghostty..."
   open -na Ghostty --args -e zsh -ic "${CLI} $(printf '%q' "$PROMPT")"

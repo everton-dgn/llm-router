@@ -1,12 +1,12 @@
-# mellum-router
+# llm-router
 
-Roteador local de modelos. Dado um prompt, o Mellum 2 (rodando no Ollama, no
-seu Mac) decide qual modelo deve atender à tarefa e abre a CLI interativa dele
-numa janela nova do Ghostty, com o prompt já enviado, pronta para você interagir
-e aprovar permissões.
+Roteador local de modelos. Dado um prompt, um classificador local (Plano-Orchestrator-4B,
+base Qwen3-4B, rodando no Ollama) decide qual modelo deve atender à tarefa e abre a CLI
+interativa dele numa janela nova do Ghostty, com o prompt já enviado, pronta para você
+interagir e aprovar permissões.
 
-O Mellum não executa a tarefa. Ele apenas classifica o prompt e escolhe a rota;
-quem faz o trabalho é a CLI do modelo escolhido, que abre para você trabalhar.
+O classificador não executa a tarefa. Ele apenas escolhe a rota; quem faz o trabalho é a
+CLI do modelo escolhido, que abre para você trabalhar.
 
 ## Uso
 
@@ -15,20 +15,19 @@ route "otimiza essa query lenta"          # dry-run: só mostra a rota escolhida
 route --run "otimiza essa query lenta"     # abre a CLI do modelo numa janela do Ghostty
 ```
 
-Sem `--run`, o comando apenas mostra a decisão e não abre nada. Com `--run`, abre
-a CLI interativa do modelo (via seus aliases do `~/.zshrc`) numa janela nova do
-Ghostty, com o prompt já enviado.
+Sem `--run`, o comando apenas mostra a decisão e não abre nada. Com `--run`, abre a CLI
+interativa do modelo (via seus aliases do `~/.zshrc`) numa janela nova do Ghostty, com o
+prompt já enviado.
 
 ## Como funciona
 
-O modelo `mellum-router-v2` (registrado no Ollama) carrega a política de
-roteamento gravada como system prompt. O `route` envia apenas o prompt do
-usuário; o Ollama injeta a política e o modelo responde com uma linha JSON
-`{"model": "..."}`. O script mapeia esse rótulo para o alias da CLI
-correspondente e abre uma janela do Ghostty rodando `zsh -i` (para carregar os
-aliases) com a CLI e o prompt.
+O `route` monta a política de roteamento (4 rotas com descrição) no formato nativo do
+Plano-Orchestrator, chama o modelo via Ollama (`/api/chat`, com `think:false` e um schema
+JSON restrito às 4 rotas) e recebe de volta o rótulo da rota. O script mapeia esse rótulo
+para o alias da CLI correspondente e abre uma janela do Ghostty rodando `zsh -i` (para
+carregar os aliases) com a CLI e o prompt.
 
-Mapeamento (rótulo do roteador → alias do `~/.zshrc`):
+Mapeamento (rótulo do classificador → alias do `~/.zshrc`):
 
 | Rótulo    | Alias | CLI aberta                |
 |-----------|-------|---------------------------|
@@ -37,59 +36,43 @@ Mapeamento (rótulo do roteador → alias do `~/.zshrc`):
 | `minimax` | `m3`  | Claude Code + MiniMax-M3  |
 | `glm`     | `glm` | Claude Code + GLM-5.2     |
 
-Para trocar o alias de um rótulo, edite o `case` dentro do `route`.
+Para trocar o alias de um rótulo, edite o `case` dentro do `route`. Para ajustar os
+critérios de roteamento, edite as descrições das rotas na variável `ROUTES`. Se o modelo
+não escolher nenhuma rota, o fallback é `glm` (no benchmark, as abstenções eram tarefas
+mecânicas).
 
-## Ajustar a política de roteamento
+## Por que o Plano-Orchestrator-4B
 
-As regras vivem no `Modelfile.router.v2`, na seção `SYSTEM`. Para mudar os
-critérios ou acrescentar exemplos:
+Escolhido por benchmark local (Mac mini M2 Pro, 192 prompts rotulados, mesma política nos
+três modelos):
 
-1. Edite o `Modelfile.router.v2`.
-2. Recrie o modelo no Ollama:
+| Modelo                | Acurácia         | Latência mediana | RAM    |
+|-----------------------|------------------|------------------|--------|
+| Plano-Orchestrator-4B | 92.2% (177/192)  | ~843 ms          | 2.5 GB |
+| Mellum2-12B-A2.5B     | 87.0% (167/192)  | ~862 ms          | 8.1 GB |
+| Arch-Router-1.5B      | 80.2% (154/192)  | ~594 ms          | 1.0 GB |
 
-   ```bash
-   ollama create mellum-router-v2 -f ~/mellum-router/Modelfile.router.v2
-   ```
-
-Os exemplos dentro do `SYSTEM` são a forma mais barata de melhorar a precisão:
-cada exemplo ensina onde fica a fronteira entre duas rotas parecidas.
-
-## Arquivos
-
-| Arquivo                 | O que é                                             |
-|-------------------------|-----------------------------------------------------|
-| `route`                 | o comando (roteia e abre a CLI do modelo)           |
-| `Modelfile.router.v2`   | a política de roteamento (recria o modelo no Ollama)|
-| `router-system-v2.txt`  | o system prompt em texto puro (referência)          |
+O Plano venceu em acurácia com 3x menos RAM que o Mellum. Requer `think:false` (o Qwen3 põe
+a resposta no campo `thinking` por padrão) e o formato nativo `<routes>`, com saída em lista
+`{"route": [...]}`.
 
 ## Requisitos
 
-- Ollama em execução (sobe sozinho no login, é app).
-- Modelo `mellum-router-v2` registrado no Ollama.
+- Ollama em execução.
+- Modelo do classificador baixado:
+
+  ```bash
+  ollama pull hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M
+  ```
+
 - Ghostty instalado (a CLI abre numa janela nova).
 - Os aliases `cld`, `cdx`, `m3` e `glm` definidos no `~/.zshrc`.
 - `jq` e `curl` disponíveis no PATH.
 
-## Instalação em outra máquina
+## Instalação
 
-1. Copie esta pasta para `~/mellum-router` e torne o `route` executável:
+O repositório vive em `~/www/ai/llm-router` e o `route` é exposto via PATH no `~/.zshrc`:
 
-   ```bash
-   cp -R ~/www/dotfiles/config/mellum-router ~/mellum-router
-   chmod +x ~/mellum-router/route
-   ```
-
-2. Adicione ao PATH no `~/.zshrc`:
-
-   ```zsh
-   export PATH="$HOME/mellum-router:$PATH"
-   ```
-
-3. Baixe o modelo e crie a variante do roteador:
-
-   ```bash
-   ollama pull hf.co/JetBrains/Mellum2-12B-A2.5B-Instruct-GGUF-Q4_K_M
-   ollama create mellum-router-v2 -f ~/mellum-router/Modelfile.router.v2
-   ```
-
-4. Garanta que os aliases `cld`, `cdx`, `m3` e `glm` existam no `~/.zshrc`.
+```bash
+export PATH="$HOME/www/ai/llm-router:$PATH"
+```
