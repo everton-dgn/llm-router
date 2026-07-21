@@ -455,6 +455,13 @@ que o classificador tenha enviado ao MiniMax. Em uma etapa `execute`, ela
 também direciona uma classificação Claude para Codex, pois o worker Claude é
 read-only.
 
+O coordenador passa o pedido original ao `llm_route` sem reescrita. A etapa
+segue no argumento separado `stage`; `plan` seleciona Claude, `review` seleciona
+o reviewer Codex e `execute` aplica as barreiras da política. Somente depois da
+decisão o coordenador pode montar uma solicitação autocontida para o worker,
+preservando o pedido original e acrescentando apenas contexto operacional da
+etapa, como diretório, plano concluído ou evidências de validação.
+
 Confirme a configuração resolvida e inicie o roteador:
 
 ```bash
@@ -477,8 +484,9 @@ cascade sem chamar Ollama, Claude, Codex, MiniMax ou GLM e sem consumir
 créditos. O `routing-eval.sh` chama somente o classificador local no Ollama e
 exige 100% de acerto na matriz de regressão. Essa matriz valida a
 política do projeto; ela não substitui um benchmark independente dos modelos.
-O `opencode-bundle.sh` valida os templates, a barreira de mutação, o dry-run,
-o backup e a idempotência do instalador em uma configuração temporária.
+O `opencode-bundle.sh` valida os templates, o prompt original sem reescrita, a
+política por etapa, a barreira de mutação, o dry-run, o backup e a idempotência
+do instalador em uma configuração temporária.
 
 O `quality_eval.py` mede qualidade de resposta com workspaces isolados, auditoria
 determinística e relatórios JSON e Markdown. `tests/quality-cases.json` preserva

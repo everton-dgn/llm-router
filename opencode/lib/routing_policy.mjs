@@ -3,6 +3,7 @@ const claudeMaxEffort = /arquitet|architecture|architectural|produto|product|ide
 const claudeXhighEffort = /discuss|debate|trade.?off|pr[oó]s e contras|compare (?:opções|alternativas|abordagens)|policy|política|argument|falsific|open.?ended|decisão operacional/i
 
 export function enforceMinimumRoute(route, stage, request) {
+  if (stage === "plan") return "claude"
   if (stage === "execute" && route === "claude") return "codex"
   if (route === "minimax" && (stage === "execute" || mutationIntent.test(request))) return "glm"
   return route
