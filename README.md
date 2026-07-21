@@ -46,15 +46,55 @@ Mapeamento atual:
 
 | Intenção | Rota | Alias | Executor | Uso principal |
 |----------|------|-------|----------|---------------|
-| `trivial_tasks` | `minimax` | `m3` | MiniMax M3 | Consultas simples, leitura, contagens, traduções e edições mecânicas |
-| `intermediate_engineering` | `glm` | `glm` | GLM 5.2 | Engenharia intermediária, scripts, debugging comum e mudanças contidas |
-| `complex_planning_only` | `claude` | `cld` | Claude Opus 4.8 com `xhigh` | Planejamento complexo e arquitetura sem implementação |
-| `hard_implementation_or_review` | `codex` | `cdx` | GPT 5.6 Sol com `xhigh` | Implementação difícil, debugging profundo, auditoria e code review |
+| `literal_read_only_no_writing` | `minimax` | `m3` | MiniMax M3 | Contagem, listagem, busca, extração e formatação literais, sempre sem mutação |
+| `translation_simple_brainstorm_docs_or_intermediate_work` | `glm` | `glm` | GLM 5.2 | Tradução e trabalho simples ou intermediário com escopo claro |
+| `complex_creative_product_or_architecture` | `claude` | `cld` | Claude Opus 4.8 com `xhigh` | Arquitetura, estratégia, produto e escrita criativa complexa sem implementação |
+| `review_security_hard_engineering_or_technical_writing` | `codex` | `cdx` | GPT 5.6 Sol com `xhigh` | Engenharia difícil, texto técnico preciso, auditoria e code review |
 
 Os nomes das intenções descrevem a tarefa, não o fornecedor. Isso reduz a
 sobreposição semântica para o Plano-Orchestrator. Em pedidos mistos, a entrega
-final decide a rota: planejar e implementar segue para engenharia; code review e
-auditoria seguem para Codex.
+final decide a rota: tradução pura vai para GLM; tradução combinada com
+planejamento complexo segue para Claude; code review e auditoria seguem para
+Codex.
+
+Para as categorias medidas no benchmark V2, a política usa esta matriz:
+
+| Categoria | Simples | Intermediária | Difícil |
+| --- | --- | --- | --- |
+| Discussão aberta | GLM | Claude | Claude |
+| Brainstorm | GLM | Claude | Claude |
+| Ideias de produto | Claude | Claude | Claude |
+| Arquitetura | Claude | Claude | Claude |
+| PR review | Codex | Codex | Codex |
+| Texto técnico | Codex | Codex | Codex |
+| Documentação | GLM | GLM | Codex |
+| Rede social | GLM | Codex técnico, GLM geral | Claude |
+| Resolução de bugs | GLM | GLM | Codex |
+| Refatoração | GLM | GLM | Codex |
+| Escrita de testes | GLM | GLM | Codex |
+| Sales copy | GLM | Claude | Claude |
+
+MiniMax fica fora dessas 12 categorias porque até os casos simples exigem
+interpretação ou produção autoral. Ele continua sendo a rota econômica para
+operações literais de baixo risco. Tradução pura tem piso GLM; tradução com
+arquitetura vai para Claude; tradução com implementação difícil, review,
+auditoria ou segurança vai para Codex. O classificador usa a dificuldade e a
+consequência da tarefa, não o tamanho do prompt.
+
+Planejar a correção de uma race condition ou deadlock, sem executar diagnóstico
+nem implementar, vai para Claude. Implementação, investigação executada,
+threat model e análise de segurança vão para Codex.
+
+A matriz combina três medidas separadas: qualidade textual em revisão cega,
+conformidade determinística e confiabilidade do processo. A revisão cega é feita
+por um juiz LLM anonimizado e serve como sinal suplementar. Os casos de
+criatividade próximos continuam sujeitos a revisão humana, conforme detalhado
+em `BENCHMARK.md`.
+
+O worker MiniMax fica limitado a `Read,Glob,Grep`, sem Bash, edição, MCP externo
+ou slash commands. Isso mantém a rota trivial adequada para inspeção e
+transformação de resposta, sem permitir mudanças no projeto. Qualquer pedido que
+edite arquivos começa no GLM ou em uma rota superior.
 
 ## Cascade automático
 
@@ -107,7 +147,9 @@ claude --print --output-format json --no-session-persistence \
 # MiniMax worker, com o ambiente ANTHROPIC_* definido em config.json
 claude --print --output-format json --no-session-persistence \
   --append-system-prompt-file "${HOME}/.claude/system-prompt/append.md" \
-  --dangerously-skip-permissions --model MiniMax-M3
+  --permission-mode dontAsk --tools Read,Glob,Grep \
+  --strict-mcp-config --mcp-config '{"mcpServers":{}}' \
+  --disable-slash-commands --model MiniMax-M3
 
 # GLM worker, com o ambiente ANTHROPIC_* definido em config.json
 claude --print --output-format json --no-session-persistence \
@@ -296,10 +338,10 @@ no log quando `include_prompt` ou `include_output` está habilitado; ambos são
 
 ## Segurança e permissões
 
-`--auto` trabalha sem humano no loop. Na configuração atual, Claude, MiniMax e
-GLM usam `--dangerously-skip-permissions`, enquanto o worker Codex usa
-`workspace-write`. Judges não recebem ferramentas no Claude Code, e o Codex
-judge usa sandbox `read-only`.
+`--auto` trabalha sem humano no loop. Na configuração atual, Claude e GLM usam
+`--dangerously-skip-permissions`; MiniMax usa `--permission-mode dontAsk` e fica
+limitado a `Read,Glob,Grep`; o worker Codex usa `workspace-write`. Judges não
+recebem ferramentas no Claude Code, e o Codex judge usa sandbox `read-only`.
 
 Antes de executar uma tarefa automática:
 
@@ -359,10 +401,36 @@ export PATH="$HOME/www/ai/llm-router:$PATH"
 ```bash
 bash tests/smoke.sh
 bash tests/routing-eval.sh
+uv run --no-project --no-python-downloads python -m unittest tests/test_quality_eval.py
+uv run --no-project --no-python-downloads python quality_eval.py --help
 ```
 
 O smoke usa executores falsos e uma configuração temporária. Ele valida o
 cascade sem chamar Ollama, Claude, Codex, MiniMax ou GLM e sem consumir
 créditos. O `routing-eval.sh` chama somente o classificador local no Ollama e
-exige pelo menos 95% de acerto na matriz de regressão. Essa matriz valida a
+exige 100% de acerto na matriz de regressão. Essa matriz valida a
 política do projeto; ela não substitui um benchmark independente dos modelos.
+
+O `quality_eval.py` mede qualidade de resposta com workspaces isolados, auditoria
+determinística e relatórios JSON e Markdown. `tests/quality-cases.json` preserva
+o piloto V1 de seis casos, quatro rotas e três repetições. A matriz V2 em
+`tests/quality-cases-v2.json` cobre 36 casos, 12 categorias e três dificuldades.
+Ela aceita seleção adaptativa por caso, checkpoint, retomada e execução
+concorrente. Antes de consumir créditos, valide o dataset e os executores:
+
+```bash
+uv run --no-project --no-python-downloads python quality_eval.py \
+  --config config.json \
+  --cases tests/quality-cases.json \
+  --output /tmp/llm-router-quality.json \
+  --validate-only
+```
+
+Remova `--validate-only` para executar as chamadas. Use `--replay-report` para
+reaplicar rubricas corrigidas às saídas já registradas, sem chamar os modelos de
+novo. `--selection` limita rotas por caso e `--parallel` controla a concorrência.
+Na rodada adaptativa local, `--parallel 30` terminou 132 chamadas físicas em 9
+minutos e 9 segundos, com ganho efetivo de 21,07 vezes sobre a soma das durações.
+Esse número descreve esta máquina e estes provedores. O benchmark avalia os
+executores configurados e não representa uma classificação geral dos modelos
+base.

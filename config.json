@@ -1,31 +1,31 @@
 {
   "model": "hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M",
   "endpoint": "http://localhost:11434/api/chat",
-  "options": { "temperature": 0, "num_predict": 32 },
+  "options": { "temperature": 0, "seed": 42, "num_predict": 32 },
   "routing": [
     {
-      "intent": "trivial_tasks",
+      "intent": "literal_read_only_no_writing",
       "route": "minimax",
-      "help": "tarefas triviais, consultas read-only, contagens, listas, traduções e edições mecânicas",
-      "description": "basic direct low-risk tasks with no meaningful software implementation: factual answers, read-only repository inspection, counting or listing files, short summaries, translation, classification, formatting, naming, typo fixes, and one purely mechanical local edit"
+      "help": "operações literais e read-only de baixo risco: contagem, listagem, busca, extração e formatação",
+      "description": "Only use for literal low-risk tasks with no prose generation, no interpretation, no filesystem mutation and no project command execution: count or list files and exact matches, locate files or symbols, extract explicitly requested fields, inspect read-only repository state, answer a direct factual question from supplied or inspected data, and mechanically format a supplied structure without rewriting its meaning. Never use for any summary, naming or ideation, typo correction, text correction or rewriting, translation, localization, multilingual generation, creative or persuasive writing, documentation, editing project files, implementation, test creation, debugging, refactoring, review, or audit"
     },
     {
-      "intent": "intermediate_engineering",
+      "intent": "translation_simple_brainstorm_docs_or_intermediate_work",
       "route": "glm",
-      "help": "engenharia intermediária, scripts, features contidas, debugging comum, testes, APIs e banco",
-      "description": "default route for moderately complex scoped software work with clear requirements: contained code changes, small scripts, standard features, lint or test fixes, ordinary debugging in one component, controller, job, or module, routine refactors, APIs, databases, UI behavior, and code explanation. Use this for debugging unless the request explicitly signals a hard cross-module, concurrency, intermittent, security, or repository-wide problem"
+      "help": "tradução e trabalho simples ou intermediário: docs, testes, bugs, refatoração, scripts e conteúdo contido",
+      "description": "Use for every summary, naming request, typo or text correction, translation, localization and multilingual generation unless a higher override applies. This is also the default for simple or intermediate scoped work with clear requirements: contained code changes; small scripts; standard features such as pagination or loading state; ordinary debugging in one component, controller, job or module; explanation of an existing code path or module grounded in inspected code; routine refactors confined to one area; simple or intermediate test writing; simple or intermediate documentation; simple open discussion or brainstorming; and simple or intermediate general social or sales copy with explicit constraints. A brief pros-and-cons discussion without architecture or product strategy is simple open discussion. A request for a short numbered set of ideas for one known audience, without evaluation, product strategy or research, is simple brainstorming. A troubleshooting guide for one known flow is intermediate documentation. Diagnosing a routine HTTP 500 in one controller is ordinary debugging even when the cause still needs investigation. This is the minimum route for translation and the default for implementation unless a hard-tier signal is explicit. Use Claude for product ideation at any difficulty, architecture, intermediate or hard open-ended creative reasoning, intermediate or hard sales copy, and hard social content. Use Codex for every review or audit, every standalone audience-facing engineering technical-writing deliverable, threat modeling, hard engineering, hard documentation, and intermediate social content that requires technical precision"
     },
     {
-      "intent": "complex_planning_only",
+      "intent": "complex_creative_product_or_architecture",
       "route": "claude",
-      "help": "planejamento complexo sem implementação, arquitetura, ADRs, migrações e decisões estratégicas",
-      "description": "planning-only deliverables for complex systems before implementation: architecture, system design, migrations, decomposition, specifications, ambiguous requirements, strategic trade-offs, threat models, and high-stakes plans across services. Use only when the requested final deliverable is a plan, design, ADR, strategy, or architecture. Never use when code implementation, modification, debugging, or review is also requested"
+      "help": "arquitetura, estratégia, discussão, brainstorm, produto e escrita criativa complexa sem implementação",
+      "description": "Use for high-judgment reasoning or creative writing whose final deliverable does not include code implementation or review: architecture and system design at any difficulty; ADRs; complex cross-system or zero-downtime migration plans; planning-only remediation for races, deadlocks or other hard engineering before implementation; strategic trade-offs; open discussion and brainstorming only at intermediate or hard difficulty; product ideation at any difficulty; intermediate or hard sales copy; hard social content; ambiguous specifications; and high-stakes plans across services. Never use for simple open discussion, simple brainstorming, engineering technical writing, a routine implemented schema migration, threat modeling, or security analysis. Translation combined with architecture or complex planning stays here. Never use when the request requires executing a diagnosis, modifying code, line-level review, audit, threat modeling, or security analysis"
     },
     {
-      "intent": "hard_implementation_or_review",
+      "intent": "review_security_hard_engineering_or_technical_writing",
       "route": "codex",
-      "help": "implementação difícil, debugging profundo, concorrência, auditoria e code review",
-      "description": "difficult software implementation and every code review or audit: work explicitly described as difficult, critical, multi-module, cross-module, repository-wide, or central; concurrency, races, deadlocks, intermittent memory leaks; security, performance, regression, line-level and pull-request review. Use for multi-part requests that include planning followed by difficult implementation"
+      "help": "implementação difícil, texto técnico preciso, debugging profundo, concorrência, auditoria e code review",
+      "description": "Use for every standalone audience-facing engineering technical-writing deliverable, including concise concept explanations, design memos, incident analyses and technically precise intermediate social threads. Explaining an existing code path or module from inspected code stays with GLM unless review, audit or another hard signal is requested. Also use for difficult software implementation and every code review, audit, threat model or security analysis: work described as difficult, critical, multi-module, cross-module, repository-wide or central; hard documentation; hard test writing; hard refactoring; repository-wide shared-state changes; concurrency, races, deadlocks and intermittent leaks; security, performance and regression analysis; line-level and pull-request review. A planning-only remediation for a race, deadlock or hard engineering problem belongs to Claude when no implementation or executed diagnosis is requested. Never use for a standard contained feature such as pagination or loading state, or ordinary diagnosis of one component, controller, job or CI failure, unless another hard-tier signal is explicit. Translation does not lower a review, audit, security task, technical incident report or hard implementation. Use for multi-part requests that include planning followed by difficult implementation"
     }
   ],
   "routes": [
@@ -138,7 +138,11 @@
             "--output-format", "json",
             "--no-session-persistence",
             "--append-system-prompt-file", "${HOME}/.claude/system-prompt/append.md",
-            "--dangerously-skip-permissions",
+            "--permission-mode", "dontAsk",
+            "--tools", "Read,Glob,Grep",
+            "--strict-mcp-config",
+            "--mcp-config", "{\"mcpServers\":{}}",
+            "--disable-slash-commands",
             "--model", "MiniMax-M3"
           ],
           "output_format": "claude_json",
@@ -151,6 +155,9 @@
             "--output-format", "json",
             "--no-session-persistence",
             "--tools", "",
+            "--strict-mcp-config",
+            "--mcp-config", "{\"mcpServers\":{}}",
+            "--disable-slash-commands",
             "--model", "MiniMax-M3"
           ],
           "output_format": "claude_json",

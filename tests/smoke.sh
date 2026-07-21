@@ -367,7 +367,7 @@ tee "$FAKE_BIN/curl" >/dev/null <<'FAKE_CURL'
 [[ -z "${CURL_MARKER:-}" ]] || touch "$CURL_MARKER"
 case "${FAKE_ROUTE_MODE:-intent}" in
   intent)
-    printf '%s\n' '{"message":{"content":"{\"route\":[\"intermediate_engineering\"]}"}}'
+    printf '%s\n' '{"message":{"content":"{\"route\":[\"translation_simple_brainstorm_docs_or_intermediate_work\"]}"}}'
     ;;
   empty)
     printf '%s\n' '{"message":{"content":"{\"route\":[]}"}}'
