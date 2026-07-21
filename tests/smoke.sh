@@ -359,12 +359,23 @@ assert_jq '
   any(.[]; .event == "run_finished")
 ' "$CASE_DIR/logs/auto.jsonl" "resultado do verificador nulo nao foi registrado"
 
-printf '%s\n' '10/14 route preserva dry-run e --run e despacha --auto'
+printf '%s\n' '10/14 route oferece help, mapeia intencao e preserva os modos'
 FAKE_BIN="$TEST_TMP/fake-bin"
 mkdir -p "$FAKE_BIN"
 tee "$FAKE_BIN/curl" >/dev/null <<'FAKE_CURL'
 #!/usr/bin/env bash
-printf '%s\n' '{"message":{"content":"{\"route\":[\"glm\"]}"}}'
+[[ -z "${CURL_MARKER:-}" ]] || touch "$CURL_MARKER"
+case "${FAKE_ROUTE_MODE:-intent}" in
+  intent)
+    printf '%s\n' '{"message":{"content":"{\"route\":[\"translation_simple_brainstorm_docs_or_intermediate_work\"]}"}}'
+    ;;
+  empty)
+    printf '%s\n' '{"message":{"content":"{\"route\":[]}"}}'
+    ;;
+  *)
+    printf '%s\n' '{"message":{"content":"{\"route\":[\"invalid_intent\"]}"}}'
+    ;;
+esac
 FAKE_CURL
 tee "$FAKE_BIN/open" >/dev/null <<'FAKE_OPEN'
 #!/usr/bin/env bash
@@ -377,23 +388,49 @@ printf 'fake-uv:%s\n' "$*"
 FAKE_UV
 chmod +x "$FAKE_BIN/curl" "$FAKE_BIN/open" "$FAKE_BIN/uv"
 
+HELP_MARKER="$TEST_TMP/help.curl-called"
+HELP_OUTPUT="$(CURL_MARKER="$HELP_MARKER" PATH="$FAKE_BIN:$PATH" "$REPO_DIR/route" --help)"
+[[ "$HELP_OUTPUT" == *"Uso: route"* ]] || fail "--help nao mostrou o uso"
+[[ "$HELP_OUTPUT" == *"Modos:"* ]] || fail "--help nao descreveu os modos"
+[[ "$HELP_OUTPUT" == *"Rotas:"* ]] || fail "--help nao descreveu as rotas"
+[[ "$HELP_OUTPUT" == *"route --auto"* ]] || fail "--help nao mostrou o modo automatico"
+[[ ! -e "$HELP_MARKER" ]] || fail "--help chamou o classificador"
+
+HELP_ALIAS_OUTPUT="$(CURL_MARKER="$HELP_MARKER" PATH="$FAKE_BIN:$PATH" "$REPO_DIR/route" help)"
+[[ "$HELP_ALIAS_OUTPUT" == "$HELP_OUTPUT" ]] || fail "help e --help mostraram saidas diferentes"
+[[ ! -e "$HELP_MARKER" ]] || fail "help chamou o classificador"
+
 DRY_MARKER="$TEST_TMP/dry.opened"
-DRY_OUTPUT="$(OPEN_MARKER="$DRY_MARKER" PATH="$FAKE_BIN:$PATH" "$REPO_DIR/route" "smoke route")"
+DRY_OUTPUT="$(FAKE_ROUTE_MODE=intent OPEN_MARKER="$DRY_MARKER" PATH="$FAKE_BIN:$PATH" "$REPO_DIR/route" "smoke route")"
 [[ "$DRY_OUTPUT" == *"rota:     glm  ->  glm"* ]] || fail "dry-run nao preservou a rota"
 [[ "$DRY_OUTPUT" == *"(dry-run; use --run para abrir a CLI)"* ]] || fail "dry-run nao preservou a mensagem"
 [[ ! -e "$DRY_MARKER" ]] || fail "dry-run tentou abrir o Ghostty"
 
 RUN_MARKER="$TEST_TMP/run.opened"
-RUN_OUTPUT="$(OPEN_MARKER="$RUN_MARKER" PATH="$FAKE_BIN:$PATH" "$REPO_DIR/route" --run "smoke route")"
+RUN_OUTPUT="$(FAKE_ROUTE_MODE=intent OPEN_MARKER="$RUN_MARKER" PATH="$FAKE_BIN:$PATH" "$REPO_DIR/route" --run "smoke route")"
 [[ -e "$RUN_MARKER" ]] || fail "--run nao chamou open"
 [[ "$RUN_OUTPUT" == *"abrindo glm no Ghostty"* ]] || fail "--run nao preservou o fluxo interativo"
 
 AUTO_MARKER="$TEST_TMP/auto.opened"
-AUTO_OUTPUT="$(OPEN_MARKER="$AUTO_MARKER" PATH="$FAKE_BIN:$PATH" "$REPO_DIR/route" --auto --verifier null "smoke route")"
+AUTO_OUTPUT="$(FAKE_ROUTE_MODE=intent OPEN_MARKER="$AUTO_MARKER" PATH="$FAKE_BIN:$PATH" "$REPO_DIR/route" --auto --verifier null "smoke route")"
 [[ "$AUTO_OUTPUT" == *"fake-uv:run --no-project --no-python-downloads python"* ]] || fail "--auto nao chamou o runner pelo uv"
 [[ "$AUTO_OUTPUT" == *"--route glm"* ]] || fail "--auto nao repassou a rota escolhida"
 [[ "$AUTO_OUTPUT" == *"--verifier null"* ]] || fail "--auto nao repassou o verificador"
 [[ ! -e "$AUTO_MARKER" ]] || fail "--auto tentou abrir o Ghostty"
+
+EMPTY_OUTPUT="$TEST_TMP/empty-output.txt"
+if FAKE_ROUTE_MODE=empty PATH="$FAKE_BIN:$PATH" "$REPO_DIR/route" "smoke route" >"$EMPTY_OUTPUT" 2>&1; then
+  fail "lista vazia usou fallback em vez de falhar"
+fi
+rg -q "erro: classificador não devolveu uma rota válida" "$EMPTY_OUTPUT" || \
+  fail "lista vazia nao mostrou erro explicito"
+
+INVALID_OUTPUT="$TEST_TMP/invalid-output.txt"
+if FAKE_ROUTE_MODE=invalid PATH="$FAKE_BIN:$PATH" "$REPO_DIR/route" "smoke route" >"$INVALID_OUTPUT" 2>&1; then
+  fail "intencao desconhecida foi aceita"
+fi
+rg -q "erro: intenção desconhecida: 'invalid_intent'" "$INVALID_OUTPUT" || \
+  fail "intencao desconhecida nao mostrou erro explicito"
 
 printf '%s\n' '11/14 seletor automatico aplica gate compativel sem juri'
 CASE_DIR="$TEST_TMP/auto-select"

@@ -1,0 +1,3633 @@
+{
+  "version": 2,
+  "benchmark_scope": "production_executors",
+  "canary": "v2-neutral-dataset-20260720",
+  "human_evaluation": {
+    "blind": true,
+    "randomize_output_order": true,
+    "pairwise_comparison": true,
+    "dimension_scale": {
+      "minimum": 1,
+      "maximum": 7
+    },
+    "retain_rationales": true
+  },
+  "cases": [
+    {
+      "id": "open-discussion-simple-weekly-status",
+      "canary": "v2-neutral-001",
+      "category": "open_discussion",
+      "difficulty": "simple",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {},
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "I am deciding whether to replace our weekly status meeting with an asynchronous written update. Help me think it through without deciding for me. Surface the main trade-offs and ask focused questions before suggesting a direction."
+        },
+        {
+          "prompt": "More context: the team has six people split between Brazil and Germany, and we have one production incident in a typical week. Update your analysis and propose a reversible two-week experiment with observable success criteria."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_all_patterns",
+          "turn": 1,
+          "patterns": [
+            "(?i)(synchronous|meeting|s[ií]ncron|reuni[aã]o)",
+            "(?i)(asynchronous|written update|ass[ií]ncron|atualiza[cç][aã]o escrita)"
+          ],
+          "critical": true,
+          "weight": 20
+        },
+        {
+          "type": "output_regex",
+          "turn": 1,
+          "pattern": "\\?",
+          "weight": 10
+        },
+        {
+          "type": "output_all_patterns",
+          "turn": 2,
+          "patterns": [
+            "(?i)(two[- ]week|2[- ]week|duas semanas|2 semanas)",
+            "(?i)(experiment|trial|pilot|experimento|piloto)"
+          ],
+          "critical": true,
+          "weight": 25
+        },
+        {
+          "type": "output_all_patterns",
+          "turn": 2,
+          "patterns": [
+            "(?i)(Brazil|Brasil)",
+            "(?i)(Germany|Alemanha)",
+            "(?i)(incident|incidente)"
+          ],
+          "critical": true,
+          "weight": 25
+        },
+        {
+          "type": "output_regex",
+          "turn": 2,
+          "pattern": "(?i)(criteria|criterion|metric|measure|crit[eé]rio|m[eé]trica|medir|observ[aá]vel)",
+          "weight": 20
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "balanced_reasoning",
+          "description": "Explores both options fairly and avoids premature closure.",
+          "weight": 25
+        },
+        {
+          "dimension": "question_quality",
+          "description": "Asks questions that would materially change the decision.",
+          "weight": 20
+        },
+        {
+          "dimension": "adaptation",
+          "description": "Uses the second-turn facts to update, rather than repeat, the first answer.",
+          "weight": 30
+        },
+        {
+          "dimension": "practical_usefulness",
+          "description": "Proposes a low-risk experiment with meaningful measures.",
+          "weight": 25
+        }
+      ]
+    },
+    {
+      "id": "open-discussion-intermediate-build-or-buy",
+      "canary": "v2-neutral-002",
+      "category": "open_discussion",
+      "difficulty": "intermediate",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {},
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "Facilitate an open discussion about building or buying an internal analytics platform. Known facts: we have two data engineers, a USD 70,000 annual vendor budget, personally identifiable data, and a four-month deadline. Separate facts from assumptions, steelman both paths, and identify the questions that should drive the decision."
+        },
+        {
+          "prompt": "New information: the vendor cannot guarantee raw-data export until next year, while our legal team requires deletion requests to be completed within 30 days. Reassess the trade-offs, explain which assumptions changed, and suggest the next evidence-gathering step without pretending uncertainty is resolved."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_all_patterns",
+          "turn": 1,
+          "patterns": [
+            "(?i)(build|construir|constru[cç][aã]o)",
+            "(?i)(buy|vendor|comprar|fornecedor)"
+          ],
+          "critical": true,
+          "weight": 20
+        },
+        {
+          "type": "output_all_patterns",
+          "turn": 1,
+          "patterns": [
+            "(?i)(two|2|dois).{0,20}(data engineers|engenheiros? de dados)",
+            "(?:USD\\s*)?70[,.]?000|US\\$\\s*70[.]?000",
+            "(?i)(four|4|quatro).{0,15}(month|months|mes|meses)"
+          ],
+          "critical": true,
+          "weight": 25
+        },
+        {
+          "type": "output_all_patterns",
+          "turn": 2,
+          "patterns": [
+            "(?i)(raw[- ]data export|exporta[cç][aã]o de dados brutos)",
+            "(?i)(next year|pr[oó]ximo ano)",
+            "(?i)30[- ]?(day|days|dia|dias)"
+          ],
+          "critical": true,
+          "weight": 30
+        },
+        {
+          "type": "output_regex",
+          "turn": 2,
+          "pattern": "(?i)(changed|update|reassess|new information|new constraint|mudou|atualiz|reavali|nova informa[cç][aã]o|nova restri[cç][aã]o)",
+          "weight": 15
+        },
+        {
+          "type": "output_regex",
+          "turn": 2,
+          "pattern": "(?i)(evidence|test|question|confirm|verify|evid[eê]ncia|teste|pergunta|confirm|verific)",
+          "weight": 10
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "steelman_quality",
+          "description": "Presents the strongest credible case for both build and buy.",
+          "weight": 25
+        },
+        {
+          "dimension": "epistemic_calibration",
+          "description": "Distinguishes evidence, assumptions, and unresolved uncertainty.",
+          "weight": 25
+        },
+        {
+          "dimension": "adaptation",
+          "description": "Correctly changes the analysis after the export and deletion constraints appear.",
+          "weight": 30
+        },
+        {
+          "dimension": "decision_support",
+          "description": "Moves the discussion toward useful evidence without taking over the decision.",
+          "weight": 20
+        }
+      ]
+    },
+    {
+      "id": "open-discussion-hard-open-core-strategy",
+      "canary": "v2-neutral-003",
+      "category": "open_discussion",
+      "difficulty": "hard",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {},
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "Help a founding team discuss whether to open-source the core of its developer tool. The CEO expects enterprise licensing revenue, the lead engineer expects community contributions, and an investor worries about a cloud competitor copying the product. The facts do not establish a single right answer. Map the value conflicts, hidden assumptions, reversible choices, and evidence that would reduce uncertainty."
+        },
+        {
+          "prompt": "The situation changed: runway is eight months, a serious enterprise prospect requires self-hosting within six weeks, and the team has only four engineers. Update the discussion. Preserve the competing perspectives, show what the new facts rule out or make more attractive, and define a staged decision with explicit stop conditions."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_all_patterns",
+          "turn": 1,
+          "patterns": [
+            "(?i)(enterprise licensing|enterprise license|licenciamento empresarial|receita)",
+            "(?i)(community contribution|community|contribui[cç][aã]o da comunidade|comunidade)",
+            "(?i)(copy|competitor|c[oó]pia|concorrente)"
+          ],
+          "critical": true,
+          "weight": 20
+        },
+        {
+          "type": "output_all_patterns",
+          "turn": 2,
+          "patterns": [
+            "(?i)(eight|8|oito).{0,12}(month|months|mes|meses)",
+            "(?i)(six|6|seis).{0,12}(week|weeks|semana|semanas)",
+            "(?i)(four|4|quatro).{0,15}(engineer|engineers|engenheiro|engenheiros)"
+          ],
+          "critical": true,
+          "weight": 25
+        },
+        {
+          "type": "output_all_patterns",
+          "turn": 2,
+          "patterns": [
+            "(?i)(stage|phase|pilot|reversible|etapa|fase|piloto|revers[ií]vel)",
+            "(?i)(stop condition|exit condition|checkpoint|go/no-go|condi[cç][aã]o de parada|condi[cç][aã]o de sa[ií]da|ponto de controle)"
+          ],
+          "critical": true,
+          "weight": 30
+        },
+        {
+          "type": "output_all_patterns",
+          "turn": 2,
+          "patterns": [
+            "(?i)(perspective|trade-off|uncertainty|perspectiva|incerteza|conflit|vis[aã]o)",
+            "(?i)(rule out|more attractive|descart|atraent|favorec)"
+          ],
+          "weight": 25
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "perspective_integration",
+          "description": "Preserves and connects the CEO, engineering, investor, customer, and runway perspectives.",
+          "weight": 25
+        },
+        {
+          "dimension": "assumption_quality",
+          "description": "Surfaces important hidden assumptions and proposes credible ways to test them.",
+          "weight": 25
+        },
+        {
+          "dimension": "adaptive_reasoning",
+          "description": "Changes priorities appropriately after the second-turn constraints.",
+          "weight": 25
+        },
+        {
+          "dimension": "facilitation_value",
+          "description": "Creates a staged, discussable path without falsely resolving a value judgment.",
+          "weight": 25
+        }
+      ]
+    },
+    {
+      "id": "brainstorming-simple-onboarding-docs",
+      "canary": "v2-neutral-004",
+      "category": "brainstorming",
+      "difficulty": "simple",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {},
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "Brainstorm exactly 10 distinct ways to improve first-week onboarding for contributors to a small open-source project. Constraints: no video production, no paid rewards, and no new synchronous meetings. Cover at least three different mechanisms such as documentation, feedback, tooling, social proof, or task design. Return only valid JSON with keys ideas and count. ideas must be an array of objects with keys id, mechanism, and idea; use IDs B01 through B10."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_strict_json_object",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_length",
+          "path": "ideas",
+          "expected": 10,
+          "critical": true,
+          "weight": 30
+        },
+        {
+          "type": "output_json_equals",
+          "path": "count",
+          "expected": 10,
+          "weight": 5
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "B01",
+            "B02",
+            "B03",
+            "B04",
+            "B05",
+            "B06",
+            "B07",
+            "B08",
+            "B09",
+            "B10"
+          ],
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_all_non_empty",
+          "path": "ideas[*]",
+          "required_keys": [
+            "id",
+            "mechanism",
+            "idea"
+          ],
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_not_regex",
+          "pattern": "(?i)record (a )?video|gravar? (um )?vídeo|produç[aã]o de vídeo|cash reward|recompensa em dinheiro|gift card|vale[- ]presente|cart[aã]o presente|schedule (a )?(meeting|call)|agendar? (uma )?(reuni[aã]o|chamada)",
+          "critical": true,
+          "weight": 20
+        },
+        {
+          "type": "output_unique_values",
+          "path": "ideas[*].idea",
+          "minimum_unique": 10,
+          "weight": 15
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "originality",
+          "description": "Ideas avoid obvious paraphrases and contain fresh, relevant directions.",
+          "weight": 30
+        },
+        {
+          "dimension": "flexibility",
+          "description": "Ideas span meaningfully different mechanisms.",
+          "weight": 25
+        },
+        {
+          "dimension": "appropriateness",
+          "description": "Ideas fit a small open-source project and the stated constraints.",
+          "weight": 25
+        },
+        {
+          "dimension": "development_value",
+          "description": "Ideas are concrete enough for a team to develop further.",
+          "weight": 20
+        }
+      ]
+    },
+    {
+      "id": "brainstorming-intermediate-privacy-launch",
+      "canary": "v2-neutral-005",
+      "category": "brainstorming",
+      "difficulty": "intermediate",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {},
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "Generate exactly 12 launch experiments for a B2B privacy-audit product used by engineering managers. The team has two people, 30 days, and a total budget of USD 5,000 across all experiments. Paid ads, purchased email lists, fake scarcity, and unverifiable security claims are prohibited. Each experiment must include a distinct acquisition mechanism, a falsifiable hypothesis, one primary metric, and an estimated cost. Return only valid JSON with keys experiments and count."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_strict_json_object",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_length",
+          "path": "experiments",
+          "expected": 12,
+          "critical": true,
+          "weight": 25
+        },
+        {
+          "type": "output_json_equals",
+          "path": "count",
+          "expected": 12,
+          "weight": 10
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(acquisition mechanism|mechanism|mecanismo de aquisiç[aã]o|mecanismo)",
+            "(?i)(falsifiable hypothesis|hypothesis|hipótese falsificável|hipótese)",
+            "(?i)(primary metric|metric|métrica primária|métrica)",
+            "(?i)(estimated cost|cost|custo estimado|custo)"
+          ],
+          "critical": true,
+          "weight": 25
+        },
+        {
+          "type": "output_regex",
+          "pattern": "(?i)(USD|US\\$|\\$)?\\s*5[,.]?000|5[,.]?000\\s*(USD|dollars|dólares)",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_not_regex",
+          "pattern": "(?i)paid ad|anúncio pago|mídia paga|buy (an )?email list|comprar? (uma )?lista de e-mails?|guarantee(d)? (secure|security)|segurança garantida|garant(e|imos|ido).{0,20}segurança|last chance|última chance|only [0-9]+ spots|apenas [0-9]+ vagas",
+          "critical": true,
+          "weight": 20
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "originality",
+          "description": "The set includes non-obvious approaches rather than renamed versions of the same tactic.",
+          "weight": 25
+        },
+        {
+          "dimension": "fluency_and_flexibility",
+          "description": "The set sustains useful variety across twelve experiments.",
+          "weight": 25
+        },
+        {
+          "dimension": "feasibility",
+          "description": "Experiments are plausible for two people within 30 days and the budget.",
+          "weight": 25
+        },
+        {
+          "dimension": "experimental_quality",
+          "description": "Hypotheses and metrics could genuinely teach the team something.",
+          "weight": 25
+        }
+      ]
+    },
+    {
+      "id": "brainstorming-hard-climate-participation",
+      "canary": "v2-neutral-006",
+      "category": "brainstorming",
+      "difficulty": "hard",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {},
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "A city wants residents from low-income neighborhoods to contribute ideas to a climate-adaptation plan. Brainstorm 18 distinct participation formats, then select three for a six-week pilot. Constraints: smartphone ownership cannot be assumed; participants must not lose wages; collection must work in Portuguese and Spanish; no collection of immigration status; total pilot budget is USD 20,000. Return only valid JSON with keys ideas, shortlist, and rejected_assumptions. Every shortlisted item must include rationale, budget_usd, accessibility_measures, and a failure_signal."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_strict_json_object",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_length",
+          "path": "ideas",
+          "expected": 18,
+          "critical": true,
+          "weight": 20
+        },
+        {
+          "type": "output_json_length",
+          "path": "shortlist",
+          "expected": 3,
+          "critical": true,
+          "weight": 15
+        },
+        {
+          "type": "output_regex",
+          "pattern": "(?i)(USD|US\\$|\\$)?\\s*20[,.]?000|20[,.]?000\\s*(USD|dollars|dólares)",
+          "critical": true,
+          "weight": 20
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(Portuguese|português|portugues)",
+            "(?i)(Spanish|español|espanhol)"
+          ],
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_not_regex",
+          "pattern": "(?i)collect immigration status|coletar? (o )?status migratório|coletar? (a )?situação migratória|require (a )?smartphone|exigir? (um )?smartphone|smartphone obrigatório|unpaid weekday workshop|oficina não remunerada em dia útil|workshop não remunerado em dia útil",
+          "critical": true,
+          "weight": 20
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(rationale|justificativa)",
+            "(?i)(budget|orçamento)",
+            "(?i)(accessibility|acessibilidade)",
+            "(?i)(failure signal|sinal de falha)"
+          ],
+          "weight": 5
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "originality",
+          "description": "The response produces genuinely different participation formats.",
+          "weight": 25
+        },
+        {
+          "dimension": "contextual_appropriateness",
+          "description": "Ideas respect access, language, privacy, and wage constraints in practice.",
+          "weight": 30
+        },
+        {
+          "dimension": "flexibility",
+          "description": "The idea set spans channels, locations, timing models, and facilitation modes.",
+          "weight": 20
+        },
+        {
+          "dimension": "selection_judgment",
+          "description": "The shortlist balances learning value, reach, feasibility, and risk.",
+          "weight": 25
+        }
+      ]
+    },
+    {
+      "id": "new-product-ideas-simple-freelance-translators",
+      "canary": "v2-neutral-007",
+      "category": "new_product_ideas",
+      "difficulty": "simple",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {},
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "Propose exactly six small software product ideas for freelance translators. Use only these observed pains: clients send inconsistent glossaries, source files arrive in mixed formats, approval status is unclear, and invoices are often paid late. Do not claim automated translation quality, legal compliance, or guaranteed payment. Return only valid JSON with keys ideas and count. Each idea must include name, target_pain, core_workflow, and smallest_test."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_strict_json_object",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_length",
+          "path": "ideas",
+          "expected": 6,
+          "critical": true,
+          "weight": 25
+        },
+        {
+          "type": "output_json_equals",
+          "path": "count",
+          "expected": 6,
+          "weight": 5
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(inconsistent glossar|glossár.{0,20}inconsistente)",
+            "(?i)(mixed file formats|file formats.{0,20}mixed|formatos? de arquivo.{0,20}mist)",
+            "(?i)(unclear approval|approval status.{0,20}unclear|status de aprovaç[aã]o.{0,20}(incerto|pouco claro|indefinido))",
+            "(?i)(late invoice payment|invoice.{0,20}paid late|pagamento.{0,20}(fatura|nota).{0,20}atras)"
+          ],
+          "critical": true,
+          "weight": 25
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(name|nome)",
+            "(?i)(target pain|target_pain|dor alvo)",
+            "(?i)(core workflow|core_workflow|fluxo principal)",
+            "(?i)(smallest test|smallest_test|menor teste)"
+          ],
+          "weight": 15
+        },
+        {
+          "type": "output_not_regex",
+          "pattern": "(?i)guarantee(d)? payment|pagamento garantido|garant(e|imos|ido).{0,20}pagamento|legally compliant|legalmente (em )?conformidade|conformidade legal garantida|perfect translation|traduç[aã]o perfeita|human-level translation|traduç[aã]o (de |em )?nível humano",
+          "critical": true,
+          "weight": 20
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "problem_solution_fit",
+          "description": "Each idea directly addresses an observed pain with a coherent workflow.",
+          "weight": 30
+        },
+        {
+          "dimension": "originality",
+          "description": "The portfolio includes differentiated concepts rather than feature variations.",
+          "weight": 25
+        },
+        {
+          "dimension": "testability",
+          "description": "The proposed smallest tests can cheaply challenge demand assumptions.",
+          "weight": 25
+        },
+        {
+          "dimension": "clarity",
+          "description": "A product practitioner can understand the user, value, and workflow quickly.",
+          "weight": 20
+        }
+      ]
+    },
+    {
+      "id": "new-product-ideas-intermediate-maintenance-teams",
+      "canary": "v2-neutral-008",
+      "category": "new_product_ideas",
+      "difficulty": "intermediate",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {},
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "Design four product concepts for maintenance teams in food-processing plants. Research notes supplied for this exercise: technicians lose time locating the latest procedure; supervisors need an audit trail; gloves make typing difficult; plant Wi-Fi is intermittent; the customer will not upload machine sensor data to a third-party cloud. For each concept provide user, job_to_be_done, wedge, offline_workflow, privacy_boundary, two-week prototype, and riskiest_assumption. Do not invent market-size or regulatory claims. Return only valid JSON with key concepts."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_strict_json_object",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_length",
+          "path": "concepts",
+          "expected": 4,
+          "critical": true,
+          "weight": 20
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(user|usuário)",
+            "(?i)(job[_ -]to[_ -]be[_ -]done|tarefa a realizar)",
+            "(?i)(wedge|entrada|diferencial)",
+            "(?i)(offline workflow|offline_workflow|fluxo offline)",
+            "(?i)(privacy boundary|privacy_boundary|limite de privacidade)",
+            "(?i)(two[- ]week prototype|two_week_prototype|protótipo de duas semanas)",
+            "(?i)(riskiest assumption|riskiest_assumption|premissa mais arriscada)"
+          ],
+          "critical": true,
+          "weight": 20
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(offline|intermittent|sem conex[aã]o|conex[aã]o intermitente)",
+            "(?i)(no (third-party )?cloud|on-prem|local storage|third-party cloud|sem (nuvem|cloud) de terceiros|nuvem de terceiros|armazenamento local)"
+          ],
+          "critical": true,
+          "weight": 20
+        },
+        {
+          "type": "output_regex",
+          "pattern": "(?i)(glove|voice|scan|button|hands-free|luva|voz|digitaliza|bot[aã]o|m[aã]os livres)",
+          "weight": 10
+        },
+        {
+          "type": "output_not_regex",
+          "pattern": "(?i)market (is|size of) \\$|mercado (é|de) \\$|tamanho do mercado|FDA requires|FDA exige|guaranteed compliance|conformidade garantida|all plants|todas as fábricas|todas as plantas",
+          "critical": true,
+          "weight": 20
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "grounding",
+          "description": "Concepts derive from the supplied research instead of invented market facts.",
+          "weight": 25
+        },
+        {
+          "dimension": "differentiation",
+          "description": "The four concepts represent distinct product wedges.",
+          "weight": 25
+        },
+        {
+          "dimension": "workflow_fit",
+          "description": "Concepts work with gloves, intermittent connectivity, audit needs, and privacy boundaries.",
+          "weight": 30
+        },
+        {
+          "dimension": "learning_efficiency",
+          "description": "Prototypes test the riskiest assumptions with limited effort.",
+          "weight": 20
+        }
+      ]
+    },
+    {
+      "id": "new-product-ideas-hard-legal-operations",
+      "canary": "v2-neutral-009",
+      "category": "new_product_ideas",
+      "difficulty": "hard",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {},
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "Create three competing product theses for a legal-operations platform. Evidence provided: a 12-person legal team receives 900 contract requests per month; 55% use approved templates; median review time is four business days; sales cannot see queue status; security prohibits training shared models on contract text; procurement requires SSO and a 60-day security review. Each thesis must define initial segment, painful workflow, non-AI and AI-assisted versions, data boundary, adoption wedge, pricing hypothesis, 90-day validation plan, killer assumption, and stop condition. Include a portfolio comparison and recommend only which thesis to test first, not which will succeed. Do not claim legal accuracy, compliance, market size, or revenue. Return only valid JSON with keys theses, comparison, and first_test."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_strict_json_object",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_length",
+          "path": "theses",
+          "expected": 3,
+          "critical": true,
+          "weight": 15
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(initial segment|segmento inicial)",
+            "(?i)(painful workflow|fluxo.{0,20}(doloroso|problemático))",
+            "(?i)(non[- ]?AI|without AI|sem IA)",
+            "(?i)(AI[- ]assisted|assisted by AI|assistid[ao] por IA|com apoio de IA)",
+            "(?i)(data boundary|limite de dados|fronteira de dados)",
+            "(?i)(adoption wedge|entrada de adoç[aã]o|estratégia de adoç[aã]o)",
+            "(?i)(pricing hypothesis|hipótese de preç[oa])",
+            "(?i)(90[- ]day validation|validaç[aã]o.{0,15}90 dias)",
+            "(?i)(killer assumption|premissa crítica|hipótese crítica)",
+            "(?i)(stop condition|condiç[aã]o de parada)"
+          ],
+          "critical": true,
+          "weight": 25
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "900",
+            "55%",
+            "(?i)(four business days|quatro dias úteis)",
+            "SSO",
+            "(?i)(60[- ]day|60 dias)"
+          ],
+          "critical": true,
+          "weight": 15
+        },
+        {
+          "type": "output_regex",
+          "pattern": "(?i)(not train|no training|prohibit.{0,40}training|do not train|n[aã]o (treinar|usar).{0,40}(modelo|contrato)|proib.{0,40}treinamento|data boundary|limite de dados|isolated model|modelo isolado)",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_not_regex",
+          "pattern": "(?i)guarantee(d)? legal|legal.{0,20}garantid|legally accurate|juridicamente (preciso|exato)|compliant with all|em conformidade com tudo|market size|tamanho do mercado|revenue will|receita (vai|irá)|will succeed|terá sucesso|vai dar certo",
+          "critical": true,
+          "weight": 25
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "strategic_originality",
+          "description": "The theses offer meaningfully different strategic positions.",
+          "weight": 25
+        },
+        {
+          "dimension": "evidence_grounding",
+          "description": "Product logic uses the supplied evidence and labels hypotheses honestly.",
+          "weight": 25
+        },
+        {
+          "dimension": "feasibility",
+          "description": "The plans respect security, procurement, adoption, and implementation realities.",
+          "weight": 25
+        },
+        {
+          "dimension": "portfolio_judgment",
+          "description": "The comparison exposes trade-offs and chooses an informative first test.",
+          "weight": 25
+        }
+      ]
+    },
+    {
+      "id": "architecture-simple-image-jobs",
+      "canary": "v2-neutral-010",
+      "category": "architecture",
+      "difficulty": "simple",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {},
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "Design a small architecture for asynchronous image-resize jobs. Facts: one API service accepts uploads, one worker performs resizing, peak load is 20 jobs per second, a job may be retried, duplicate output must be harmless, and status must be queryable for 24 hours. Return only valid JSON with keys components, request_flow, idempotency_key, retry_policy, status_retention_hours, failure_modes, delivery_semantics, and deployment_scope. Set delivery_semantics to at_least_once and deployment_scope to single_region."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_json_equals",
+          "path": "status_retention_hours",
+          "expected": 24,
+          "critical": true,
+          "weight": 15
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(queue|broker)",
+            "(?i)worker"
+          ],
+          "critical": true,
+          "weight": 25
+        },
+        {
+          "type": "output_regex",
+          "pattern": "(?i)idempoten|deduplicat|same output key",
+          "critical": true,
+          "weight": 25
+        },
+        {
+          "type": "output_regex",
+          "pattern": "(?i)retry|backoff|dead.?letter",
+          "weight": 20
+        },
+        {
+          "type": "output_json_equals",
+          "path": "delivery_semantics",
+          "expected": "at_least_once",
+          "critical": true,
+          "weight": 8
+        },
+        {
+          "type": "output_json_equals",
+          "path": "deployment_scope",
+          "expected": "single_region",
+          "critical": true,
+          "weight": 7
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "fitness_for_scale",
+          "description": "The design fits the stated workload without unnecessary machinery.",
+          "weight": 30
+        },
+        {
+          "dimension": "failure_reasoning",
+          "description": "Retries, duplicates, and unavailable components are handled coherently.",
+          "weight": 30
+        },
+        {
+          "dimension": "clarity",
+          "description": "The component responsibilities and flow are easy to implement.",
+          "weight": 20
+        },
+        {
+          "dimension": "tradeoff_quality",
+          "description": "The design explains key choices without unsupported certainty.",
+          "weight": 20
+        }
+      ]
+    },
+    {
+      "id": "architecture-intermediate-event-ingestion",
+      "canary": "v2-neutral-011",
+      "category": "architecture",
+      "difficulty": "intermediate",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {},
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "Write an architecture decision for an event-ingestion service. Facts: 10,000 events per second at peak, events for one account must be processed in order, delivery is at least once, producers may resend an event_id, consumers need replay for seven days, payloads contain EU personal data, and deletion requests must propagate within 30 days. Return only valid JSON with keys decision, components, partition_key, deduplication, replay, deletion_flow, failure_modes, tradeoffs, and rejected_options. Preserve every numeric constraint."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_strict_json_object",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "decision",
+          "critical": false,
+          "weight": 5
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "components",
+          "critical": false,
+          "weight": 5
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "partition_key",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "deduplication",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "replay",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "deletion_flow",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "failure_modes",
+          "critical": false,
+          "weight": 5
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "tradeoffs",
+          "critical": false,
+          "weight": 5
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "rejected_options",
+          "critical": false,
+          "weight": 5
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "10[,.]?000",
+            "(?i)(seven|7|sete).{0,15}(days|dias)",
+            "(?i)30.{0,10}(days|dias)",
+            "(?i)event_id",
+            "(?i)(at[- ]least[- ]once|pelo menos uma vez)",
+            "(?i)(account_id|account|conta)"
+          ],
+          "critical": true,
+          "weight": 25
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "constraint_integration",
+          "description": "The design reconciles ordering, duplicates, replay, throughput, and deletion.",
+          "weight": 30
+        },
+        {
+          "dimension": "failure_reasoning",
+          "description": "Failure modes and recovery behavior are concrete and internally consistent.",
+          "weight": 25
+        },
+        {
+          "dimension": "privacy_design",
+          "description": "Retention and deletion are treated as architecture concerns, not footnotes.",
+          "weight": 25
+        },
+        {
+          "dimension": "tradeoff_quality",
+          "description": "Rejected options and operational costs are explained fairly.",
+          "weight": 20
+        }
+      ]
+    },
+    {
+      "id": "architecture-hard-multi-region-ledger",
+      "canary": "v2-neutral-012",
+      "category": "architecture",
+      "difficulty": "hard",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {},
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "Produce an architecture proposal for a multi-region account-credit ledger. Constraints: writes originate in us-east and eu-west; an account must never spend the same credit twice; regional read availability target is 99.99%; EU ledger data must remain in the EU; cross-region links can fail for 20 minutes; recovery point objective for accepted writes is zero; existing single-region traffic must migrate without downtime; reconciliation must produce an auditable trail. State where strong consistency is required, where stale reads are acceptable, behavior during partition, migration phases, rollback boundaries, and unresolved risks. Return only valid JSON with keys invariants, topology, consistency_boundaries, partition_behavior, reconciliation, migration, rollback, observability, rejected_options, and unresolved_risks."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_strict_json_object",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "invariants",
+          "critical": false,
+          "weight": 3
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "topology",
+          "critical": false,
+          "weight": 3
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "consistency_boundaries",
+          "critical": false,
+          "weight": 3
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "partition_behavior",
+          "critical": false,
+          "weight": 3
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "reconciliation",
+          "critical": false,
+          "weight": 3
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "migration",
+          "critical": false,
+          "weight": 3
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "rollback",
+          "critical": false,
+          "weight": 3
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "observability",
+          "critical": false,
+          "weight": 3
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "rejected_options",
+          "critical": false,
+          "weight": 3
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "unresolved_risks",
+          "critical": false,
+          "weight": 3
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(same credit twice|double[- ]spend|gastar.{0,25}(mesmo|mesma).{0,15}(credit|cr[eé]dito)|duplo gasto)",
+            "(?i)(strong consistency|serializ|single writer|consensus|consist[eê]ncia forte|escritor [uú]nico|consenso)"
+          ],
+          "critical": true,
+          "weight": 20
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(EU|eu-west|UE)",
+            "(?i)((remain|residen|stored|permane[cç]|resid|armazenad).{0,40}(EU|UE|eu-west)|(EU|UE|eu-west).{0,40}(remain|residen|stored|permane[cç]|resid|armazenad))"
+          ],
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)20.{0,12}(minutes|minutos)",
+            "(?i)(partition|link|degrad|reject|queue|parti[cç][aã]o|enlace|fila|rejeit)"
+          ],
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)((RPO|recovery point|ponto de recupera[cç][aã]o).{0,25}(zero|0)|(zero|0).{0,25}(RPO|recovery point|ponto de recupera[cç][aã]o))",
+            "(?i)(without downtime|zero downtime|sem indisponibilidade|sem downtime)",
+            "(?i)(audit|auditoria|reconcil)"
+          ],
+          "critical": true,
+          "weight": 20
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "invariant_preservation",
+          "description": "The proposal protects credit correctness under concurrency and partition.",
+          "weight": 30
+        },
+        {
+          "dimension": "distributed_systems_judgment",
+          "description": "Availability and consistency trade-offs are explicit and technically credible.",
+          "weight": 25
+        },
+        {
+          "dimension": "migration_safety",
+          "description": "The no-downtime migration and rollback boundaries are operationally credible.",
+          "weight": 25
+        },
+        {
+          "dimension": "risk_clarity",
+          "description": "Observability, audit, and unresolved risks support a real decision.",
+          "weight": 20
+        }
+      ]
+    },
+    {
+      "id": "pr-review-simple-access-condition",
+      "canary": "v2-neutral-013",
+      "category": "pr_review",
+      "difficulty": "simple",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {
+        "access.js": "export function canAccess(user) {\n  return user.role === 'admin' || 'owner';\n}\n",
+        "PR_CONTEXT.md": "The function must return true only when user.role is exactly admin or owner. Review only; do not modify files.\n"
+      },
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "Review the supplied change against PR_CONTEXT.md. Do not modify files. Return only valid JSON with key findings. Report only actionable correctness defects. Each finding must contain id, file, line, severity, evidence, and fix."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_json_length",
+          "path": "findings",
+          "expected": 1,
+          "critical": true,
+          "weight": 15
+        },
+        {
+          "type": "output_json_all_non_empty",
+          "path": "findings[*]",
+          "required_keys": [
+            "id",
+            "file",
+            "line",
+            "severity",
+            "evidence",
+            "fix"
+          ],
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_regex",
+          "pattern": "(?i)(always truthy|truthy string|'owner'|\"owner\")",
+          "critical": true,
+          "weight": 30
+        },
+        {
+          "type": "output_regex",
+          "pattern": "access\\.js",
+          "critical": true,
+          "weight": 20
+        },
+        {
+          "type": "output_regex",
+          "pattern": "\"line\"\\s*:\\s*2",
+          "weight": 15
+        },
+        {
+          "type": "output_not_regex",
+          "pattern": "(?i)no issue|looks correct",
+          "critical": true,
+          "weight": 10
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "precision",
+          "description": "Findings identify real defects and avoid unsupported or duplicate claims.",
+          "weight": 40
+        },
+        {
+          "dimension": "actionability",
+          "description": "Evidence, impact, and proposed fixes are specific enough to act on.",
+          "weight": 35
+        },
+        {
+          "dimension": "prioritization",
+          "description": "Severity and ordering reflect actual user and system risk.",
+          "weight": 25
+        }
+      ]
+    },
+    {
+      "id": "pr-review-intermediate-transfer-atomicity",
+      "canary": "v2-neutral-014",
+      "category": "pr_review",
+      "difficulty": "intermediate",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {
+        "transfer.py": "def transfer(db, source_id, target_id, amount, request_id):\n    if amount <= 0:\n        raise ValueError('amount must be positive')\n    source = db.get_account(source_id)\n    if source.balance < amount:\n        raise ValueError('insufficient funds')\n    db.update_balance(source_id, source.balance - amount)\n    target = db.get_account(target_id)\n    db.update_balance(target_id, target.balance + amount)\n    db.insert_audit(request_id, source_id, target_id, amount)\n",
+        "PR_CONTEXT.md": "Transfers can run concurrently. A repeated request_id must not move money twice. Balance changes and the audit record must commit atomically. Review only; do not modify files.\n"
+      },
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "Review transfer.py against PR_CONTEXT.md. Do not modify files. Return only valid JSON with key findings. Report the minimal set of distinct correctness defects. Each finding must contain id, file, line, severity, evidence, impact, and fix."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_strict_json_object",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "findings",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_all_non_empty",
+          "path": "findings[*]",
+          "required_keys": [
+            "id",
+            "file",
+            "line",
+            "severity",
+            "evidence",
+            "impact",
+            "fix"
+          ],
+          "critical": true,
+          "weight": 15
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(lost update|race|concurrent|atualiza[cç][aã]o perdida|condi[cç][aã]o de corrida|concorr)",
+            "(?i)(balance|saldo)"
+          ],
+          "critical": true,
+          "weight": 25
+        },
+        {
+          "type": "output_regex",
+          "pattern": "(?i)(idempoten|duplicate|repeated request_id|duplicad|request_id repetid)",
+          "critical": true,
+          "weight": 20
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(transaction|atomic|transa[cç][aã]o|at[oô]mic)",
+            "(?i)(audit|auditoria)"
+          ],
+          "critical": true,
+          "weight": 20
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "precision",
+          "description": "Findings cover the three root defects without false positives or double counting.",
+          "weight": 40
+        },
+        {
+          "dimension": "actionability",
+          "description": "Each fix addresses the concurrency, idempotency, or atomicity root cause.",
+          "weight": 35
+        },
+        {
+          "dimension": "prioritization",
+          "description": "Severity reflects the monetary and audit impact of each defect.",
+          "weight": 25
+        }
+      ]
+    },
+    {
+      "id": "pr-review-hard-tenant-cache",
+      "canary": "v2-neutral-015",
+      "category": "pr_review",
+      "difficulty": "hard",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {
+        "documents.ts": "type User = { id: string; tenantId: string };\ntype Document = { id: string; tenantId: string; body: string };\n\nconst cache = new Map<string, Document>();\n\nexport async function getDocument(user: User, documentId: string, db: any, logger: any) {\n  const cached = cache.get(documentId);\n  if (cached) return cached;\n\n  const document = await db.documents.findById(documentId);\n  cache.set(documentId, document);\n  logger.info('document loaded', { user, document });\n  if (document.tenantId !== user.tenantId) throw new Error('forbidden');\n  return document;\n}\n",
+        "PR_CONTEXT.md": "Tenant data must never cross tenant boundaries. Unauthorized documents must not enter shared caches. Logs may contain IDs but not document bodies or the full user object. Review only; do not modify files.\n"
+      },
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "Perform a correctness and security review of documents.ts using PR_CONTEXT.md. Do not modify files. Return only valid JSON with key findings. Report exactly three root-cause findings, each with id, file, line, severity, evidence, exploit_or_failure_scenario, and fix."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_strict_json_object",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_length",
+          "path": "findings",
+          "expected": 3,
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_all_non_empty",
+          "path": "findings[*]",
+          "required_keys": [
+            "id",
+            "file",
+            "line",
+            "severity",
+            "evidence",
+            "exploit_or_failure_scenario",
+            "fix"
+          ],
+          "critical": true,
+          "weight": 15
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(cache key|documentId|chave.{0,20}cache)",
+            "(?i)(tenant|inquilino)"
+          ],
+          "critical": true,
+          "weight": 25
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(authoriz|tenant check|autoriza[cç][aã]o|verifica[cç][aã]o.{0,20}tenant)",
+            "(?i)(after|before|antes|depois)",
+            "(?i)(cache|return|retorn)"
+          ],
+          "critical": true,
+          "weight": 25
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(log|logger)",
+            "(?i)(body|full user|sensitive|PII|corpo|usu[aá]rio completo|sens[ií]vel)"
+          ],
+          "critical": true,
+          "weight": 15
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "precision",
+          "description": "Findings isolate the three tenant, authorization, and logging defects without noise.",
+          "weight": 40
+        },
+        {
+          "dimension": "actionability",
+          "description": "Fixes identify safe cache keys, authorization order, and log redaction.",
+          "weight": 35
+        },
+        {
+          "dimension": "prioritization",
+          "description": "Severity distinguishes cross-tenant exposure from secondary logging risk.",
+          "weight": 25
+        }
+      ]
+    },
+    {
+      "id": "technical-writing-simple-idempotency",
+      "canary": "v2-neutral-016",
+      "category": "technical_writing",
+      "difficulty": "simple",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {},
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "Write a 140-180 word explanation of idempotency for a junior backend developer. Use only these facts: an idempotency key identifies one logical request; the server stores the first successful result for that key; a retry with the same key returns that stored result; a different key represents a different logical request; storage retention is 24 hours. Include one concrete payment example and one limitation. Return only valid JSON with keys title, body, facts_used, and guarantees. guarantees must contain exactly_once and infinite_retention, both set to false."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_strict_json_object",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_word_count_range",
+          "path": "body",
+          "minimum": 140,
+          "maximum": 180,
+          "critical": true,
+          "weight": 20
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(idempotency key|chave de idempotência)",
+            "(?i)(first successful result|primeiro resultado.{0,20}(successful|bem-sucedido|sucesso))",
+            "(?i)(same key|mesma chave)",
+            "(?i)(stored result|resultado (armazenado|salvo))"
+          ],
+          "critical": true,
+          "weight": 25
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(different key|chave diferente)",
+            "(?i)(different logical request|requisiç[aã]o lógica diferente)"
+          ],
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_regex",
+          "pattern": "(?i)24 (hours|horas)",
+          "critical": true,
+          "weight": 15
+        },
+        {
+          "type": "output_json_equals",
+          "path": "guarantees.exactly_once",
+          "expected": false,
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_equals",
+          "path": "guarantees.infinite_retention",
+          "expected": false,
+          "critical": true,
+          "weight": 10
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "clarity",
+          "description": "A junior developer can understand the concept on first reading.",
+          "weight": 30
+        },
+        {
+          "dimension": "technical_precision",
+          "description": "The explanation preserves the supplied behavior and limitation accurately.",
+          "weight": 30
+        },
+        {
+          "dimension": "example_quality",
+          "description": "The payment example makes the concept concrete without adding false guarantees.",
+          "weight": 20
+        },
+        {
+          "dimension": "style",
+          "description": "The prose is concise, natural, and appropriate for the audience.",
+          "weight": 20
+        }
+      ]
+    },
+    {
+      "id": "technical-writing-intermediate-design-memo",
+      "canary": "v2-neutral-017",
+      "category": "technical_writing",
+      "difficulty": "intermediate",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {},
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "Write a 500-650 word design memo comparing a database-backed job table with a managed queue. Facts: current PostgreSQL peak CPU is 65%; expected load is 40 jobs per second; jobs take 2-90 seconds; duplicate processing is acceptable if side effects are idempotent; the team has no queue operations experience; managed queue cost is estimated at USD 180 per month; launch is in six weeks. Include context, decision drivers, options, recommendation, risks, and a trigger to revisit the decision. Do not invent benchmarks or availability figures. Return only valid JSON with keys title, memo, and stated_assumptions."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_strict_json_object",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_word_count_range",
+          "path": "memo",
+          "minimum": 500,
+          "maximum": 650,
+          "critical": true,
+          "weight": 15
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "65%",
+            "(?i)40 (jobs|tarefas|trabalhos) (per second|por segundo)",
+            "(?i)2\\s*(?:-|to|a)\\s*90 (seconds|segundos)",
+            "(?i)(USD|US\\$|\\$)\\s*180|180\\s*(USD|dollars|dólares)",
+            "(?i)(six weeks|seis semanas)"
+          ],
+          "critical": true,
+          "weight": 20
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(job table|database-backed|tabela de (jobs|tarefas)|basead[ao] em banco de dados)",
+            "(?i)(managed queue|fila gerenciada)"
+          ],
+          "critical": true,
+          "weight": 20
+        },
+        {
+          "type": "output_regex",
+          "pattern": "(?i)(revisit|trigger|threshold|reavaliar|gatilho|limiar)",
+          "weight": 15
+        },
+        {
+          "type": "output_not_regex",
+          "pattern": "(?i)99\\.99%|99,99%|benchmark shows|benchmark (mostra|demonstra)|guaranteed delivery|entrega garantida|zero maintenance|manutenç[aã]o zero|sem manutenç[aã]o",
+          "critical": true,
+          "weight": 20
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "decision_clarity",
+          "description": "The memo makes the choice and its rationale easy to review.",
+          "weight": 25
+        },
+        {
+          "dimension": "tradeoff_depth",
+          "description": "Both options receive concrete operational and delivery analysis.",
+          "weight": 30
+        },
+        {
+          "dimension": "evidence_discipline",
+          "description": "Facts and assumptions remain distinct, with no invented support.",
+          "weight": 25
+        },
+        {
+          "dimension": "technical_style",
+          "description": "The document is concise, cohesive, and suited to an engineering review.",
+          "weight": 20
+        }
+      ]
+    },
+    {
+      "id": "technical-writing-hard-incident-analysis",
+      "canary": "v2-neutral-018",
+      "category": "technical_writing",
+      "difficulty": "hard",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {},
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "Write a 750-950 word blameless incident analysis from the evidence below. Timeline: 09:02 deploy v3.8 began; 09:07 write latency rose from 120 ms to 1.8 s; 09:11 error rate reached 14%; 09:14 rollback began; 09:19 error rate returned below 1%; 09:27 latency returned to 130 ms. Evidence: v3.8 added a synchronous audit insert for every write; the audit table had no index on account_id; database CPU peaked at 96%; lock waits rose 18x; no data was lost; 2,340 requests failed and clients retried 2,010; staging had one-tenth production data; the exact contribution of the missing index versus synchronous execution is unknown. Include impact, detection, timeline, contributing factors, unknowns, at least four corrective actions with owners and deadlines, and validation measures. Do not call an unproven factor the root cause. Return only valid JSON with keys title, analysis, unknowns, and actions."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_strict_json_object",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_word_count_range",
+          "path": "analysis",
+          "minimum": 750,
+          "maximum": 950,
+          "critical": true,
+          "weight": 15
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "09:02",
+            "09:07",
+            "09:11",
+            "09:14",
+            "09:19",
+            "09:27"
+          ],
+          "critical": true,
+          "weight": 20
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "2[,.]340",
+            "2[,.]010",
+            "(?i)(no data (was )?lost|nenhum dado (foi )?perdido|n[aã]o houve perda de dados)"
+          ],
+          "critical": true,
+          "weight": 20
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(unknown|cannot determine|not isolated|desconhecid[ao]|n[aã]o (é possível )?determinar|n[aã]o isolad[ao])",
+            "(?i)(missing index|without an index|synchronous|índice ausente|sem índice|síncron[ao])"
+          ],
+          "critical": true,
+          "weight": 25
+        },
+        {
+          "type": "output_not_regex",
+          "pattern": "(?i)engineer error|erro do engenheiro|obvious negligence|negligência óbvia|definitive root cause was the missing index|causa raiz definitiva (foi|era).{0,20}(índice|index)|zero customer impact|impacto zero (ao|no) cliente",
+          "critical": true,
+          "weight": 10
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "causal_discipline",
+          "description": "The analysis distinguishes evidence, contributing factors, and unresolved causality.",
+          "weight": 30
+        },
+        {
+          "dimension": "operational_usefulness",
+          "description": "Actions, owners, deadlines, and validation measures reduce recurrence risk.",
+          "weight": 25
+        },
+        {
+          "dimension": "narrative_clarity",
+          "description": "Readers can follow impact, detection, response, and recovery without ambiguity.",
+          "weight": 25
+        },
+        {
+          "dimension": "blameless_style",
+          "description": "The tone supports learning while remaining specific about system failures.",
+          "weight": 20
+        }
+      ]
+    },
+    {
+      "id": "documentation-simple-cli-reference",
+      "canary": "v2-neutral-019",
+      "category": "documentation",
+      "difficulty": "simple",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {},
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "Write a concise CLI reference using only this help output: `acme sync [--dry-run] [--format json|text] <source> <destination>`. Facts: --dry-run previews changes; --format defaults to text; source and destination are required paths; exit 0 means success; exit 2 means invalid arguments. Include synopsis, arguments, options, exit codes, and two examples. Do not invent flags. Return only valid JSON with keys title and markdown."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_strict_json_object",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "title",
+          "critical": true,
+          "weight": 5
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "markdown",
+          "critical": true,
+          "weight": 5
+        },
+        {
+          "type": "output_json_all_patterns",
+          "path": "markdown",
+          "patterns": [
+            "acme sync",
+            "--dry-run",
+            "--format json\\|text",
+            "<source>",
+            "<destination>"
+          ],
+          "critical": true,
+          "weight": 30
+        },
+        {
+          "type": "output_json_all_patterns",
+          "path": "markdown",
+          "patterns": [
+            "(?i)(default|defaults|padr[aã]o).{0,30}text",
+            "(?i)(exit|sa[ií]da).{0,20}0",
+            "(?i)(exit|sa[ií]da).{0,20}2"
+          ],
+          "critical": true,
+          "weight": 25
+        },
+        {
+          "type": "output_regex_count",
+          "pattern": "acme sync",
+          "minimum": 3,
+          "maximum": 5,
+          "weight": 25
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "findability",
+          "description": "A reader can quickly locate syntax, options, arguments, and exit behavior.",
+          "weight": 30
+        },
+        {
+          "dimension": "accuracy",
+          "description": "The reference preserves every supplied CLI fact without invented behavior.",
+          "weight": 30
+        },
+        {
+          "dimension": "example_quality",
+          "description": "Examples are realistic and illuminate different supported options.",
+          "weight": 20
+        },
+        {
+          "dimension": "conciseness",
+          "description": "The reference is complete without burying the command in prose.",
+          "weight": 20
+        }
+      ]
+    },
+    {
+      "id": "documentation-intermediate-login-troubleshooting",
+      "canary": "v2-neutral-020",
+      "category": "documentation",
+      "difficulty": "intermediate",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {},
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "Write a troubleshooting guide from these facts only. Symptom A: HTTP 401 with log code TOKEN_EXPIRED; action: refresh the session, then retry once. Symptom B: HTTP 403 with log code TENANT_DISABLED; action: contact the tenant administrator; retrying does not help. Symptom C: HTTP 429 with Retry-After; action: wait exactly the indicated seconds before retrying. Symptom D: HTTP 500 with request_id; action: record request_id and UTC timestamp, then escalate. Never ask users to paste access tokens or cookies. Include a decision table, step-by-step branches, stop conditions, and escalation data. Return only valid JSON with keys title and markdown."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_strict_json_object",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "title",
+          "critical": true,
+          "weight": 5
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "markdown",
+          "critical": true,
+          "weight": 5
+        },
+        {
+          "type": "output_json_all_patterns",
+          "path": "markdown",
+          "patterns": [
+            "401",
+            "TOKEN_EXPIRED",
+            "403",
+            "TENANT_DISABLED",
+            "429",
+            "Retry-After",
+            "500",
+            "request_id"
+          ],
+          "critical": true,
+          "weight": 25
+        },
+        {
+          "type": "output_json_all_patterns",
+          "path": "markdown",
+          "patterns": [
+            "(?i)(403|TENANT_DISABLED)",
+            "(?i)(do not retry|retrying does not help|n[aã]o (tente|repita)|tentativas? n[aã]o (ajuda|resolve)|contact.{0,50}administrator|contat.{0,50}administrador)"
+          ],
+          "critical": true,
+          "weight": 15
+        },
+        {
+          "type": "output_json_all_patterns",
+          "path": "markdown",
+          "patterns": [
+            "(?i)(429|Retry-After)",
+            "(?i)((indicated|specified|informad|indicad).{0,30}(second|segundo)|(second|segundo).{0,30}(indicated|specified|informad|indicad))"
+          ],
+          "critical": true,
+          "weight": 15
+        },
+        {
+          "type": "output_json_all_patterns",
+          "path": "markdown",
+          "patterns": [
+            "request_id",
+            "(?i)(UTC.{0,25}(timestamp|time|hor[aá]rio|data)|(timestamp|hor[aá]rio|data).{0,25}UTC)"
+          ],
+          "critical": true,
+          "weight": 15
+        },
+        {
+          "type": "output_json_all_patterns",
+          "path": "markdown",
+          "patterns": [
+            "(?i)(never|do not|nunca|n[aã]o).{0,70}(paste|send|share|colar|enviar|compartilhar).{0,40}(access token|token de acesso|cookie)"
+          ],
+          "critical": true,
+          "weight": 10
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "diagnostic_flow",
+          "description": "Readers can map a symptom to the correct action without ambiguity.",
+          "weight": 30
+        },
+        {
+          "dimension": "safety",
+          "description": "The guide avoids credential exposure and wasteful or harmful retries.",
+          "weight": 25
+        },
+        {
+          "dimension": "task_completion",
+          "description": "Each branch has a clear action and stop or escalation condition.",
+          "weight": 25
+        },
+        {
+          "dimension": "scannability",
+          "description": "The table and steps support use during an incident.",
+          "weight": 20
+        }
+      ]
+    },
+    {
+      "id": "documentation-hard-api-v2-migration",
+      "canary": "v2-neutral-021",
+      "category": "documentation",
+      "difficulty": "hard",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {},
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "Write a migration guide from API v1 to v2 using only these facts: v1 `POST /charges` accepts `amount_cents` integer and returns `charge_id`; v2 `POST /v2/charges` accepts `amount` as a decimal string plus required `currency`, and returns `id`; v2 requires `Idempotency-Key`; v1 remains available until 2027-03-31; sandbox supports both versions now; production v2 starts 2026-11-01; rollback means switching traffic back to v1 while preserving the v2 idempotency key in logs; retries may reuse a key only for the same logical charge. Include compatibility table, prerequisites, before-and-after requests and responses, phased rollout, validation, rollback, and known incompatibilities. Do not invent SDK methods or headers. Return only valid JSON with keys title and markdown."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_strict_json_object",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "title",
+          "critical": true,
+          "weight": 5
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "markdown",
+          "critical": true,
+          "weight": 5
+        },
+        {
+          "type": "output_json_all_patterns",
+          "path": "markdown",
+          "patterns": [
+            "POST /charges",
+            "amount_cents",
+            "charge_id",
+            "POST /v2/charges",
+            "(?i)\\bamount\\b",
+            "(?i)\\bcurrency\\b",
+            "Idempotency-Key",
+            "(?i)\\bid\\b"
+          ],
+          "critical": true,
+          "weight": 30
+        },
+        {
+          "type": "output_json_all_patterns",
+          "path": "markdown",
+          "patterns": [
+            "2027-03-31",
+            "2026-11-01"
+          ],
+          "critical": true,
+          "weight": 15
+        },
+        {
+          "type": "output_json_all_patterns",
+          "path": "markdown",
+          "patterns": [
+            "(?i)(same logical charge|mesma cobran[cç]a l[oó]gica)",
+            "(?i)(same|reuse|reutiliz|mesm)",
+            "(?i)(key|chave)"
+          ],
+          "critical": true,
+          "weight": 15
+        },
+        {
+          "type": "output_json_all_patterns",
+          "path": "markdown",
+          "patterns": [
+            "(?i)(rollback|revert|revers[aã]o|reverter)",
+            "v1",
+            "(?i)(idempotency key|chave de idempot[êe]ncia)",
+            "(?i)log"
+          ],
+          "critical": true,
+          "weight": 20
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "migration_completeness",
+          "description": "The guide takes a team from prerequisites through validation and rollback.",
+          "weight": 30
+        },
+        {
+          "dimension": "technical_accuracy",
+          "description": "Endpoints, fields, dates, and retry semantics remain exact.",
+          "weight": 30
+        },
+        {
+          "dimension": "operational_safety",
+          "description": "The rollout and rollback reduce migration risk and preserve traceability.",
+          "weight": 25
+        },
+        {
+          "dimension": "usability",
+          "description": "Examples and the compatibility table make the change easy to apply.",
+          "weight": 15
+        }
+      ]
+    },
+    {
+      "id": "social-media-simple-release-post",
+      "canary": "v2-neutral-022",
+      "category": "social_media",
+      "difficulty": "simple",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {},
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "Write one LinkedIn post of 450-650 characters from this release note: Acme CLI 2.4 adds `sync --dry-run`, supports JSON output with `--format json`, and fixes a Windows path bug. It is available today. Audience: software developers. Tone: direct and technical. Include one concrete use case and a low-pressure call to action. Store the exact final CTA sentence in cta and include it verbatim at the end of post. Do not claim speed, security, adoption, or compatibility beyond the note. Return only valid JSON with keys post, character_count, and cta."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_strict_json_object",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_character_count_range",
+          "path": "post",
+          "minimum": 450,
+          "maximum": 650,
+          "critical": true,
+          "weight": 20
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "Acme CLI 2\\.4",
+            "sync --dry-run",
+            "--format json",
+            "(?i)(Windows path|caminho.{0,20}Windows)"
+          ],
+          "critical": true,
+          "weight": 30
+        },
+        {
+          "type": "output_regex",
+          "pattern": "(?i)(available today|out today|released today|disponível hoje|lançad[ao] hoje)",
+          "weight": 10
+        },
+        {
+          "type": "output_not_regex",
+          "pattern": "(?i)faster|fastest|mais rápid[ao]|more secure|mais segur[ao]|thousands of users|milhares de usuários|all Windows versions|todas as versões do Windows|game.changer|revolutionary|revolucionári[ao]",
+          "critical": true,
+          "weight": 25
+        },
+        {
+          "type": "output_json_ends_with_path",
+          "text_path": "post",
+          "suffix_path": "cta",
+          "require_non_empty": true,
+          "critical": true,
+          "weight": 5
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "channel_fit",
+          "description": "The post feels native to a professional developer audience on LinkedIn.",
+          "weight": 25
+        },
+        {
+          "dimension": "hook_and_flow",
+          "description": "The opening earns attention and the post reads cohesively.",
+          "weight": 25
+        },
+        {
+          "dimension": "credibility",
+          "description": "The tone is concrete and avoids inflated claims.",
+          "weight": 25
+        },
+        {
+          "dimension": "usefulness",
+          "description": "The use case and call to action give readers a reason to engage.",
+          "weight": 25
+        }
+      ]
+    },
+    {
+      "id": "social-media-intermediate-engineering-thread",
+      "canary": "v2-neutral-023",
+      "category": "social_media",
+      "difficulty": "intermediate",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {},
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "Create a five-post X thread about an incident improvement. Facts: on 8 June, checkout latency rose from 220 ms to 1.4 s for 17 minutes; no orders were lost; the team traced contention to a synchronous audit write; audit writes now use a queue; the p95 latency after the change is 240 ms; one week of observation has passed. Each post must be at most 260 characters. Use a calm engineering voice, explain one lesson, and end with a question for peers. Do not call the system fixed forever or claim revenue impact. Return only valid JSON with key posts."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_strict_json_object",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(8 June|8 de junho)",
+            "220 ms",
+            "1[.,]4 s",
+            "(?i)17 (minutes|minutos)",
+            "(?i)(no orders were lost|nenhum pedido (foi )?perdido|n[aã]o houve perda de pedidos)",
+            "(?i)(queue|fila)",
+            "240 ms",
+            "(?i)(one week|uma semana)"
+          ],
+          "critical": true,
+          "weight": 50
+        },
+        {
+          "type": "output_not_regex",
+          "pattern": "(?i)fixed forever|corrigid[ao] para sempre|will never recur|nunca (vai|irá) (se )?repetir|saved .*revenue|salv.{0,20}receita|zero risk|risco zero|100% solved|100% resolvid[ao]",
+          "critical": true,
+          "weight": 25
+        },
+        {
+          "type": "output_regex",
+          "pattern": "\\?\\s*\"\\s*[\\]}]+\\s*$",
+          "critical": true,
+          "weight": 15
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "thread_structure",
+          "description": "The five posts form a coherent progression rather than fragments.",
+          "weight": 25
+        },
+        {
+          "dimension": "technical_accessibility",
+          "description": "The lesson is useful to engineers without losing factual precision.",
+          "weight": 25
+        },
+        {
+          "dimension": "credibility",
+          "description": "The thread communicates improvement with appropriate uncertainty.",
+          "weight": 25
+        },
+        {
+          "dimension": "engagement_quality",
+          "description": "The hook and closing question invite substantive discussion.",
+          "weight": 25
+        }
+      ]
+    },
+    {
+      "id": "social-media-hard-multi-platform-research",
+      "canary": "v2-neutral-024",
+      "category": "social_media",
+      "difficulty": "hard",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {},
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "Adapt one research update for three channels. Source facts: a pilot with 120 users ran from 2-15 July in Recife; median latency fell from 180 ms to 135 ms; error rate stayed at 0.8%; three users reported login timeouts; expansion has not been decided. Deliver: one LinkedIn post of 700-1,000 characters, one X post of at most 260 characters, and one Mastodon post of at most 450 characters. Each version must state 120 users, Recife, 180 ms to 135 ms, 0.8%, three login timeouts, and that expansion is undecided; the date range must appear in at least one version. Each must stand alone, fit its channel, and use no more than two hashtags. Return only valid JSON with keys linkedin, x, mastodon, and claims. claims must contain causation_established, expansion_decided, and broad_generalization_supported, all set to false."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_strict_json_object",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_character_count_range",
+          "path": "linkedin",
+          "minimum": 700,
+          "maximum": 1000,
+          "critical": true,
+          "weight": 9
+        },
+        {
+          "type": "output_character_count_range",
+          "path": "x",
+          "minimum": 1,
+          "maximum": 260,
+          "critical": true,
+          "weight": 9
+        },
+        {
+          "type": "output_character_count_range",
+          "path": "mastodon",
+          "minimum": 1,
+          "maximum": 450,
+          "critical": true,
+          "weight": 9
+        },
+        {
+          "type": "output_json_all_patterns",
+          "path": "linkedin",
+          "patterns": [
+            "(?i)120(?: users| usuários)?",
+            "(?i)Recife",
+            "180 ms",
+            "135 ms",
+            "0[.,]8%",
+            "(?i)(three|3|três).{0,30}(users|login timeouts|usuários|timeouts? de login|tempos? limite de login)",
+            "(?i)(not decided|undecided|no decision|whether to expand|n[aã]o (foi|está) decidid[ao]|sem decis[aã]o|expans[aã]o.{0,20}indefinida)"
+          ],
+          "critical": true,
+          "weight": 8
+        },
+        {
+          "type": "output_json_all_patterns",
+          "path": "x",
+          "patterns": [
+            "(?i)120(?: users| usuários)?",
+            "(?i)Recife",
+            "180 ms",
+            "135 ms",
+            "0[.,]8%",
+            "(?i)(three|3|três).{0,30}(users|login timeouts|usuários|timeouts? de login|tempos? limite de login)",
+            "(?i)(not decided|undecided|no decision|whether to expand|n[aã]o (foi|está) decidid[ao]|sem decis[aã]o|expans[aã]o.{0,20}indefinida)"
+          ],
+          "critical": true,
+          "weight": 8
+        },
+        {
+          "type": "output_json_all_patterns",
+          "path": "mastodon",
+          "patterns": [
+            "(?i)120(?: users| usuários)?",
+            "(?i)Recife",
+            "180 ms",
+            "135 ms",
+            "0[.,]8%",
+            "(?i)(three|3|três).{0,30}(users|login timeouts|usuários|timeouts? de login|tempos? limite de login)",
+            "(?i)(not decided|undecided|no decision|whether to expand|n[aã]o (foi|está) decidid[ao]|sem decis[aã]o|expans[aã]o.{0,20}indefinida)"
+          ],
+          "critical": true,
+          "weight": 8
+        },
+        {
+          "type": "output_regex",
+          "pattern": "(?i)2\\s*(?:-|to|a)\\s*15 (July|de julho)",
+          "weight": 4
+        },
+        {
+          "type": "output_hashtag_count_max",
+          "paths": [
+            "linkedin",
+            "x",
+            "mastodon"
+          ],
+          "maximum": 2,
+          "weight": 10
+        },
+        {
+          "type": "output_json_equals",
+          "path": "claims.causation_established",
+          "expected": false,
+          "critical": true,
+          "weight": 9
+        },
+        {
+          "type": "output_json_equals",
+          "path": "claims.expansion_decided",
+          "expected": false,
+          "critical": true,
+          "weight": 8
+        },
+        {
+          "type": "output_json_equals",
+          "path": "claims.broad_generalization_supported",
+          "expected": false,
+          "critical": true,
+          "weight": 8
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "channel_differentiation",
+          "description": "Each version uses the conventions and reading pattern of its channel.",
+          "weight": 30
+        },
+        {
+          "dimension": "factual_storytelling",
+          "description": "The posts make the data interesting without overstating it.",
+          "weight": 25
+        },
+        {
+          "dimension": "audience_value",
+          "description": "Each post gives its audience a clear reason to care or respond.",
+          "weight": 25
+        },
+        {
+          "dimension": "voice_quality",
+          "description": "The writing feels natural, credible, and cohesive across channels.",
+          "weight": 20
+        }
+      ]
+    },
+    {
+      "id": "bug-resolution-simple-zero-total",
+      "canary": "v2-neutral-025",
+      "category": "bug_resolution",
+      "difficulty": "simple",
+      "evaluation_mode": "objective",
+      "role": "worker",
+      "files": {
+        "percentage.py": "def percentage(part: float, total: float) -> float:\n    return round(part / total * 100, 2)\n",
+        "BUG.md": "percentage(0, 0) raises ZeroDivisionError. Required behavior: return 0.0 when total is zero; preserve current behavior otherwise. Edit only percentage.py. Do not create or run tests.\n"
+      },
+      "allowed_files": [
+        "percentage.py"
+      ],
+      "turns": [
+        {
+          "prompt": "Fix the bug described in BUG.md with the smallest clear change. Edit only the allowed file. Do not create tests and do not execute code."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "python_behavior",
+          "probes": [
+            {
+              "id": "zero-total-zero-part",
+              "module": "percentage",
+              "call": "percentage",
+              "args": [
+                0,
+                0
+              ],
+              "expected_return": 0.0,
+              "expected_type": "float"
+            },
+            {
+              "id": "zero-total-nonzero-part",
+              "module": "percentage",
+              "call": "percentage",
+              "args": [
+                4,
+                0
+              ],
+              "expected_return": 0.0,
+              "expected_type": "float"
+            },
+            {
+              "id": "quarter",
+              "module": "percentage",
+              "call": "percentage",
+              "args": [
+                1,
+                4
+              ],
+              "expected_return": 25.0,
+              "expected_type": "float"
+            },
+            {
+              "id": "rounding",
+              "module": "percentage",
+              "call": "percentage",
+              "args": [
+                1,
+                3
+              ],
+              "expected_return": 33.33,
+              "expected_type": "float"
+            }
+          ],
+          "critical": true,
+          "weight": 100
+        }
+      ],
+      "human_rubric": []
+    },
+    {
+      "id": "bug-resolution-intermediate-cache-expiry",
+      "canary": "v2-neutral-026",
+      "category": "bug_resolution",
+      "difficulty": "intermediate",
+      "evaluation_mode": "objective",
+      "role": "worker",
+      "files": {
+        "cache.py": "def read_entry(entries: dict, key: str, now_ms: int) -> dict:\n    next_entries = {name: dict(entry) for name, entry in entries.items()}\n    entry = next_entries.get(key)\n    if entry is None:\n        return {'value': None, 'entries': next_entries}\n    if entry['expires_at'] < now_ms:\n        return {'value': None, 'entries': next_entries}\n    return {'value': entry['value'], 'entries': next_entries}\n",
+        "BUG.md": "read_entry must remain a pure function that returns an object with keys value and entries. An entry with expires_at <= now_ms is expired: return value null and omit that key from returned entries. A live entry returns its value and all entries unchanged. A missing key returns value null and all entries unchanged. Do not mutate the input mapping. Edit only cache.py. Do not create or run tests.\n"
+      },
+      "allowed_files": [
+        "cache.py"
+      ],
+      "turns": [
+        {
+          "prompt": "Fix both behaviors in BUG.md without changing the public API. Edit only cache.py. Do not create tests and do not execute code."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "python_behavior",
+          "probes": [
+            {
+              "id": "exact-expiry-removes-entry",
+              "module": "cache",
+              "call": "read_entry",
+              "args": [
+                {
+                  "a": {
+                    "value": "alpha",
+                    "expires_at": 110
+                  },
+                  "b": {
+                    "value": "beta",
+                    "expires_at": 300
+                  }
+                },
+                "a",
+                110
+              ],
+              "expected_return": {
+                "value": null,
+                "entries": {
+                  "b": {
+                    "value": "beta",
+                    "expires_at": 300
+                  }
+                }
+              },
+              "expected_type": "dict"
+            },
+            {
+              "id": "past-expiry-removes-entry",
+              "module": "cache",
+              "call": "read_entry",
+              "args": [
+                {
+                  "a": {
+                    "value": "alpha",
+                    "expires_at": 110
+                  }
+                },
+                "a",
+                111
+              ],
+              "expected_return": {
+                "value": null,
+                "entries": {}
+              },
+              "expected_type": "dict"
+            },
+            {
+              "id": "live-entry-is-preserved",
+              "module": "cache",
+              "call": "read_entry",
+              "args": [
+                {
+                  "a": {
+                    "value": "alpha",
+                    "expires_at": 110
+                  }
+                },
+                "a",
+                109
+              ],
+              "expected_return": {
+                "value": "alpha",
+                "entries": {
+                  "a": {
+                    "value": "alpha",
+                    "expires_at": 110
+                  }
+                }
+              },
+              "expected_type": "dict"
+            },
+            {
+              "id": "missing-entry-preserves-state",
+              "module": "cache",
+              "call": "read_entry",
+              "args": [
+                {
+                  "a": {
+                    "value": "alpha",
+                    "expires_at": 110
+                  }
+                },
+                "missing",
+                109
+              ],
+              "expected_return": {
+                "value": null,
+                "entries": {
+                  "a": {
+                    "value": "alpha",
+                    "expires_at": 110
+                  }
+                }
+              },
+              "expected_type": "dict"
+            }
+          ],
+          "critical": true,
+          "weight": 100
+        }
+      ],
+      "human_rubric": []
+    },
+    {
+      "id": "bug-resolution-hard-webhook-race",
+      "canary": "v2-neutral-027",
+      "category": "bug_resolution",
+      "difficulty": "hard",
+      "evaluation_mode": "objective",
+      "role": "worker",
+      "files": {
+        "events.py": "from copy import deepcopy\n\n\ndef apply_event(state: dict, event: dict) -> dict:\n    next_state = deepcopy(state)\n    duplicate = any(item['event_id'] == event['event_id'] for item in state['processed_events'])\n    if duplicate:\n        return {'accepted': False, 'reason': 'duplicate_event', 'state': next_state}\n    next_state['balance_cents'] += event['delta_cents']\n    next_state['last_sequence'] = event['sequence']\n    next_state['processed_events'].append({'tenant_id': event['tenant_id'], 'event_id': event['event_id']})\n    return {'accepted': True, 'reason': 'applied', 'state': next_state}\n",
+        "BUG.md": "apply_event must stay pure and return {accepted, reason, state}. Accept an event only when event.tenant_id equals state.tenant_id, event.sequence equals state.last_sequence + 1, and the composite pair (tenant_id, event_id) is absent from processed_events. On acceptance, add delta_cents to balance_cents, advance last_sequence, append the composite pair, and return reason applied. Reject with reason tenant_mismatch, duplicate_event, or invalid_sequence as applicable. Every rejection must return state structurally identical to the input. Edit only events.py. Do not create or run tests.\n"
+      },
+      "allowed_files": [
+        "events.py"
+      ],
+      "turns": [
+        {
+          "prompt": "Fix the event-state invariant bugs exactly as specified in BUG.md. Edit only events.py. Do not create tests and do not execute code."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "python_behavior",
+          "probes": [
+            {
+              "id": "accepts-next-event",
+              "module": "events",
+              "call": "apply_event",
+              "args": [
+                {
+                  "tenant_id": "tenant-a",
+                  "balance_cents": 1000,
+                  "last_sequence": 2,
+                  "processed_events": []
+                },
+                {
+                  "tenant_id": "tenant-a",
+                  "event_id": "evt-3",
+                  "sequence": 3,
+                  "delta_cents": 250
+                }
+              ],
+              "expected_return": {
+                "accepted": true,
+                "reason": "applied",
+                "state": {
+                  "tenant_id": "tenant-a",
+                  "balance_cents": 1250,
+                  "last_sequence": 3,
+                  "processed_events": [
+                    {
+                      "tenant_id": "tenant-a",
+                      "event_id": "evt-3"
+                    }
+                  ]
+                }
+              },
+              "expected_type": "dict"
+            },
+            {
+              "id": "rejects-tenant-mismatch-without-state-change",
+              "module": "events",
+              "call": "apply_event",
+              "args": [
+                {
+                  "tenant_id": "tenant-a",
+                  "balance_cents": 1000,
+                  "last_sequence": 2,
+                  "processed_events": []
+                },
+                {
+                  "tenant_id": "tenant-b",
+                  "event_id": "evt-3",
+                  "sequence": 3,
+                  "delta_cents": 250
+                }
+              ],
+              "expected_return": {
+                "accepted": false,
+                "reason": "tenant_mismatch",
+                "state": {
+                  "tenant_id": "tenant-a",
+                  "balance_cents": 1000,
+                  "last_sequence": 2,
+                  "processed_events": []
+                }
+              },
+              "expected_type": "dict"
+            },
+            {
+              "id": "rejects-composite-duplicate-without-state-change",
+              "module": "events",
+              "call": "apply_event",
+              "args": [
+                {
+                  "tenant_id": "tenant-a",
+                  "balance_cents": 1000,
+                  "last_sequence": 2,
+                  "processed_events": [
+                    {
+                      "tenant_id": "tenant-a",
+                      "event_id": "evt-shared"
+                    }
+                  ]
+                },
+                {
+                  "tenant_id": "tenant-a",
+                  "event_id": "evt-shared",
+                  "sequence": 3,
+                  "delta_cents": 250
+                }
+              ],
+              "expected_return": {
+                "accepted": false,
+                "reason": "duplicate_event",
+                "state": {
+                  "tenant_id": "tenant-a",
+                  "balance_cents": 1000,
+                  "last_sequence": 2,
+                  "processed_events": [
+                    {
+                      "tenant_id": "tenant-a",
+                      "event_id": "evt-shared"
+                    }
+                  ]
+                }
+              },
+              "expected_type": "dict"
+            },
+            {
+              "id": "same-id-other-tenant-is-not-a-duplicate",
+              "module": "events",
+              "call": "apply_event",
+              "args": [
+                {
+                  "tenant_id": "tenant-a",
+                  "balance_cents": 1000,
+                  "last_sequence": 2,
+                  "processed_events": [
+                    {
+                      "tenant_id": "tenant-b",
+                      "event_id": "evt-shared"
+                    }
+                  ]
+                },
+                {
+                  "tenant_id": "tenant-a",
+                  "event_id": "evt-shared",
+                  "sequence": 3,
+                  "delta_cents": 250
+                }
+              ],
+              "expected_return": {
+                "accepted": true,
+                "reason": "applied",
+                "state": {
+                  "tenant_id": "tenant-a",
+                  "balance_cents": 1250,
+                  "last_sequence": 3,
+                  "processed_events": [
+                    {
+                      "tenant_id": "tenant-b",
+                      "event_id": "evt-shared"
+                    },
+                    {
+                      "tenant_id": "tenant-a",
+                      "event_id": "evt-shared"
+                    }
+                  ]
+                }
+              },
+              "expected_type": "dict"
+            },
+            {
+              "id": "rejects-sequence-gap-without-state-change",
+              "module": "events",
+              "call": "apply_event",
+              "args": [
+                {
+                  "tenant_id": "tenant-a",
+                  "balance_cents": 1000,
+                  "last_sequence": 2,
+                  "processed_events": []
+                },
+                {
+                  "tenant_id": "tenant-a",
+                  "event_id": "evt-4",
+                  "sequence": 4,
+                  "delta_cents": 250
+                }
+              ],
+              "expected_return": {
+                "accepted": false,
+                "reason": "invalid_sequence",
+                "state": {
+                  "tenant_id": "tenant-a",
+                  "balance_cents": 1000,
+                  "last_sequence": 2,
+                  "processed_events": []
+                }
+              },
+              "expected_type": "dict"
+            }
+          ],
+          "critical": true,
+          "weight": 100
+        }
+      ],
+      "human_rubric": []
+    },
+    {
+      "id": "refactoring-simple-normalize-email",
+      "canary": "v2-neutral-028",
+      "category": "refactoring",
+      "difficulty": "simple",
+      "evaluation_mode": "objective",
+      "role": "worker",
+      "files": {
+        "users.py": "def lookup_email(email: str) -> str:\n    return email.strip().lower()\n\n\ndef invitation_email(email: str) -> str:\n    return email.strip().lower()\n",
+        "TASK.md": "Extract the duplicated email normalization into a private module-level helper named _normalize_email and use it from both lookup_email and invitation_email. Preserve both public function signatures and exact normalization behavior. Edit only users.py. Do not create or run tests.\n"
+      },
+      "allowed_files": [
+        "users.py"
+      ],
+      "turns": [
+        {
+          "prompt": "Perform the behavior-preserving refactor in TASK.md. Edit only users.py. Do not create tests and do not execute code."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "python_behavior",
+          "probes": [
+            {
+              "id": "lookup-normalizes",
+              "module": "users",
+              "call": "lookup_email",
+              "args": [
+                "  A@Example.COM "
+              ],
+              "expected_return": "a@example.com",
+              "expected_type": "str"
+            },
+            {
+              "id": "invitation-normalizes",
+              "module": "users",
+              "call": "invitation_email",
+              "args": [
+                "  B@Example.COM "
+              ],
+              "expected_return": "b@example.com",
+              "expected_type": "str"
+            },
+            {
+              "id": "lookup-empty-after-trim",
+              "module": "users",
+              "call": "lookup_email",
+              "args": [
+                "   "
+              ],
+              "expected_return": "",
+              "expected_type": "str"
+            },
+            {
+              "id": "invitation-preserves-internal-space",
+              "module": "users",
+              "call": "invitation_email",
+              "args": [
+                " First.Last+Tag@Example.COM "
+              ],
+              "expected_return": "first.last+tag@example.com",
+              "expected_type": "str"
+            }
+          ],
+          "critical": true,
+          "weight": 60
+        },
+        {
+          "type": "file_regex",
+          "file": "users.py",
+          "pattern": "(?m)^def _normalize_email\\s*\\(",
+          "critical": false,
+          "weight": 20
+        },
+        {
+          "type": "file_regex_count",
+          "file": "users.py",
+          "pattern": "(?m)^(?!\\s*def\\s).*_normalize_email\\(\\s*(?:email\\s*=\\s*)?email\\s*\\)",
+          "minimum": 2,
+          "maximum": 4,
+          "critical": false,
+          "weight": 20
+        }
+      ],
+      "human_rubric": []
+    },
+    {
+      "id": "refactoring-intermediate-money-format",
+      "canary": "v2-neutral-029",
+      "category": "refactoring",
+      "difficulty": "intermediate",
+      "evaluation_mode": "objective",
+      "role": "worker",
+      "files": {
+        "invoice.py": "def invoice_total(cents):\n    return f'USD {cents / 100:.2f}'\n",
+        "quote.py": "def quote_total(cents):\n    return f'USD {cents / 100:.2f}'\n",
+        "TASK.md": "Create money.py with public function format_usd(cents) containing the shared formatting behavior. Update invoice.py and quote.py to import and call it. Preserve invoice_total and quote_total signatures and exact output. Edit only invoice.py, quote.py, and money.py. Do not create or run tests.\n"
+      },
+      "allowed_files": [
+        "invoice.py",
+        "quote.py",
+        "money.py"
+      ],
+      "turns": [
+        {
+          "prompt": "Perform the shared-helper refactor in TASK.md. Edit only the allowed files. Do not create tests and do not execute code."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "python_behavior",
+          "probes": [
+            {
+              "id": "shared-zero",
+              "module": "money",
+              "call": "format_usd",
+              "args": [
+                0
+              ],
+              "expected_return": "USD 0.00",
+              "expected_type": "str"
+            },
+            {
+              "id": "shared-one-cent",
+              "module": "money",
+              "call": "format_usd",
+              "args": [
+                1
+              ],
+              "expected_return": "USD 0.01",
+              "expected_type": "str"
+            },
+            {
+              "id": "invoice-delegates-behavior",
+              "module": "invoice",
+              "call": "invoice_total",
+              "args": [
+                12345
+              ],
+              "expected_return": "USD 123.45",
+              "expected_type": "str"
+            },
+            {
+              "id": "quote-delegates-behavior",
+              "module": "quote",
+              "call": "quote_total",
+              "args": [
+                12345
+              ],
+              "expected_return": "USD 123.45",
+              "expected_type": "str"
+            }
+          ],
+          "critical": true,
+          "weight": 60
+        },
+        {
+          "type": "file_regex",
+          "file": "money.py",
+          "pattern": "(?m)^def format_usd\\s*\\(",
+          "critical": false,
+          "weight": 20
+        },
+        {
+          "type": "file_regex",
+          "file": "invoice.py",
+          "pattern": "(?m)^(?!\\s*def\\s).*format_usd\\s*\\(",
+          "critical": false,
+          "weight": 10
+        },
+        {
+          "type": "file_regex",
+          "file": "quote.py",
+          "pattern": "(?m)^(?!\\s*def\\s).*format_usd\\s*\\(",
+          "critical": false,
+          "weight": 10
+        }
+      ],
+      "human_rubric": []
+    },
+    {
+      "id": "refactoring-hard-notification-policy",
+      "canary": "v2-neutral-030",
+      "category": "refactoring",
+      "difficulty": "hard",
+      "evaluation_mode": "hybrid",
+      "role": "worker",
+      "files": {
+        "email_sender.py": "def email_payload(user: dict, event: dict):\n    if user['active'] and user['email_opt_in'] and event['severity'] != 'low':\n        return [user['email'], event['message']]\n    return None\n",
+        "sms_sender.py": "def sms_payload(user: dict, event: dict):\n    if user['active'] and user['sms_opt_in'] and event['severity'] == 'critical':\n        return [user['phone'], event['message']]\n    return None\n",
+        "push_sender.py": "def push_payload(user: dict, event: dict):\n    if user['active'] and user['push_opt_in'] and event['severity'] != 'low':\n        return [user['device'], event['message']]\n    return None\n",
+        "TASK.md": "Extract channel eligibility rules into new notification_policy.py with can_send(channel, user, event). Preserve email_payload, sms_payload, and push_payload signatures. Each payload function must delegate eligibility to can_send and return [destination, message] when allowed or null otherwise. Email and push allow non-low events; SMS allows only critical events; inactive or opted-out users are rejected. Edit only the three sender files and notification_policy.py. Do not create or run tests.\n"
+      },
+      "allowed_files": [
+        "email_sender.py",
+        "sms_sender.py",
+        "push_sender.py",
+        "notification_policy.py"
+      ],
+      "turns": [
+        {
+          "prompt": "Perform the cross-module behavior-preserving refactor in TASK.md. Edit only the allowed files. Do not create tests and do not execute code."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "python_behavior",
+          "probes": [
+            {
+              "id": "email-high-allowed",
+              "module": "email_sender",
+              "call": "email_payload",
+              "args": [
+                {
+                  "active": true,
+                  "email_opt_in": true,
+                  "sms_opt_in": true,
+                  "push_opt_in": true,
+                  "email": "dev@example.com",
+                  "phone": "+15550001",
+                  "device": "device-1"
+                },
+                {
+                  "severity": "high",
+                  "message": "Database latency"
+                }
+              ],
+              "expected_return": [
+                "dev@example.com",
+                "Database latency"
+              ],
+              "expected_type": "list"
+            },
+            {
+              "id": "email-low-rejected",
+              "module": "email_sender",
+              "call": "email_payload",
+              "args": [
+                {
+                  "active": true,
+                  "email_opt_in": true,
+                  "sms_opt_in": true,
+                  "push_opt_in": true,
+                  "email": "dev@example.com",
+                  "phone": "+15550001",
+                  "device": "device-1"
+                },
+                {
+                  "severity": "low",
+                  "message": "Background job completed"
+                }
+              ],
+              "expected_return": null,
+              "expected_type": "NoneType"
+            },
+            {
+              "id": "email-inactive-rejected",
+              "module": "email_sender",
+              "call": "email_payload",
+              "args": [
+                {
+                  "active": false,
+                  "email_opt_in": true,
+                  "sms_opt_in": true,
+                  "push_opt_in": true,
+                  "email": "dev@example.com",
+                  "phone": "+15550001",
+                  "device": "device-1"
+                },
+                {
+                  "severity": "high",
+                  "message": "Database latency"
+                }
+              ],
+              "expected_return": null,
+              "expected_type": "NoneType"
+            },
+            {
+              "id": "email-opt-out-rejected",
+              "module": "email_sender",
+              "call": "email_payload",
+              "args": [
+                {
+                  "active": true,
+                  "email_opt_in": false,
+                  "sms_opt_in": true,
+                  "push_opt_in": true,
+                  "email": "dev@example.com",
+                  "phone": "+15550001",
+                  "device": "device-1"
+                },
+                {
+                  "severity": "high",
+                  "message": "Database latency"
+                }
+              ],
+              "expected_return": null,
+              "expected_type": "NoneType"
+            },
+            {
+              "id": "sms-critical-allowed",
+              "module": "sms_sender",
+              "call": "sms_payload",
+              "args": [
+                {
+                  "active": true,
+                  "email_opt_in": true,
+                  "sms_opt_in": true,
+                  "push_opt_in": true,
+                  "email": "dev@example.com",
+                  "phone": "+15550001",
+                  "device": "device-1"
+                },
+                {
+                  "severity": "critical",
+                  "message": "Payments unavailable"
+                }
+              ],
+              "expected_return": [
+                "+15550001",
+                "Payments unavailable"
+              ],
+              "expected_type": "list"
+            },
+            {
+              "id": "sms-high-rejected",
+              "module": "sms_sender",
+              "call": "sms_payload",
+              "args": [
+                {
+                  "active": true,
+                  "email_opt_in": true,
+                  "sms_opt_in": true,
+                  "push_opt_in": true,
+                  "email": "dev@example.com",
+                  "phone": "+15550001",
+                  "device": "device-1"
+                },
+                {
+                  "severity": "high",
+                  "message": "Database latency"
+                }
+              ],
+              "expected_return": null,
+              "expected_type": "NoneType"
+            },
+            {
+              "id": "sms-opt-out-rejected",
+              "module": "sms_sender",
+              "call": "sms_payload",
+              "args": [
+                {
+                  "active": true,
+                  "email_opt_in": true,
+                  "sms_opt_in": false,
+                  "push_opt_in": true,
+                  "email": "dev@example.com",
+                  "phone": "+15550001",
+                  "device": "device-1"
+                },
+                {
+                  "severity": "critical",
+                  "message": "Payments unavailable"
+                }
+              ],
+              "expected_return": null,
+              "expected_type": "NoneType"
+            },
+            {
+              "id": "push-high-allowed",
+              "module": "push_sender",
+              "call": "push_payload",
+              "args": [
+                {
+                  "active": true,
+                  "email_opt_in": true,
+                  "sms_opt_in": true,
+                  "push_opt_in": true,
+                  "email": "dev@example.com",
+                  "phone": "+15550001",
+                  "device": "device-1"
+                },
+                {
+                  "severity": "high",
+                  "message": "Database latency"
+                }
+              ],
+              "expected_return": [
+                "device-1",
+                "Database latency"
+              ],
+              "expected_type": "list"
+            },
+            {
+              "id": "push-low-rejected",
+              "module": "push_sender",
+              "call": "push_payload",
+              "args": [
+                {
+                  "active": true,
+                  "email_opt_in": true,
+                  "sms_opt_in": true,
+                  "push_opt_in": true,
+                  "email": "dev@example.com",
+                  "phone": "+15550001",
+                  "device": "device-1"
+                },
+                {
+                  "severity": "low",
+                  "message": "Background job completed"
+                }
+              ],
+              "expected_return": null,
+              "expected_type": "NoneType"
+            },
+            {
+              "id": "push-opt-out-rejected",
+              "module": "push_sender",
+              "call": "push_payload",
+              "args": [
+                {
+                  "active": true,
+                  "email_opt_in": true,
+                  "sms_opt_in": true,
+                  "push_opt_in": false,
+                  "email": "dev@example.com",
+                  "phone": "+15550001",
+                  "device": "device-1"
+                },
+                {
+                  "severity": "high",
+                  "message": "Database latency"
+                }
+              ],
+              "expected_return": null,
+              "expected_type": "NoneType"
+            }
+          ],
+          "critical": true,
+          "weight": 60
+        },
+        {
+          "type": "file_regex",
+          "file": "notification_policy.py",
+          "pattern": "(?m)^def can_send\\s*\\(",
+          "critical": false,
+          "weight": 10
+        },
+        {
+          "type": "file_regex",
+          "file": "email_sender.py",
+          "pattern": "(?m)^(?!\\s*def\\s).*can_send\\s*\\(",
+          "critical": false,
+          "weight": 10
+        },
+        {
+          "type": "file_regex",
+          "file": "sms_sender.py",
+          "pattern": "(?m)^(?!\\s*def\\s).*can_send\\s*\\(",
+          "critical": false,
+          "weight": 10
+        },
+        {
+          "type": "file_regex",
+          "file": "push_sender.py",
+          "pattern": "(?m)^(?!\\s*def\\s).*can_send\\s*\\(",
+          "critical": false,
+          "weight": 10
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "policy_cohesion",
+          "description": "The shared policy has clear responsibility without absorbing transport behavior.",
+          "weight": 40
+        },
+        {
+          "dimension": "maintainability",
+          "description": "Channel rules are easy to inspect and extend without duplicated conditionals.",
+          "weight": 35
+        },
+        {
+          "dimension": "scope_control",
+          "description": "The refactor remains focused and preserves public behavior.",
+          "weight": 25
+        }
+      ]
+    },
+    {
+      "id": "test-writing-simple-discount-boundaries",
+      "canary": "v2-neutral-031",
+      "category": "test_writing",
+      "difficulty": "simple",
+      "evaluation_mode": "objective",
+      "role": "worker",
+      "files": {
+        "discount.py": "def discount_percent(total_cents: int) -> int:\n    if total_cents < 0:\n        raise ValueError('negative total')\n    if total_cents >= 10_000:\n        return 15\n    if total_cents >= 5_000:\n        return 5\n    return 0\n",
+        "TASK.md": "Create test_discount.py using Python unittest. Cover negative input, 0, 4_999, 5_000, 9_999, and 10_000. Do not modify discount.py and do not execute tests.\n"
+      },
+      "allowed_files": [
+        "test_discount.py"
+      ],
+      "turns": [
+        {
+          "prompt": "Write the tests specified in TASK.md. Edit only test_discount.py. Do not execute code or tests."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "python_test_mutants",
+          "test_file": "test_discount.py",
+          "module_file": "discount.py",
+          "mutants": [
+            {
+              "id": "negative-does-not-raise",
+              "content": "def discount_percent(total_cents: int) -> int:\n    if total_cents < 0:\n        return 0\n    if total_cents >= 10_000:\n        return 15\n    if total_cents >= 5_000:\n        return 5\n    return 0\n"
+            },
+            {
+              "id": "middle-threshold-off-by-one",
+              "content": "def discount_percent(total_cents: int) -> int:\n    if total_cents < 0:\n        raise ValueError('negative total')\n    if total_cents >= 10_000:\n        return 15\n    if total_cents > 5_000:\n        return 5\n    return 0\n"
+            },
+            {
+              "id": "upper-threshold-off-by-one",
+              "content": "def discount_percent(total_cents: int) -> int:\n    if total_cents < 0:\n        raise ValueError('negative total')\n    if total_cents > 10_000:\n        return 15\n    if total_cents >= 5_000:\n        return 5\n    return 0\n"
+            }
+          ],
+          "critical": true,
+          "weight": 100
+        }
+      ],
+      "human_rubric": []
+    },
+    {
+      "id": "test-writing-intermediate-retry-timers",
+      "canary": "v2-neutral-032",
+      "category": "test_writing",
+      "difficulty": "intermediate",
+      "evaluation_mode": "hybrid",
+      "role": "worker",
+      "files": {
+        "retry.py": "def retry(fn, attempts: int, delay_ms: int, delay):\n    last_error = None\n    for attempt in range(attempts):\n        try:\n            return fn()\n        except Exception as error:\n            last_error = error\n            if attempt + 1 < attempts:\n                delay(delay_ms)\n    raise last_error\n",
+        "TASK.md": "Create test_retry.py using Python unittest. The delay dependency is injected into retry, so use a mock or recording callable and never real time delays. Cover immediate success with one call and zero delays, failure then success with one delay, and exhaustion after exactly three attempts with two delays. Assert call counts, delay arguments, final values, and the final error. Do not modify retry.py and do not execute tests.\n"
+      },
+      "allowed_files": [
+        "test_retry.py"
+      ],
+      "turns": [
+        {
+          "prompt": "Write deterministic Python unittest tests as specified in TASK.md. Edit only test_retry.py. Do not execute code or tests."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "python_test_mutants",
+          "test_file": "test_retry.py",
+          "module_file": "retry.py",
+          "mutants": [
+            {
+              "id": "delays-after-final-failure",
+              "content": "def retry(fn, attempts: int, delay_ms: int, delay):\n    last_error = None\n    for attempt in range(attempts):\n        try:\n            return fn()\n        except Exception as error:\n            last_error = error\n            delay(delay_ms)\n    raise last_error\n"
+            },
+            {
+              "id": "one-fewer-attempt",
+              "content": "def retry(fn, attempts: int, delay_ms: int, delay):\n    last_error = None\n    for attempt in range(attempts - 1):\n        try:\n            return fn()\n        except Exception as error:\n            last_error = error\n            if attempt + 1 < attempts - 1:\n                delay(delay_ms)\n    raise last_error\n"
+            },
+            {
+              "id": "swallows-final-error",
+              "content": "def retry(fn, attempts: int, delay_ms: int, delay):\n    for attempt in range(attempts):\n        try:\n            return fn()\n        except Exception:\n            if attempt + 1 < attempts:\n                delay(delay_ms)\n    return None\n"
+            }
+          ],
+          "critical": true,
+          "weight": 100
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "determinism",
+          "description": "The tests use the injected delay dependency without real waiting.",
+          "weight": 40
+        },
+        {
+          "dimension": "behavioral_coverage",
+          "description": "The suite distinguishes immediate success, recovery, and exhaustion.",
+          "weight": 35
+        },
+        {
+          "dimension": "readability",
+          "description": "Failures would clearly identify which retry behavior regressed.",
+          "weight": 25
+        }
+      ]
+    },
+    {
+      "id": "test-writing-hard-concurrent-once",
+      "canary": "v2-neutral-033",
+      "category": "test_writing",
+      "difficulty": "hard",
+      "evaluation_mode": "hybrid",
+      "role": "worker",
+      "files": {
+        "once.py": "from threading import Lock\n\nclass Once:\n    def __init__(self):\n        self._done = False\n        self._lock = Lock()\n\n    def run(self, fn):\n        with self._lock:\n            if self._done:\n                return False\n            fn()\n            self._done = True\n            return True\n",
+        "TASK.md": "Create test_once.py using Python unittest. Write a deterministic concurrency test with 8 threads that are released together by threading.Barrier. Prove fn executes exactly once, exactly one run call returns True, and seven return False. Include a separate test proving that if fn raises, a later call can retry successfully. Do not use sleep, timing thresholds, or external packages. Do not modify once.py and do not execute tests.\n"
+      },
+      "allowed_files": [
+        "test_once.py"
+      ],
+      "turns": [
+        {
+          "prompt": "Write the deterministic concurrency tests in TASK.md. Edit only test_once.py. Do not execute code or tests."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "python_test_mutants",
+          "test_file": "test_once.py",
+          "module_file": "once.py",
+          "mutants": [
+            {
+              "id": "runs-every-caller",
+              "content": "from threading import Lock\n\nclass Once:\n    def __init__(self):\n        self._done = False\n        self._lock = Lock()\n\n    def run(self, fn):\n        fn()\n        return True\n"
+            },
+            {
+              "id": "marks-before-fn",
+              "content": "from threading import Lock\n\nclass Once:\n    def __init__(self):\n        self._done = False\n        self._lock = Lock()\n\n    def run(self, fn):\n        with self._lock:\n            if self._done:\n                return False\n            self._done = True\n            fn()\n            return True\n"
+            },
+            {
+              "id": "first-success-returns-false",
+              "content": "from threading import Lock\n\nclass Once:\n    def __init__(self):\n        self._done = False\n        self._lock = Lock()\n\n    def run(self, fn):\n        with self._lock:\n            if self._done:\n                return False\n            fn()\n            self._done = True\n            return False\n"
+            }
+          ],
+          "critical": true,
+          "weight": 100
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "concurrency_control",
+          "description": "The test creates real contention with deterministic coordination.",
+          "weight": 40
+        },
+        {
+          "dimension": "assertion_strength",
+          "description": "Assertions prove both single execution and per-caller return behavior.",
+          "weight": 35
+        },
+        {
+          "dimension": "failure_recovery_coverage",
+          "description": "The suite clearly verifies retry after a failing function.",
+          "weight": 25
+        }
+      ]
+    },
+    {
+      "id": "sales-copy-simple-backup-hero",
+      "canary": "v2-neutral-034",
+      "category": "sales_copy",
+      "difficulty": "simple",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {},
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "Write homepage hero copy for Northstar Backup. Verified facts: it backs up PostgreSQL every 15 minutes, retains backups for 30 days, supports one-click restore to a new database, and costs USD 49 per database per month. Audience: a small SaaS engineering lead. Provide exactly one headline of at most 60 characters, one subheadline of 100-160 characters, one primary CTA, and three factual proof bullets. Do not claim zero data loss, instant restore, perfect security, or market leadership. Return only valid JSON with keys headline, subheadline, cta, and proof_bullets."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_strict_json_object",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_character_count_range",
+          "path": "headline",
+          "minimum": 1,
+          "maximum": 60,
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_character_count_range",
+          "path": "subheadline",
+          "minimum": 100,
+          "maximum": 160,
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_length",
+          "path": "proof_bullets",
+          "expected": 3,
+          "weight": 5
+        },
+        {
+          "type": "output_json_all_non_empty_values",
+          "path": "proof_bullets",
+          "weight": 5
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)15 (minutes|minutos)",
+            "(?i)30 (days|dias)",
+            "(?i)(one-click|um clique)",
+            "(?i)(USD|US\\$|\\$)\\s*49|49\\s*(USD|dollars|dólares)"
+          ],
+          "critical": true,
+          "weight": 30
+        },
+        {
+          "type": "output_not_regex",
+          "pattern": "(?i)zero data loss|perda zero de dados|zero perda de dados|instant restore|restauraç[aã]o instantânea|perfect(ly)? secure|segurança perfeita|perfeitamente segur[ao]|market leader|líder de mercado|best backup|melhor backup|never lose|nunca perca",
+          "critical": true,
+          "weight": 25
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "cta",
+          "critical": true,
+          "weight": 5
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "value_clarity",
+          "description": "The audience understands the product and benefit immediately.",
+          "weight": 30
+        },
+        {
+          "dimension": "specificity",
+          "description": "The copy turns verified product facts into concrete value without hype.",
+          "weight": 25
+        },
+        {
+          "dimension": "credibility",
+          "description": "The promise feels trustworthy to an engineering lead.",
+          "weight": 25
+        },
+        {
+          "dimension": "conversion_intent",
+          "description": "The headline, subheadline, proof, and CTA create a coherent next step.",
+          "weight": 20
+        }
+      ]
+    },
+    {
+      "id": "sales-copy-intermediate-privacy-audit-page",
+      "canary": "v2-neutral-035",
+      "category": "sales_copy",
+      "difficulty": "intermediate",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {},
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "Write landing-page copy for TraceMap, a B2B tool for engineering managers. Verified facts: it scans repository configuration, maps where personal data enters services, generates an editable inventory, runs read-only, and exports CSV. It does not certify compliance, inspect production databases, or automatically fix code. Audience objections: setup effort, false positives, and security access. Include hero, problem, how_it_works as exactly three non-empty step strings, objection handling, factual proof, and one non-empty CTA. Use 450-650 words. Do not invent customers, percentages, certifications, or time savings. Return only valid JSON with keys hero, problem, how_it_works, objections, proof, cta, and full_copy."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_strict_json_object",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_word_count_range",
+          "path": "full_copy",
+          "minimum": 450,
+          "maximum": 650,
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_length",
+          "path": "how_it_works",
+          "expected": 3,
+          "weight": 10
+        },
+        {
+          "type": "output_json_all_non_empty_values",
+          "path": "how_it_works",
+          "weight": 5
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(repository configuration|configuraç[aã]o (do|de) repositório)",
+            "(?i)(personal data|dados pessoais)",
+            "(?i)(editable inventory|inventário editável)",
+            "(?i)(read-only|somente leitura|apenas leitura)",
+            "CSV"
+          ],
+          "critical": true,
+          "weight": 25
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(setup|configuraç[aã]o|implantaç[aã]o)",
+            "(?i)(false positive|falso positivo)",
+            "(?i)(security|access|segurança|acesso)"
+          ],
+          "critical": true,
+          "weight": 15
+        },
+        {
+          "type": "output_not_regex",
+          "pattern": "(?i)certif(y|ies|ied) compliance|certifica.{0,20}conformidade|SOC 2|GDPR compliant|em conformidade com (o )?GDPR|[0-9]+%|trusted by|usado por|confiado por|save(s|d)? [0-9]+ hours|economiza.{0,20}[0-9]+ horas|automatically fixes|corrige automaticamente",
+          "critical": true,
+          "weight": 20
+        },
+        {
+          "type": "output_json_non_empty",
+          "path": "cta",
+          "critical": true,
+          "weight": 5
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "positioning",
+          "description": "The page communicates a differentiated, relevant value proposition.",
+          "weight": 25
+        },
+        {
+          "dimension": "objection_handling",
+          "description": "Setup, false positives, and access concerns receive credible answers.",
+          "weight": 25
+        },
+        {
+          "dimension": "message_hierarchy",
+          "description": "Sections build a persuasive path from problem to proof and action.",
+          "weight": 25
+        },
+        {
+          "dimension": "trustworthiness",
+          "description": "The copy sells the product without hiding limitations or inventing proof.",
+          "weight": 25
+        }
+      ]
+    },
+    {
+      "id": "sales-copy-hard-enterprise-migration-campaign",
+      "canary": "v2-neutral-036",
+      "category": "sales_copy",
+      "difficulty": "hard",
+      "evaluation_mode": "hybrid",
+      "role": "judge",
+      "files": {},
+      "allowed_files": [],
+      "turns": [
+        {
+          "prompt": "Develop sales copy for RelayShift, a service that helps enterprises migrate webhook traffic. Verified facts: it mirrors traffic to a candidate endpoint, compares HTTP status and response latency, supports percentage-based cutover, keeps comparison logs for 14 days, and can route traffic back to the original endpoint. It cannot verify business side effects, guarantee zero downtime, or access payloads when customers enable metadata-only mode. Create messaging for two segments: a platform engineering lead focused on migration risk, and a security lead focused on payload exposure. Deliver one shared positioning statement, a tailored hero, exactly three non-empty proof bullets, exactly two non-empty email subject lines, and one non-empty CTA per segment; also provide a five-section non-empty landing-page outline and objections with honest answers. Return only valid JSON with keys positioning, segments, landing_page, objections, and claims. claims must contain zero_downtime_guaranteed, certifications_claimed, performance_improvement_claimed, and customer_logos_claimed, all set to false."
+        }
+      ],
+      "assertions": [
+        {
+          "type": "output_strict_json_object",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(platform engineering|engenharia de plataforma)",
+            "(?i)(security lead|security|líder de segurança|segurança)"
+          ],
+          "critical": true,
+          "weight": 15
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(proof|evidence|prova|evidência)",
+            "(?i)(email subject|subject line|assunto de e-mail)",
+            "(?i)(CTA|call to action|chamada para aç[aã]o)",
+            "(?i)(landing page|página de destino)",
+            "(?i)(objection|objeç[aã]o)"
+          ],
+          "critical": true,
+          "weight": 15
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(mirror|espelh)",
+            "HTTP status",
+            "(?i)(latency|latência)",
+            "(?i)(percentage-based cutover|cutover percentual|migraç[aã]o percentual)",
+            "(?i)14 (days|dias)",
+            "(?i)(original endpoint|endpoint original)"
+          ],
+          "critical": true,
+          "weight": 25
+        },
+        {
+          "type": "output_all_patterns",
+          "patterns": [
+            "(?i)(cannot|does not|n[aã]o pode|n[aã]o consegue)",
+            "(?i)(business side effects|efeitos colaterais (de|do) negócio)",
+            "(?i)(metadata-only|somente metadados|apenas metadados)",
+            "(?i)(payload|carga útil)"
+          ],
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_equals",
+          "path": "claims.zero_downtime_guaranteed",
+          "expected": false,
+          "critical": true,
+          "weight": 7
+        },
+        {
+          "type": "output_json_equals",
+          "path": "claims.certifications_claimed",
+          "expected": false,
+          "critical": true,
+          "weight": 6
+        },
+        {
+          "type": "output_json_equals",
+          "path": "claims.performance_improvement_claimed",
+          "expected": false,
+          "critical": true,
+          "weight": 6
+        },
+        {
+          "type": "output_json_equals",
+          "path": "claims.customer_logos_claimed",
+          "expected": false,
+          "critical": true,
+          "weight": 6
+        }
+      ],
+      "human_rubric": [
+        {
+          "dimension": "segment_differentiation",
+          "description": "Platform and security messages reflect distinct priorities without contradiction.",
+          "weight": 25
+        },
+        {
+          "dimension": "strategic_cohesion",
+          "description": "Positioning, page, email subjects, objections, and CTAs reinforce one campaign idea.",
+          "weight": 25
+        },
+        {
+          "dimension": "persuasive_quality",
+          "description": "The copy creates interest and a credible next step from verified capabilities.",
+          "weight": 25
+        },
+        {
+          "dimension": "trust_and_precision",
+          "description": "Limitations are handled honestly while the value remains clear.",
+          "weight": 25
+        }
+      ]
+    }
+  ]
+}
