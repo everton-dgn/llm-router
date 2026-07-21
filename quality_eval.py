@@ -25,7 +25,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from auto_runner import AutoRunner, ConfigError, ProcessResult, load_config, parse_json_object
+from benchmark_executor import (
+    BenchmarkExecutor,
+    ConfigError,
+    ProcessResult,
+    load_config,
+    parse_json_object,
+)
 
 
 DATASET_VERSION = 2
@@ -2318,8 +2324,8 @@ def prepare_execution_config(
 def _make_executor(config: dict[str, Any]) -> ExecuteFunction:
     def execute(route: str, role: str, prompt: str, cwd: Path) -> ProcessResult:
         logical_config_path = cwd / ".llm-router-quality-config.json"
-        runner = AutoRunner(logical_config_path, config, cwd, route, prompt, None)
-        return runner.execute_model(route, role, prompt)
+        executor = BenchmarkExecutor(logical_config_path, config, cwd)
+        return executor.execute_model(route, role, prompt)
 
     return execute
 
@@ -2674,10 +2680,14 @@ def _rubric_sha256(dataset: dict[str, Any]) -> str:
 
 
 def _engine_identity() -> dict[str, str]:
-    auto_runner_path = Path(sys.modules[AutoRunner.__module__].__file__).resolve()
+    benchmark_executor_path = Path(
+        sys.modules[BenchmarkExecutor.__module__].__file__
+    ).resolve()
     return {
         "quality_eval_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-        "auto_runner_sha256": hashlib.sha256(auto_runner_path.read_bytes()).hexdigest(),
+        "benchmark_executor_sha256": hashlib.sha256(
+            benchmark_executor_path.read_bytes()
+        ).hexdigest(),
         "python_implementation": sys.implementation.name,
         "python_version": ".".join(str(part) for part in sys.version_info[:3]),
     }

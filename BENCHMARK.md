@@ -3,6 +3,12 @@
 Execuções: V1 em 20 de julho de 2026; V2 e comparação de effort em 21 de
 julho de 2026.
 
+Este documento descreve somente o benchmark offline. `quality_eval.py` lê
+`benchmark_config.json` e usa `BenchmarkExecutor` para executar chamadas
+single-shot. Os comandos externos e ambientes de provider dessa configuração
+servem para reproduzir as medições e nunca participam do roteamento no
+OpenCode. O runtime de produção usa subagentes nativos e o Claude Agent SDK.
+
 ## V1: piloto inicial
 
 Este primeiro benchmark compara os quatro executores configurados no
@@ -14,8 +20,8 @@ single-shot em ordem aleatória reproduzível com seed 42.
 ## Metodologia
 
 - Cada chamada usa um workspace temporário novo.
-- O executor chama `AutoRunner.execute_model` diretamente, sem retry, cascade
-  ou júri LLM.
+- O executor chama `BenchmarkExecutor.execute_model` diretamente, sem retry,
+  escalada, `stage_prepare`, `stage_verify` ou reviewer do OpenCode.
 - As rubricas são determinísticas e falhas críticas zeram a execução.
 - Cada rota recebeu 18 chamadas; cada caso recebeu 12.
 - As 72 chamadas terminaram com exit code zero, sem timeout ou erro de processo.
@@ -25,7 +31,7 @@ Comando usado:
 
 ```bash
 uv run --no-project --no-python-downloads python quality_eval.py \
-  --config config.json \
+  --config benchmark_config.json \
   --cases tests/quality-cases.json \
   --routes minimax,glm,claude,codex \
   --repetitions 3 \

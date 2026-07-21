@@ -1,17 +1,15 @@
 #!/usr/bin/env bash
-# Roteador local de modelos: um classificador local (definido em config.json; por
-# padrao o Plano-Orchestrator-4B rodando no Ollama) decide qual modelo deve atender
-# cada prompt e abre a CLI interativa dele numa janela do Ghostty.
+# Roteador local de modelos: um classificador local definido em config.json
+# decide qual agente configurado no OpenCode deve atender cada prompt.
 #
-# Toda a config (modelo, endpoint, rotas, criterios, mapeamento CLI, parametros)
-# vive no config.json ao lado deste script. Editar rotas nao exige tocar no codigo.
+# Toda a configuração de classificação vive no config.json ao lado deste script.
+# Editar rotas não exige tocar no código.
 #
 # Uso:
-#   route "prompt"          # dry-run: so mostra a rota escolhida
-#   route --run "prompt"    # decide E abre a CLI interativa no Ghostty
-#   route --auto "prompt"   # executa, verifica e escala sem interface grafica
+#   route "prompt"                    # saída humana
+#   route --classify --json "prompt"  # contrato estável para integrações
 #
-# Requer: modelo do config baixado no Ollama (ex.):
+# Requer o modelo do config baixado no Ollama, por exemplo:
 #   ollama pull hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M
 set -euo pipefail
 
@@ -25,15 +23,14 @@ show_help() {
   command_name="$(basename "$0")"
 
   cat <<EOF
-Uso: $command_name [--run | --auto [--verifier nome]] "prompt"
+Uso: $command_name "prompt"
+     $command_name --classify --json "prompt"
      $command_name help
      $command_name --help
 
-Modos:
-  padrão      Classifica o prompt, mostra a rota escolhida e encerra.
-  --run       Classifica e abre a CLI interativa em uma janela do Ghostty.
-  --auto      Executa a tarefa sem interface, verifica e escala se necessário.
-  --verifier  Sobrescreve o verificador do modo --auto.
+Saídas:
+  padrão               Classifica e mostra a rota em formato humano.
+  --classify --json     Retorna o contrato JSON versionado para integrações.
 
 Rotas:
 EOF
@@ -45,64 +42,64 @@ EOF
   ' "$CONFIG"
   cat <<EOF
 
-Cascade automático:
-EOF
-  jq -r '.auto.ladders | to_entries[] | "  \(.key): \(.value | join(" -> "))"' "$CONFIG"
-  cat <<EOF
-  Cada rota pode repetir uma vez antes de escalar.
-
-Verificadores:
-EOF
-  jq -r '.auto.verifiers | keys[] | "  \(.)"' "$CONFIG"
-  cat <<EOF
-
 Exemplos:
   $command_name "quantos arquivos tem este projeto?"
-  $command_name --run "adicione validação ao formulário"
-  $command_name --auto "corrija a race condition e valide os testes"
-  $command_name --auto --verifier null "gere cinco nomes para o projeto"
+  $command_name --classify --json "planeje uma migração sem downtime"
 
 Requisitos:
   Ollama e o modelo classificador configurado; jq e curl no PATH.
-  --run também requer Ghostty e os aliases cld, cdx, m3 e glm.
-  --auto também requer uv, trash e as CLIs dos workers autenticadas.
 EOF
 }
 
-MODE="dry-run"
-VERIFIER=""
+CLASSIFY=false
+JSON_OUTPUT=false
+PROMPT=""
 
-case "${1:-}" in
-  -h|--help|help)
-    show_help
-    exit 0
-    ;;
-  --run)
-    MODE="run"
-    shift
-    ;;
-  --auto)
-    MODE="auto"
-    shift
-    if [[ "${1:-}" == "--verifier" ]]; then
-      [[ -n "${2:-}" ]] || { echo "erro: --verifier exige um nome" >&2; exit 1; }
-      VERIFIER="$2"
-      shift 2
-    fi
-    ;;
-esac
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help|help)
+      show_help
+      exit 0
+      ;;
+    --classify)
+      CLASSIFY=true
+      shift
+      ;;
+    --json)
+      JSON_OUTPUT=true
+      shift
+      ;;
+    --)
+      shift
+      [[ $# -eq 1 && -z "$PROMPT" ]] || {
+        echo "erro: -- exige exatamente um prompt depois dele" >&2
+        exit 1
+      }
+      PROMPT=$1
+      shift
+      ;;
+    --*)
+      echo "erro: opção desconhecida: $1" >&2
+      exit 1
+      ;;
+    *)
+      [[ -z "$PROMPT" ]] || { echo "erro: informe o prompt como um único argumento" >&2; exit 1; }
+      PROMPT=$1
+      shift
+      ;;
+  esac
+done
 
-PROMPT="${1:-}"
-[[ -z "$PROMPT" ]] && {
-  echo "uso: $(basename "$0") [--run | --auto [--verifier nome]] \"prompt\""
-  echo "use '$(basename "$0") --help' para ver todos os modos e rotas"
+if [[ "$JSON_OUTPUT" == true && "$CLASSIFY" != true ]]; then
+  echo "erro: --json exige --classify" >&2
+  exit 1
+fi
+
+[[ -n "$PROMPT" ]] || {
+  echo "uso: $(basename "$0") [--classify --json] \"prompt\"" >&2
+  echo "use '$(basename "$0") --help' para ver o contrato e as rotas" >&2
   exit 1
 }
-
-if [[ "$MODE" == "auto" ]]; then
-  command -v uv >/dev/null 2>&1 || { echo "erro: uv nao encontrado no PATH" >&2; exit 3; }
-  command -v trash >/dev/null 2>&1 || { echo "erro: trash nao encontrado no PATH" >&2; exit 3; }
-fi
 
 MODEL=$(jq -r '.model' "$CONFIG")
 ENDPOINT=$(jq -r '.endpoint // "http://localhost:11434/api/chat"' "$CONFIG")
@@ -143,36 +140,48 @@ EOF
 # shellcheck disable=SC2059
 PLANO_PROMPT=$(printf "$TMPL" "$ROUTES" "$CONV")
 
-# Chama o modelo. think:false (o Qwen3 poe a resposta em thinking se ligado).
+# Chama o modelo. think:false evita que a resposta seja enviada como raciocínio.
 BODY=$(jq -n --arg m "$MODEL" --arg c "$PLANO_PROMPT" --argjson schema "$SCHEMA" --argjson opts "$OPTS" \
   '{model:$m, messages:[{role:"user",content:$c}], stream:false, format:$schema, think:false, options:$opts}')
-RESP=$(curl -s "$ENDPOINT" -d "$BODY")
+
+classification_error() {
+  local code=$1
+  local message=$2
+  if [[ "$JSON_OUTPUT" == true ]]; then
+    jq -cn --arg code "$code" --arg message "$message" \
+      '{schema_version:1,error:{code:$code,message:$message}}' >&2
+  else
+    printf 'erro: %s\n' "$message" >&2
+  fi
+  exit 2
+}
+
+if ! RESP=$(curl -sS --connect-timeout 5 --max-time 120 -H 'Content-Type: application/json' "$ENDPOINT" -d "$BODY"); then
+  classification_error "classifier_unavailable" "não foi possível consultar o classificador"
+fi
 
 INTENT=$(echo "$RESP" | jq -r '.message.content | fromjson | .route[0] // empty' 2>/dev/null || true)
-[[ -n "$INTENT" ]] || { echo "erro: classificador não devolveu uma rota válida" >&2; exit 2; }
+[[ -n "$INTENT" ]] || classification_error \
+  "invalid_classifier_response" \
+  "classificador não devolveu uma rota válida"
 
 # Mapeia a intenção semântica para o executor real.
 ROUTE=$(jq -r --arg intent "$INTENT" '.routing[] | select(.intent == $intent) | .route' "$CONFIG")
-[[ -n "$ROUTE" ]] || { echo "erro: intenção desconhecida: '$INTENT'" >&2; exit 2; }
+[[ -n "$ROUTE" ]] || classification_error \
+  "unknown_intent" \
+  "intenção desconhecida: '$INTENT'"
 
-# Mapeia rota -> alias da CLI (campo 'cli' no config).
-CLI=$(jq -r --arg r "$ROUTE" '.routes[] | select(.name==$r) | .cli' "$CONFIG")
-[[ -z "$CLI" ]] && { echo "rota invalida: '$ROUTE' (resposta: $RESP)" >&2; exit 2; }
+DISPLAY_NAME=$(jq -r --arg route "$ROUTE" \
+  '.routes[] | select(.name == $route) | .display_name // empty' "$CONFIG")
+[[ -n "$DISPLAY_NAME" ]] || classification_error \
+  "unknown_route" \
+  "rota desconhecida: '$ROUTE'"
 
-echo "rota:     $ROUTE  ->  $CLI"
-
-if [[ "$MODE" == "run" ]]; then
-  echo "abrindo $CLI no Ghostty..."
-  open -na Ghostty --args -e zsh -ic "${CLI} $(printf '%q' "$PROMPT")"
-elif [[ "$MODE" == "auto" ]]; then
-  AUTO_ARGS=(
-    --config "$CONFIG"
-    --route "$ROUTE"
-    --prompt "$PROMPT"
-    --cwd "$PWD"
-  )
-  [[ -n "$VERIFIER" ]] && AUTO_ARGS+=(--verifier "$VERIFIER")
-  exec uv run --no-project --no-python-downloads python "$SCRIPT_DIR/auto_runner.py" "${AUTO_ARGS[@]}"
+if [[ "$JSON_OUTPUT" == true ]]; then
+  jq -cn \
+    --arg intent "$INTENT" \
+    --arg route "$ROUTE" \
+    '{schema_version:1,intent:$intent,route:$route}'
 else
-  echo "(dry-run; use --run para abrir a CLI)"
+  printf 'rota:     %s  ->  %s\n' "$ROUTE" "$DISPLAY_NAME"
 fi
