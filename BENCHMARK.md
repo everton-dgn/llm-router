@@ -1,6 +1,7 @@
 # Benchmark de qualidade
 
-Execuções: V1 em 20 de julho de 2026; V2 em 21 de julho de 2026.
+Execuções: V1 em 20 de julho de 2026; V2 e comparação de effort em 21 de
+julho de 2026.
 
 ## V1: piloto inicial
 
@@ -296,3 +297,44 @@ read-only.
 Os pacotes cegos estão em `/private/tmp` e ainda não contêm notas humanas. Uma
 decisão de produto pode usar as diferenças claras acima. Casos criativos com
 margem inferior a 0,3 continuam classificados como empate até revisão humana.
+
+## Comparação de reasoning effort
+
+Uma rodada suplementar comparou `xhigh` e `max` nos pontos em que o effort
+altera custo, latência ou qualidade. Essa rodada tem amostra pequena e serve
+para configurar o roteador local. Ela não sustenta uma classificação geral dos
+modelos ou efforts.
+
+### Coordenador GPT-5.6 Sol
+
+O mesmo fluxo completo foi executado com o coordenador em `xhigh` e `max`:
+
+| Effort | Tempo de parede | Achados na primeira revisão | Achados na revisão final |
+| --- | ---: | ---: | ---: |
+| `xhigh` | cerca de 13 min | 10 | 6 |
+| `max` | cerca de 21 min | 11 | 12 |
+
+`xhigh` terminou cerca de oito minutos antes e deixou metade dos achados na
+revisão final. O coordenador de produção permanece em `xhigh`. Os achados
+medem o resultado destes dois fluxos, sem provar uma taxa de defeitos estável.
+
+### Claude Opus 4.8
+
+Quatro tarefas receberam respostas em `xhigh` e `max`, avaliadas de forma cega:
+
+| Tarefa | Vencedor |
+| --- | --- |
+| Arquitetura | `max` |
+| Ideação de produto | `max` |
+| Copy | `max` |
+| Discussão técnica aberta | `xhigh` |
+
+No agregado desta rodada, `max` marcou 8,05 contra 7,30 de `xhigh`. A contagem
+de defeitos foi 17 para `max` e 23 para `xhigh`. A política resultante usa
+`max` em planejamento, arquitetura, produto, ideação, copy e trabalho
+criativo. Discussão aberta, debate, trade-offs, política e falsificação usam
+`xhigh`.
+
+O fallback do Claude é `max`. Novas categorias precisam de comparação antes
+de receber exceção, e uma rodada futura deve repetir os quatro pares para medir
+a variância entre execuções.

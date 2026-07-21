@@ -23,6 +23,18 @@ from typing import Any
 
 
 ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+CLAUDE_MAX_EFFORT_PATTERN = re.compile(
+    r"arquitet|architecture|architectural|produto|product|idea|ideia|brainstorm|"
+    r"copy|venda|sales|marketing|rede social|social media|criativ|creative|roadmap|"
+    r"planej|planning|design|spec|lan[cç]amento|launch",
+    re.IGNORECASE,
+)
+CLAUDE_XHIGH_EFFORT_PATTERN = re.compile(
+    r"discuss|debate|trade.?off|pr[oó]s e contras|"
+    r"compare (?:op[cç][oõ]es|alternativas|abordagens)|policy|pol[ií]tica|argument|"
+    r"falsific|open.?ended|decis[aã]o operacional",
+    re.IGNORECASE,
+)
 
 
 class ConfigError(RuntimeError):
@@ -111,6 +123,15 @@ def expand_env_string(value: str) -> str:
         return os.environ[name]
 
     return ENV_PATTERN.sub(replace, value)
+
+
+def select_claude_effort(prompt: str) -> str:
+    """Select Claude worker effort for one task or workflow stage."""
+    if CLAUDE_MAX_EFFORT_PATTERN.search(prompt):
+        return "max"
+    if CLAUDE_XHIGH_EFFORT_PATTERN.search(prompt):
+        return "xhigh"
+    return "max"
 
 
 def truncate(value: str, limit: int) -> str:
@@ -369,6 +390,7 @@ class AutoRunner:
         raw_argv: Any,
         output_file: str | None,
         process_cwd: Path,
+        runtime_values: dict[str, str] | None = None,
     ) -> list[str]:
         if not isinstance(raw_argv, list) or not raw_argv or not all(
             isinstance(item, str) for item in raw_argv
@@ -379,6 +401,8 @@ class AutoRunner:
             "project_root": str(self.project_root),
             "output_file": output_file or "",
         }
+        if runtime_values:
+            values.update(runtime_values)
         argv: list[str] = []
         for item in raw_argv:
             expanded = expand_env_string(item)
@@ -386,6 +410,21 @@ class AutoRunner:
                 expanded = expanded.replace("{" + key + "}", value)
             argv.append(expanded)
         return argv
+
+    def _profile_runtime_values(
+        self,
+        profile: dict[str, Any],
+        role: str,
+        prompt: str,
+    ) -> dict[str, str]:
+        effort_policy = profile.get("effort_policy")
+        if effort_policy is None:
+            return {}
+        if role != "worker":
+            raise ConfigError("headless.effort_policy só pode ser usado pelo worker")
+        if effort_policy != "claude_dynamic":
+            raise ConfigError(f"headless.effort_policy desconhecida: {effort_policy}")
+        return {"effort": select_claude_effort(prompt)}
 
     def execute_model(self, route_name: str, role: str, prompt: str) -> ProcessResult:
         started = time.monotonic()
@@ -413,7 +452,8 @@ class AutoRunner:
                     )
                 descriptor, output_file = tempfile.mkstemp(prefix="llm-router-", suffix=".out")
                 os.close(descriptor)
-            argv = self._prepare_argv(raw_argv, output_file, self.cwd)
+            runtime_values = self._profile_runtime_values(profile, role, prompt)
+            argv = self._prepare_argv(raw_argv, output_file, self.cwd, runtime_values)
             env = self._resolve_env(headless)
             process = subprocess.Popen(
                 argv,

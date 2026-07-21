@@ -32,12 +32,13 @@
     {
       "name": "claude",
       "cli": "cld",
-      "display_name": "Claude Opus 4.8 (xhigh)",
+      "display_name": "Claude Opus 4.8 (dynamic effort)",
       "headless": {
         "env": {
           "CLAUDE_CONFIG_DIR": "${HOME}/.claude"
         },
         "worker": {
+          "effort_policy": "claude_dynamic",
           "argv": [
             "claude",
             "--print",
@@ -46,7 +47,7 @@
             "--append-system-prompt-file", "${HOME}/.claude/system-prompt/append.md",
             "--dangerously-skip-permissions",
             "--model", "claude-opus-4-8",
-            "--effort", "xhigh"
+            "--effort", "{effort}"
           ],
           "output_format": "claude_json",
           "timeout_seconds": 900
