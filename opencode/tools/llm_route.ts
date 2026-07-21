@@ -26,27 +26,14 @@ const targets = {
   },
 } as const
 
-function stagePrompt(stage: "request" | "plan" | "execute" | "review", request: string) {
-  if (stage === "plan") {
-    return `Provide only a plan for this task. Do not implement it:\n${request}`
-  }
-  if (stage === "execute") {
-    return `Implement or execute this task now:\n${request}`
-  }
-  if (stage === "review") {
-    return `Review and audit the result of this task:\n${request}`
-  }
-  return `The user's actual request is:\n${request}`
-}
-
 export default tool({
   description: "Classify one workflow stage with the local llm-router and return the exact OpenCode subagent or tool that must handle it.",
   args: {
-    request: tool.schema.string().min(1).describe("Self-contained request for this stage"),
+    request: tool.schema.string().min(1).describe("Exact original user request, passed verbatim without additions, omissions, translation, or paraphrase"),
     stage: tool.schema.enum(["request", "plan", "execute", "review"]).describe("Current workflow stage"),
   },
   async execute(args, context) {
-    const child = Bun.spawn([ROUTER_PATH, stagePrompt(args.stage, args.request)], {
+    const child = Bun.spawn([ROUTER_PATH, args.request], {
       cwd: context.directory,
       stdout: "pipe",
       stderr: "pipe",

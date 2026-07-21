@@ -42,8 +42,13 @@ assert_contains "$REPO_ROOT/opencode/opencode.jsonc" '"whitelist": ["MiniMax-M3"
 assert_contains "$REPO_ROOT/opencode/opencode.jsonc" '"model": "openai/gpt-5.6-sol"'
 assert_contains "$REPO_ROOT/opencode/opencode.jsonc" '"reasoningEffort": "xhigh"'
 assert_contains "$REPO_ROOT/opencode/opencode.jsonc" '"textVerbosity": "medium"'
+assert_contains "$REPO_ROOT/opencode/opencode.jsonc" "Pass the user's original request to llm_route verbatim"
 assert_contains "$REPO_ROOT/opencode/tools/claude_opus.ts" 'tool.schema.enum(["xhigh", "max"])'
 assert_contains "$REPO_ROOT/opencode/tools/claude_opus.ts" 'args.effort'
+assert_contains "$REPO_ROOT/opencode/tools/llm_route.ts" 'Bun.spawn([ROUTER_PATH, args.request]'
+if grep -F 'stagePrompt' "$REPO_ROOT/opencode/tools/llm_route.ts" >/dev/null; then
+  fail "llm_route rewrites the original request before classification"
+fi
 
 # JavaScript template literals must reach Node unchanged.
 # shellcheck disable=SC2016
@@ -59,6 +64,7 @@ assert_contains "$REPO_ROOT/opencode/tools/claude_opus.ts" 'args.effort'
     ["minimax", "request", "substitua o conteúdo por um patch", "glm"],
     ["minimax", "execute", "router-proof.txt deve conter ok", "glm"],
     ["minimax", "request", "quantos arquivos existem no projeto?", "minimax"],
+    ["codex", "plan", "planeje e implemente uma correção complexa", "claude"],
     ["codex", "execute", "implemente a correção de concorrência", "codex"],
     ["claude", "execute", "implemente a arquitetura do produto", "codex"],
     ["claude", "request", "proponha a arquitetura do produto", "claude"],
@@ -140,4 +146,4 @@ BACKUP_COUNT_AFTER=$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -print 
 [[ "$SECOND_OUTPUT" == *"unchanged $CONFIG_DIR/opencode.jsonc"* ]] || fail "idempotent install did not report unchanged config"
 [[ "$FIRST_OUTPUT" == *"backup $BACKUP_ROOT/"* ]] || fail "first install did not report its backup"
 
-printf 'PASS: OpenCode bundle, mutation routing guard, dry-run, backup, and idempotence\n'
+printf 'PASS: OpenCode bundle, verbatim routing, stage policy, mutation guard, dry-run, backup, and idempotence\n'
