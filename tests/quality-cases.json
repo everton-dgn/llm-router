@@ -1,0 +1,367 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "translation-preserves-negation-and-identifiers",
+      "category": "translation_fidelity",
+      "role": "judge",
+      "allowed_files": [],
+      "prompt": "Traduza fielmente a frase abaixo para português do Brasil. Preserve exatamente nomes próprios, identificadores, números e a negação. Responda já com a primeira resposta final, somente como JSON válido, sem Markdown e sem explicações, usando exatamente as chaves translation e preserved. Em preserved, use exatamente as chaves product, ticket, replicas, checksum e negated. Frase: Deployment Aurora-7 is not scheduled for 14 May. Keep ticket OPS-204 open until 3 replicas pass checksum 9F2A.",
+      "assertions": [
+        {
+          "type": "output_regex",
+          "pattern": "\\\"translation\\\"\\s*:\\s*\\\"(?=[^\\\"]*Aurora-7)(?=[^\\\"]*(?:não[^\\\"]*(?:agendad|programad|marcad|previst)|sem[^\\\"]*(?:agendamento|programação|previsão)))(?=[^\\\"]*14 de maio)[^\\\"]*\\\"",
+          "critical": true,
+          "weight": 20
+        },
+        {
+          "type": "output_regex",
+          "pattern": "\\\"translation\\\"\\s*:\\s*\\\"(?=[^\\\"]*OPS-204)(?=[^\\\"]*(?:abert|não[^\\\"]*fech))(?=[^\\\"]*3 réplicas)(?=[^\\\"]*9F2A)[^\\\"]*\\\"",
+          "critical": true,
+          "weight": 20
+        },
+        {
+          "type": "output_json_equals",
+          "path": "preserved.product",
+          "expected": "Aurora-7",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_equals",
+          "path": "preserved.ticket",
+          "expected": "OPS-204",
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_one_of",
+          "path": "preserved.replicas",
+          "expected": [
+            3,
+            "3"
+          ],
+          "critical": true,
+          "weight": 15
+        },
+        {
+          "type": "output_json_equals",
+          "path": "preserved.checksum",
+          "expected": "9F2A",
+          "critical": true,
+          "weight": 15
+        },
+        {
+          "type": "output_json_equals",
+          "path": "preserved.negated",
+          "expected": true,
+          "critical": true,
+          "weight": 10
+        }
+      ]
+    },
+    {
+      "id": "complex-plan-preserves-zero-downtime-constraints",
+      "category": "complex_planning_constraints",
+      "role": "judge",
+      "allowed_files": [],
+      "prompt": "Planeje a migração de uma coluna de status usada por duas versões do aplicativo que coexistirão por 48 horas. Restrições obrigatórias: zero downtime; escrita compatível nos schemas antigo e novo; backfill em lotes; verificação de paridade antes do cutover de leitura; rollback se a taxa de erros ficar acima de 0,5%; nenhum DDL destrutivo antes da janela de manutenção. Responda já com a primeira resposta final, somente como JSON válido, sem Markdown e sem explicações. Use exatamente as chaves strategy, ordered_steps, rollback_trigger, rollback_action e constraints. strategy deve usar um destes IDs: expand_contract ou big_bang. Selecione e ordene somente os passos necessários deste catálogo: additive_schema, deploy_dual_write, backfill_in_batches, verify_parity, cutover_reads, monitor_after_cutover, destructive_ddl_in_maintenance_window, drop_old_schema_immediately, single_big_bang_backfill. rollback_trigger deve ter metric, operator e threshold. rollback_action deve usar um destes IDs: restore_old_reads_keep_dual_write ou continue_new_reads. constraints deve ter zero_downtime e destructive_ddl_before_maintenance_window.",
+      "assertions": [
+        {
+          "type": "output_json_equals",
+          "path": "strategy",
+          "expected": "expand_contract",
+          "weight": 5
+        },
+        {
+          "type": "output_json_equals",
+          "path": "ordered_steps",
+          "expected": [
+            "additive_schema",
+            "deploy_dual_write",
+            "backfill_in_batches",
+            "verify_parity",
+            "cutover_reads",
+            "monitor_after_cutover",
+            "destructive_ddl_in_maintenance_window"
+          ],
+          "critical": true,
+          "weight": 40
+        },
+        {
+          "type": "output_json_one_of",
+          "path": "rollback_trigger",
+          "expected": [
+            {
+              "metric": "error_rate_percent",
+              "operator": ">",
+              "threshold": 0.5
+            },
+            {
+              "metric": "error_rate",
+              "operator": ">",
+              "threshold": 0.005
+            },
+            {
+              "metric": "error_rate",
+              "operator": ">",
+              "threshold": "0.005"
+            },
+            {
+              "metric": "error_rate",
+              "operator": ">",
+              "threshold": 0.5
+            },
+            {
+              "metric": "error_rate",
+              "operator": ">",
+              "threshold": "0.5%"
+            }
+          ],
+          "critical": true,
+          "weight": 20
+        },
+        {
+          "type": "output_json_equals",
+          "path": "rollback_action",
+          "expected": "restore_old_reads_keep_dual_write",
+          "weight": 10
+        },
+        {
+          "type": "output_json_equals",
+          "path": "constraints.zero_downtime",
+          "expected": true,
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_equals",
+          "path": "constraints.destructive_ddl_before_maintenance_window",
+          "expected": false,
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_not_regex",
+          "pattern": "drop_old_schema_immediately|single_big_bang_backfill",
+          "critical": true,
+          "weight": 5
+        }
+      ]
+    },
+    {
+      "id": "lossless-extraction-keeps-order-and-diacritics",
+      "category": "lossless_extraction_or_formatting",
+      "role": "judge",
+      "allowed_files": [],
+      "prompt": "Extraia todos os registros entre MARCADORES, sem corrigir, traduzir, deduplicar, reordenar ou completar valores. Preserve maiúsculas, acentos, hífens e zeros à esquerda. Responda já com a primeira resposta final, somente como JSON válido, sem Markdown e sem explicações, usando exatamente as chaves records e count. Cada item de records deve ter, nesta ordem lógica, id, owner, status e quota. MARCADORES: ID=R-007 | owner=João Lima | status=READY | quota=0042; ID=R-008 | owner=Zoë Nunes | status=PAUSED | quota=0000; ID=R-009 | owner=Ana-Maria | status=READY | quota=0105. FIM DOS MARCADORES.",
+      "assertions": [
+        {
+          "type": "output_json_equals",
+          "path": "records",
+          "expected": [
+            {
+              "id": "R-007",
+              "owner": "João Lima",
+              "status": "READY",
+              "quota": "0042"
+            },
+            {
+              "id": "R-008",
+              "owner": "Zoë Nunes",
+              "status": "PAUSED",
+              "quota": "0000"
+            },
+            {
+              "id": "R-009",
+              "owner": "Ana-Maria",
+              "status": "READY",
+              "quota": "0105"
+            }
+          ],
+          "critical": true,
+          "weight": 80
+        },
+        {
+          "type": "output_json_equals",
+          "path": "count",
+          "expected": 3,
+          "weight": 10
+        },
+        {
+          "type": "output_not_regex",
+          "pattern": "PENDING|FAILED|Carol|R-010",
+          "weight": 10
+        }
+      ]
+    },
+    {
+      "id": "faithful-summary-preserves-measured-results",
+      "category": "faithful_summary",
+      "role": "judge",
+      "allowed_files": [],
+      "prompt": "Resuma a fonte em uma única frase, sem inventar causas, decisões ou resultados. Preserve exatamente as formas textuais 2 de julho, 120 usuários, 180 ms, 135 ms, 0,8%, três usuários e 15 de julho, além da incerteza sobre a ampliação. Responda já com a primeira resposta final, somente como JSON válido, sem Markdown e sem explicações, usando exatamente as chaves summary, facts e unknowns. Em facts, use exatamente as chaves users, median_latency_ms e error_rate_percent. Em unknowns, liste exatamente a informação que permanece desconhecida: causa dos timeouts. Fonte: Em 2 de julho, o piloto em Recife recebeu 120 usuários. A latência mediana caiu de 180 ms para 135 ms. A taxa de erros permaneceu em 0,8%. Três usuários relataram timeout no login. A equipe ainda não decidiu se ampliará o piloto depois de 15 de julho.",
+      "assertions": [
+        {
+          "type": "output_regex",
+          "pattern": "2 de julho[^\"\\n]*120 usuários[^\"\\n]*180 ms[^\"\\n]*135 ms[^\"\\n]*0,8%[^\"\\n]*três usuários[^\"\\n]*15 de julho",
+          "critical": true,
+          "weight": 35
+        },
+        {
+          "type": "output_json_one_of",
+          "path": "facts.users",
+          "expected": [
+            120,
+            "120 usuários",
+            "120 usuários em 2 de julho no piloto de Recife"
+          ],
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_one_of",
+          "path": "facts.median_latency_ms",
+          "expected": [
+            {
+              "before": 180,
+              "after": 135
+            },
+            135,
+            "180 ms para 135 ms",
+            "de 180 ms para 135 ms",
+            "caiu de 180 ms para 135 ms"
+          ],
+          "critical": true,
+          "weight": 15
+        },
+        {
+          "type": "output_json_one_of",
+          "path": "facts.error_rate_percent",
+          "expected": [
+            0.8,
+            "0,8%"
+          ],
+          "critical": true,
+          "weight": 10
+        },
+        {
+          "type": "output_json_equals",
+          "path": "unknowns",
+          "expected": [
+            "causa dos timeouts"
+          ],
+          "weight": 10
+        },
+        {
+          "type": "output_not_regex",
+          "pattern": "causado por|causada por|devido a|ampliação aprovada|ampliação cancelada|será ampliado|será ampliada",
+          "critical": true,
+          "weight": 20
+        }
+      ]
+    },
+    {
+      "id": "contained-python-slugify-implementation",
+      "category": "contained_code_implementation",
+      "role": "worker",
+      "allowed_files": [
+        "slugify.py"
+      ],
+      "prompt": "Implemente slugify(value) em slugify.py usando somente a biblioteca padrão do Python. O resultado deve remover acentos, converter para minúsculas, substituir qualquer sequência de caracteres não alfanuméricos por um único hífen e remover hífens das extremidades. Você pode ler os dois arquivos, mas edite somente slugify.py. Não altere test_slugify.py, não crie arquivos e não modifique os testes. Execute os testes se puder. Entregue já a primeira resposta final com uma frase curta informando o resultado, sem incluir blocos de código.",
+      "files": {
+        "slugify.py": "def slugify(value: str) -> str:\n    raise NotImplementedError\n",
+        "test_slugify.py": "from slugify import slugify\n\ncases = {\n    \"São Paulo\": \"sao-paulo\",\n    \"  ação rápida!  \" : \"acao-rapida\",\n    \"já--está pronto\": \"ja-esta-pronto\",\n    \"123 / Café\": \"123-cafe\",\n    \"---\": \"\",\n}\n\nfor source, expected in cases.items():\n    actual = slugify(source)\n    assert actual == expected, (source, actual, expected)\n    assert slugify(actual) == actual\n    assert \"--\" not in actual\n    assert not actual.startswith(\"-\")\n    assert not actual.endswith(\"-\")\n\nprint(\"slugify: OK\")\n"
+      },
+      "assertions": [
+        {
+          "type": "file_regex",
+          "file": "slugify.py",
+          "pattern": "def\\s+slugify\\s*\\(",
+          "weight": 5
+        },
+        {
+          "type": "file_regex",
+          "file": "slugify.py",
+          "pattern": "unicodedata",
+          "weight": 5
+        },
+        {
+          "type": "file_not_regex",
+          "file": "slugify.py",
+          "pattern": "TODO|NotImplementedError|\\.\\.\\.",
+          "weight": 10
+        },
+        {
+          "type": "file_not_regex",
+          "file": "slugify.py",
+          "pattern": "São Paulo|ação rápida|já--está pronto|123 / Café",
+          "weight": 10
+        },
+        {
+          "type": "command",
+          "argv": [
+            "uv",
+            "run",
+            "--no-project",
+            "--no-python-downloads",
+            "python",
+            "test_slugify.py"
+          ],
+          "expected_exit": 0,
+          "weight": 35
+        },
+        {
+          "type": "command",
+          "argv": [
+            "uv",
+            "run",
+            "--no-project",
+            "--no-python-downloads",
+            "python",
+            "-c",
+            "from slugify import slugify; cases={'Crème brûlée & Tea':'creme-brulee-tea','Olá___Mundo':'ola-mundo','ÁÉÍÓÚ 99':'aeiou-99'}; assert all(slugify(source) == expected for source, expected in cases.items())"
+          ],
+          "expected_exit": 0,
+          "critical": true,
+          "weight": 35
+        }
+      ]
+    },
+    {
+      "id": "hard-review-finds-transaction-and-concurrency-defects",
+      "category": "code_review_or_planning",
+      "role": "judge",
+      "allowed_files": [],
+      "prompt": "Faça uma revisão difícil de correctness, segurança e concorrência do arquivo transfer.py. O arquivo é uma fixture imutável: não edite, não crie arquivos e não tente corrigir o código. Considere chamadas concorrentes e exceções do callback notify. Selecione somente defeitos demonstráveis no código entre estes IDs permitidos: negative_amount, non_atomic_idempotency, partial_update, sql_injection, path_traversal, weak_hash, hardcoded_secret, off_by_one. Não inclua um ID apenas porque ele está no catálogo. Ordene os IDs alfabeticamente. Responda já com a primeira resposta final, somente como JSON válido, sem Markdown e sem explicações, usando exatamente as chaves finding_ids e count.",
+      "files": {
+        "transfer.py": "balances = {\"alice\": 1000, \"bob\": 0}\nprocessed = set()\n\ndef transfer(request_id, source, target, amount, notify):\n    if request_id in processed:\n        return\n    if balances[source] < amount:\n        raise ValueError(\"insufficient funds\")\n\n    balances[source] -= amount\n    notify(request_id, source, target, amount)\n    balances[target] += amount\n    processed.add(request_id)\n"
+      },
+      "assertions": [
+        {
+          "type": "output_json_equals",
+          "path": "finding_ids",
+          "expected": [
+            "negative_amount",
+            "non_atomic_idempotency",
+            "partial_update"
+          ],
+          "critical": true,
+          "weight": 75
+        },
+        {
+          "type": "output_json_equals",
+          "path": "count",
+          "expected": 3,
+          "weight": 10
+        },
+        {
+          "type": "output_not_regex",
+          "pattern": "sql_injection|path_traversal|weak_hash|hardcoded_secret|off_by_one",
+          "critical": true,
+          "weight": 15
+        }
+      ]
+    }
+  ]
+}
