@@ -48,7 +48,7 @@ Mapeamento atual:
 |----------|------|-------|----------|---------------|
 | `literal_read_only_no_writing` | `minimax` | `m3` | MiniMax M3 | Contagem, listagem, busca, extração e formatação literais, sempre sem mutação |
 | `translation_simple_brainstorm_docs_or_intermediate_work` | `glm` | `glm` | GLM 5.2 | Tradução e trabalho simples ou intermediário com escopo claro |
-| `complex_creative_product_or_architecture` | `claude` | `cld` | Claude Opus 4.8 com `xhigh` | Arquitetura, estratégia, produto e escrita criativa complexa sem implementação |
+| `complex_creative_product_or_architecture` | `claude` | `cld` | Claude Opus 4.8 com effort dinâmico | Arquitetura, estratégia, produto e escrita criativa complexa sem implementação |
 | `review_security_hard_engineering_or_technical_writing` | `codex` | `cdx` | GPT 5.6 Sol com `xhigh` | Engenharia difícil, texto técnico preciso, auditoria e code review |
 
 Os nomes das intenções descrevem a tarefa, não o fornecedor. Isso reduz a
@@ -84,6 +84,11 @@ consequência da tarefa, não o tamanho do prompt.
 Planejar a correção de uma race condition ou deadlock, sem executar diagnóstico
 nem implementar, vai para Claude. Implementação, investigação executada,
 threat model e análise de segurança vão para Codex.
+
+O Claude usa `max` em planejamento, arquitetura, produto, ideação, copy e
+trabalho criativo. Discussão aberta, debate, trade-offs, política e
+falsificação usam `xhigh`. O fallback é `max`. Essa escolha vem da comparação
+cega registrada em `BENCHMARK.md`.
 
 A matriz combina três medidas separadas: qualidade textual em revisão cega,
 conformidade determinística e confiabilidade do processo. A revisão cega é feita
@@ -139,10 +144,11 @@ com sandbox somente leitura. Os workers podem alterar o diretório da tarefa.
 Os comandos configurados são equivalentes a:
 
 ```bash
-# Claude worker
+# Claude worker; o runner substitui {effort} por max ou xhigh
 claude --print --output-format json --no-session-persistence \
   --append-system-prompt-file "${HOME}/.claude/system-prompt/append.md" \
-  --dangerously-skip-permissions --model claude-opus-4-8 --effort xhigh
+  --dangerously-skip-permissions --model claude-opus-4-8 \
+  --effort {effort}
 
 # MiniMax worker, com o ambiente ANTHROPIC_* definido em config.json
 claude --print --output-format json --no-session-persistence \
@@ -390,10 +396,70 @@ Ghostty e os aliases são usados somente por `--run`.
 
 ## Instalação
 
-O repositório vive em `~/www/ai/llm-router`. Exponha o `route` no PATH:
+Depois de clonar o repositório, entre na raiz do clone e exponha o `route` no
+PATH. O exemplo abaixo funciona em qualquer diretório de clone:
 
 ```bash
-export PATH="$HOME/www/ai/llm-router:$PATH"
+export PATH="$(pwd):$PATH"
+```
+
+### OpenCode
+
+A integração com o OpenCode é um bundle de configuração e ferramentas
+customizadas, sem plugin adicional. Toda a fonte necessária fica em
+`opencode/`: configuração, coordenador, workers, providers, política de effort,
+permissões, ferramentas e instalador.
+
+Antes da instalação, autentique o provider OpenAI usado pelo coordenador e
+pelos workers Codex, autentique a CLI do Claude e defina as chaves dos planos
+MiniMax e Z.AI no shell que iniciará o OpenCode:
+
+```bash
+opencode auth login --provider openai
+claude auth login
+export MINIMAX_API_KEY="..."
+export ZAI_API_KEY="..."
+```
+
+O instalador exige `opencode`, `claude`, `perl` e `trash` no PATH, além do
+script `route` deste clone. O classificador local também exige Ollama e o modelo
+listado em Requisitos.
+
+Confira a instalação antes de alterar a configuração global:
+
+```bash
+bash opencode/install.sh --dry-run
+```
+
+Instale ou sincronize o bundle:
+
+```bash
+bash opencode/install.sh
+```
+
+O instalador resolve os caminhos de `route`, `claude` e `opencode`, copia a
+configuração para `~/.config/opencode/` e guarda cada arquivo substituído em
+`/tmp/claude-backups/AAAAMMDD_HHMMSS/`. Uma segunda execução idêntica não
+reescreve arquivos nem cria outro backup. Use `bash opencode/install.sh --help`
+para configurar paths alternativos.
+
+O `opencode.jsonc` versionado passa a ser a configuração global gerenciada
+por este repositório. O dry-run informa se uma configuração existente será
+substituída, e a instalação guarda sua cópia antes da troca.
+
+Ao iniciar `opencode`, o agente padrão `router` usa GPT-5.6 Sol com `xhigh` e
+verbosidade média. Ele chama `llm_route` para cada etapa e delega para MiniMax,
+GLM, Claude ou Codex. O MiniMax aceita somente trabalho literal read-only. Uma
+barreira determinística eleva ao menos para GLM qualquer pedido de mutação
+que o classificador tenha enviado ao MiniMax. Em uma etapa `execute`, ela
+também direciona uma classificação Claude para Codex, pois o worker Claude é
+read-only.
+
+Confirme a configuração resolvida e inicie o roteador:
+
+```bash
+opencode debug agent router
+opencode
 ```
 
 ## Testes
@@ -401,6 +467,7 @@ export PATH="$HOME/www/ai/llm-router:$PATH"
 ```bash
 bash tests/smoke.sh
 bash tests/routing-eval.sh
+bash tests/opencode-bundle.sh
 uv run --no-project --no-python-downloads python -m unittest tests/test_quality_eval.py
 uv run --no-project --no-python-downloads python quality_eval.py --help
 ```
@@ -410,6 +477,8 @@ cascade sem chamar Ollama, Claude, Codex, MiniMax ou GLM e sem consumir
 créditos. O `routing-eval.sh` chama somente o classificador local no Ollama e
 exige 100% de acerto na matriz de regressão. Essa matriz valida a
 política do projeto; ela não substitui um benchmark independente dos modelos.
+O `opencode-bundle.sh` valida os templates, a barreira de mutação, o dry-run,
+o backup e a idempotência do instalador em uma configuração temporária.
 
 O `quality_eval.py` mede qualidade de resposta com workspaces isolados, auditoria
 determinística e relatórios JSON e Markdown. `tests/quality-cases.json` preserva

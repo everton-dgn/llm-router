@@ -15,7 +15,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from auto_runner import ProcessResult
+from auto_runner import AutoRunner, ProcessResult, select_claude_effort
 from quality_eval import (
     EvaluationError,
     _atomic_write_json,
@@ -2533,6 +2533,57 @@ class BenchmarkV2Tests(unittest.TestCase):
 
         self.assertNotEqual(first["rubric_sha256"], second["rubric_sha256"])
         self.assertNotEqual(first["plan_sha256"], second["plan_sha256"])
+
+
+class ClaudeEffortRoutingTests(unittest.TestCase):
+    def test_selects_effort_by_task_or_stage(self) -> None:
+        cases = {
+            "Planeje a migração sem downtime.": "max",
+            "Defina a arquitetura deste produto.": "max",
+            "Debata os trade-offs da arquitetura proposta.": "max",
+            "Faça uma ideação de novos produtos.": "max",
+            "Escreva copy de venda criativa.": "max",
+            "Abra uma discussão sobre os trade-offs desta decisão.": "xhigh",
+            "Debata a política e tente falsificar o argumento.": "xhigh",
+            "Responda à solicitação sem categoria específica.": "max",
+        }
+
+        for prompt, expected in cases.items():
+            with self.subTest(prompt=prompt):
+                self.assertEqual(select_claude_effort(prompt), expected)
+
+    def test_config_applies_dynamic_effort_only_to_claude_worker(self) -> None:
+        config_path = Path(__file__).resolve().parents[1] / "config.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        claude = next(route for route in config["routes"] if route["name"] == "claude")
+        worker = claude["headless"]["worker"]
+        judge = claude["headless"]["judge"]
+        runner = object.__new__(AutoRunner)
+        runner.project_root = config_path.parent
+
+        worker_efforts = []
+        for prompt in (
+            "Planeje a arquitetura do produto.",
+            "Conduza uma discussão aberta sobre os trade-offs.",
+        ):
+            worker_values = runner._profile_runtime_values(worker, "worker", prompt)
+            worker_argv = runner._prepare_argv(
+                worker["argv"],
+                None,
+                config_path.parent,
+                worker_values,
+            )
+            worker_efforts.append(worker_argv[worker_argv.index("--effort") + 1])
+        judge_argv = runner._prepare_argv(
+            judge["argv"],
+            None,
+            config_path.parent,
+            runner._profile_runtime_values(judge, "judge", "Avalie o resultado."),
+        )
+
+        self.assertEqual(worker["effort_policy"], "claude_dynamic")
+        self.assertEqual(worker_efforts, ["max", "xhigh"])
+        self.assertEqual(judge_argv[judge_argv.index("--effort") + 1], "xhigh")
 
 
 class SafetyTests(unittest.TestCase):
