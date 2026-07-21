@@ -1,61 +1,72 @@
 # llm-router
 
-Roteador local de modelos. Dado um prompt, um classificador local
-(Plano-Orchestrator-4B, baseado no Qwen3-4B e executado pelo Ollama) escolhe a
-rota inicial entre Claude, Codex, MiniMax e GLM.
+Roteador local de tarefas entre MiniMax M3, GLM 5.2, Claude Opus 4.8 e GPT-5.6 Sol. O classificador local escolhe uma rota sem executar o modelo. A execução e a coordenação ficam no OpenCode.
 
-O comando tem três modos de execução e um help:
+## Arquitetura
 
-| Modo | Comportamento |
-|------|---------------|
-| padrão | Dry-run: mostra a rota escolhida e encerra |
-| `--run` | Abre a CLI interativa em uma janela do Ghostty |
-| `--auto` | Executa a tarefa em modo headless, verifica o resultado e escala quando necessário |
-| `help` ou `--help` | Mostra modos, rotas, cascade, verificadores, exemplos e requisitos |
+| Componente | Responsabilidade |
+| --- | --- |
+| `route` | Classifica um pedido e devolve uma rota para uma pessoa ou para uma integração JSON |
+| `config.json` | Define as intenções, as quatro rotas e as regras de verificação determinística |
+| `opencode/opencode.jsonc` | Configura o agente `router`, os subagentes e os providers do OpenCode |
+| `opencode/tools/llm_route.ts` | Chama `route --classify --json`, valida o contrato e aplica os pisos de segurança |
+| `opencode/tools/claude_agent.ts` | Usa o Claude Agent SDK em modo read-only para planejamento e raciocínio criativo |
+| `opencode/tools/repo_query.ts` | Dá aos agentes read-only consultas fixas e seguras sobre o worktree |
+| `opencode/plugins/llm_router_prompt_guard.ts` | Preserva o pedido original até a classificação da etapa |
+| `stage_verifier.py` | Registra o baseline, calcula o delta exato e executa gates determinísticos |
+| `benchmark_executor.py` | Executa modelos single-shot somente no benchmark offline |
 
-O dry-run e o `--run` mantêm o comportamento original. O cascade só é iniciado
-quando `--auto` é informado.
+O fluxo de produção é:
 
-## Uso
-
-```bash
-route "otimiza essa query lenta"
-route --run "otimiza essa query lenta"
-route --auto "corrija o bug e valide a alteração"
-route --help
+```text
+pedido
+  -> router do OpenCode
+  -> llm_route
+  -> task nativa ou claude_agent
+  -> stage_prepare e stage_verify quando houver mutação
+  -> resposta ou correção baseada nas evidências
 ```
 
-No modo padrão, o comando apenas mostra a decisão. Com `--run`, ele carrega o
-alias correspondente do `~/.zshrc` e abre o Ghostty para uma sessão interativa.
+## Classificador local
 
-Com `--auto`, o `route` chama `auto_runner.py` pelo `uv`, no diretório em que o
-comando foi executado. Nenhuma janela é aberta e não há aprovação humana entre
-as tentativas. O perfil padrão `auto_select` escolhe sozinho entre gates
-determinísticos e o júri. `--verifier` existe como override avançado para
-diagnóstico ou para desabilitar o gate com `null`.
+O `route` tem duas saídas. A saída humana mostra a decisão de forma legível:
 
-## Como o roteamento funciona
+```bash
+./route "otimiza essa query lenta"
+```
 
-O `route` envia ao Plano as intenções semânticas de `routing`, chama o endpoint
-`/api/chat` do Ollama com `think:false` e restringe a resposta por JSON Schema a
-exatamente uma intenção configurada. Depois, mapeia essa intenção ao executor
-real. Uma resposta vazia ou inválida encerra com erro, sem escolher um modelo por
-fallback.
+```text
+rota: codex -> GPT-5.6 Sol (xhigh)
+```
 
-Mapeamento atual:
+A saída de integração usa um contrato JSON estável:
 
-| Intenção | Rota | Alias | Executor | Uso principal |
-|----------|------|-------|----------|---------------|
-| `literal_read_only_no_writing` | `minimax` | `m3` | MiniMax M3 | Contagem, listagem, busca, extração e formatação literais, sempre sem mutação |
-| `translation_simple_brainstorm_docs_or_intermediate_work` | `glm` | `glm` | GLM 5.2 | Tradução e trabalho simples ou intermediário com escopo claro |
-| `complex_creative_product_or_architecture` | `claude` | `cld` | Claude Opus 4.8 com effort dinâmico | Arquitetura, estratégia, produto e escrita criativa complexa sem implementação |
-| `review_security_hard_engineering_or_technical_writing` | `codex` | `cdx` | GPT 5.6 Sol com `xhigh` | Engenharia difícil, texto técnico preciso, auditoria e code review |
+```bash
+./route --classify --json "traduza este parágrafo para inglês"
+```
 
-Os nomes das intenções descrevem a tarefa, não o fornecedor. Isso reduz a
-sobreposição semântica para o Plano-Orchestrator. Em pedidos mistos, a entrega
-final decide a rota: tradução pura vai para GLM; tradução combinada com
-planejamento complexo segue para Claude; code review e auditoria seguem para
-Codex.
+```json
+{"schema_version":1,"intent":"translation_simple_brainstorm_docs_or_intermediate_work","route":"glm"}
+```
+
+Erros do modo JSON também têm `schema_version` e um objeto `error` com `code` e `message`. Consulte os argumentos aceitos com:
+
+```bash
+./route --help
+```
+
+O comando encerra depois da classificação. Toda execução de modelo acontece no OpenCode ou no benchmark offline.
+
+O classificador envia ao Ollama as intenções semânticas de `routing`, usa o endpoint `/api/chat` com `think:false` e restringe a resposta com JSON Schema. Resposta vazia, rota desconhecida ou JSON inválido termina com erro, sem fallback silencioso.
+
+## Matriz de rotas
+
+| Intenção | Rota | Destino de produção | Uso principal |
+| --- | --- | --- | --- |
+| `literal_read_only_no_writing` | `minimax` | subagente nativo `minimax` | Contagem, listagem, busca, extração e formatação literais sem mutação |
+| `translation_simple_brainstorm_docs_or_intermediate_work` | `glm` | subagente nativo `glm` | Tradução e trabalho simples ou intermediário com escopo claro |
+| `complex_creative_product_or_architecture` | `claude` | ferramenta `claude_agent` | Arquitetura, produto, estratégia e escrita criativa complexa sem implementação |
+| `review_security_hard_engineering_or_technical_writing` | `codex` | subagente nativo `codex` | Engenharia difícil, texto técnico, auditoria, segurança e revisão |
 
 Para as categorias medidas no benchmark V2, a política usa esta matriz:
 
@@ -74,400 +85,239 @@ Para as categorias medidas no benchmark V2, a política usa esta matriz:
 | Escrita de testes | GLM | GLM | Codex |
 | Sales copy | GLM | Claude | Claude |
 
-MiniMax fica fora dessas 12 categorias porque até os casos simples exigem
-interpretação ou produção autoral. Ele continua sendo a rota econômica para
-operações literais de baixo risco. Tradução pura tem piso GLM; tradução com
-arquitetura vai para Claude; tradução com implementação difícil, review,
-auditoria ou segurança vai para Codex. O classificador usa a dificuldade e a
-consequência da tarefa, não o tamanho do prompt.
-
-Planejar a correção de uma race condition ou deadlock, sem executar diagnóstico
-nem implementar, vai para Claude. Implementação, investigação executada,
-threat model e análise de segurança vão para Codex.
-
-O Claude usa `max` em planejamento, arquitetura, produto, ideação, copy e
-trabalho criativo. Discussão aberta, debate, trade-offs, política e
-falsificação usam `xhigh`. O fallback é `max`. Essa escolha vem da comparação
-cega registrada em `BENCHMARK.md`.
-
-A matriz combina três medidas separadas: qualidade textual em revisão cega,
-conformidade determinística e confiabilidade do processo. A revisão cega é feita
-por um juiz LLM anonimizado e serve como sinal suplementar. Os casos de
-criatividade próximos continuam sujeitos a revisão humana, conforme detalhado
-em `BENCHMARK.md`.
-
-O worker MiniMax fica limitado a `Read,Glob,Grep`, sem Bash, edição, MCP externo
-ou slash commands. Isso mantém a rota trivial adequada para inspeção e
-transformação de resposta, sem permitir mudanças no projeto. Qualquer pedido que
-edite arquivos começa no GLM ou em uma rota superior.
-
-## Cascade automático
-
-Depois da classificação inicial, `--auto` segue este fluxo:
-
-1. Executa a rota escolhida como worker headless e captura stdout, stderr e
-   exit code.
-2. Detecta quais gates determinísticos se aplicam ao projeto e aos arquivos
-   alterados.
-3. Executa todos os gates selecionados. Sem gate aplicável, consulta o júri LLM.
-4. Se a tentativa reprovar, envia a saída anterior e o feedback ao próximo
-   worker. A política pode reamostrar uma vez na mesma rota antes de avançar na
-   ladder.
-5. Encerra ao obter aprovação ou atingir um teto de tentativas, sessões ou
-   tempo.
-
-A escalada reaproveita o resultado e as evidências da tentativa anterior. O
-modelo seguinte recebe instruções de reparo para corrigir o trabalho existente
-em vez de reiniciar a tarefa sem contexto. O runner não desfaz alterações do
-workspace entre tentativas.
-
-As ladders atuais são:
-
-```text
-minimax -> minimax -> glm   -> glm
-glm     -> glm     -> codex -> codex
-codex   -> codex   -> claude -> claude
-claude  -> claude
-```
-
-A repetição da mesma rota é controlada por `auto.retry_same_route`. Na
-configuração padrão, há no máximo uma repetição para `process_error`, `timeout`,
-`fail` ou verificação inconclusiva. Isso permite uma correção no mesmo modelo
-antes da escalada, inclusive quando um gate ou o júri reprova a tentativa.
-
-## Execução headless
-
-Cada rota declara comandos separados para worker e judge em
-`routes[].headless`. Os judges têm timeout menor e trabalham sem ferramentas ou
-com sandbox somente leitura. Os workers podem alterar o diretório da tarefa.
-
-Os comandos configurados são equivalentes a:
-
-```bash
-# Claude worker; o runner substitui {effort} por max ou xhigh
-claude --print --output-format json --no-session-persistence \
-  --append-system-prompt-file "${HOME}/.claude/system-prompt/append.md" \
-  --dangerously-skip-permissions --model claude-opus-4-8 \
-  --effort {effort}
-
-# MiniMax worker, com o ambiente ANTHROPIC_* definido em config.json
-claude --print --output-format json --no-session-persistence \
-  --append-system-prompt-file "${HOME}/.claude/system-prompt/append.md" \
-  --permission-mode dontAsk --tools Read,Glob,Grep \
-  --strict-mcp-config --mcp-config '{"mcpServers":{}}' \
-  --disable-slash-commands --model MiniMax-M3
-
-# GLM worker, com o ambiente ANTHROPIC_* definido em config.json
-claude --print --output-format json --no-session-persistence \
-  --append-system-prompt-file "${HOME}/.claude/system-prompt/append.md" \
-  --dangerously-skip-permissions --model glm-5.2
-
-# Codex worker; o prompt entra por stdin
-codex --ask-for-approval never exec --json --ephemeral \
-  --output-last-message "{output_file}" \
-  --model gpt-5.6-sol \
-  --config model_reasoning_effort=xhigh \
-  --config features.apps=false \
-  --sandbox workspace-write \
-  --cd "{cwd}" -
-```
-
-O runner monta `argv` diretamente, sem interpolar o prompt em um shell. Os
-placeholders `{cwd}`, `{project_root}` e `{output_file}` são preenchidos durante
-a execução.
-Variáveis sensíveis usam referências como `{"from_env":"MINIMAX_API_KEY"}`;
-o valor não fica gravado no repositório.
-
-## Verificação
-
-### Seleção automática
-
-`auto_select` é o verificador padrão. Antes da primeira tentativa, ele registra
-o `HEAD` e o hash dos arquivos que já estavam sujos. Depois do worker, compara o
-novo estado com esse baseline e avalia somente arquivos modificados durante a
-execução. Alterações preexistentes não acionam gates. O delta é comparado com as
-regras de `auto.verifiers.auto_select.rules`; o prompt não decide qual teste será
-usado.
-
-As regras incluídas são:
-
-| Regra | Condições principais | Gate |
-|-------|----------------------|------|
-| `llm-router-smoke` | Arquivos deste roteador alterados | `bash tests/smoke.sh` |
-| `pnpm-tests` | `package.json`, lockfile, `node_modules`, script `test` e JS/TS alterado | `pnpm test` |
-| `python-pytest` | Config Python, `tests`, `.venv` e código ou configuração Python alterada | `uv run --no-sync pytest` |
-| `rust-tests` | `Cargo.toml` e Rust alterado | `cargo test` |
-| `go-tests` | `go.mod` e Go alterado | `go test ./...` |
-
-Se duas stacks forem alteradas, os dois gates são executados. Se nenhuma regra
-for aplicável, o runner chama o júri. Diretórios fora de um repositório Git
-também seguem para o júri, pois não há diff confiável para selecionar testes.
-
-O uso normal não exige escolher um verificador:
-
-```bash
-route --auto "corrija o bug e valide a alteração"
-```
-
-### Gates determinísticos
-
-Há dois tipos de gate:
-
-- `command`: executa `argv` no diretório da tarefa. Exit code `0` aprova, códigos
-  listados em `error_exit_codes` indicam erro de infraestrutura e os demais
-  reprovam. `timeout_seconds`, `cwd` e `env` são opcionais.
-- `jq`: executa o `filter` sobre `source`, que pode ser o JSON de `output` ou o
-  texto bruto de `evidence`. Exit code `0` aprova, `1` reprova e os demais
-  indicam erro.
-
-Todos os gates selecionados precisam passar. Uma reprovação objetiva encerra a
-verificação daquela tentativa. Falha ao iniciar um processo, timeout ou exit
-code listado em `error_exit_codes` segue `on_gate_error`, que aceita outro
-verificador, `pass`, `fail` ou `inconclusive`. Na configuração atual, o júri
-decide esses erros.
-
-Novas stacks são adicionadas como regras, sem mudar o comando usado no dia a
-dia. Exemplo reduzido:
-
-```json
-{
-  "name": "ruby-tests",
-  "match": {
-    "files_all": ["Gemfile"],
-    "changed_any": ["*.rb", "**/*.rb"],
-    "commands_all": ["bundle"]
-  },
-  "gates": [
-    {
-      "type": "command",
-      "argv": ["bundle", "exec", "rspec"],
-      "cwd": "{project_root}",
-      "timeout_seconds": 600
-    }
-  ]
-}
-```
-
-### Júri cego
-
-O perfil `jury` usa maioria preguiçosa com quórum de dois. Os thresholds atuais
-são `0.85` para Codex e Claude, e `0.80` para GLM:
-
-1. Codex e Claude julgam separadamente, sem saber qual worker produziu a saída
-   e sem ver o voto um do outro.
-2. Se os dois votos válidos concordarem, a decisão está formada e GLM não é
-   chamado.
-3. Em divergência ou abstenção, GLM emite o terceiro voto às cegas.
-4. Sem quórum, o árbitro decide com threshold próprio. A configuração prefere
-   Codex e evita usar a mesma rota do worker; Claude é o fallback.
-
-Cada judge devolve `pass`, `fail` ou `abstain`, acompanhado de confiança,
-falhas observadas e instruções de reparo. Um voto abaixo do `threshold` vira
-abstenção. Em uma reprovação, o feedback do Codex é preferido quando ele
-integra os votos de falha; caso contrário, o runner usa as falhas da maioria.
-
-Sessões de judge e árbitro entram nos tetos de custo do modo automático.
-
-### Verificador nulo
-
-O perfil `null` sempre aprova a primeira execução que terminar com sucesso. Ele
-é um escape explícito para diagnóstico ou para uma execução em que o usuário
-queira assumir o risco de pular toda verificação:
-
-```bash
-route --auto --verifier null "gere cinco nomes para o projeto"
-```
-
-## Configuração
-
-Toda a configuração fica em `config.json` ao lado do `route`.
-
-Cada item de `routing` contém:
-
-- `intent`, o rótulo semântico enviado ao Plano-Orchestrator;
-- `route`, o executor associado à intenção;
-- `description`, os limites e capacidades usados na classificação;
-- `help`, a descrição curta exibida por `route --help`.
-
-Cada item de `routes` contém:
-
-- `name`, `cli` e `display_name`, usados na execução e no help;
-- `headless.env`, com valores literais ou referências `from_env`;
-- `headless.worker` e `headless.judge`, com `argv`, `output_format` e
-  `timeout_seconds`.
-
-Os formatos de saída aceitos são `text`, `claude_json` e
-`codex_last_message`. O bloco `auto` contém:
-
-| Chave | Função |
-|-------|--------|
-| `max_worker_attempts` | Teto de tentativas de worker |
-| `max_judge_sessions` | Teto de sessões de judge e árbitro |
-| `max_total_sessions` | Teto somado de workers e judges |
-| `max_total_seconds` | Deadline global do cascade |
-| `feedback_max_chars` | Limite do feedback repassado ao worker |
-| `evidence_max_chars` | Limite de evidências entregues ao júri |
-| `retry_same_route` | Quantidade e motivos de reamostragem |
-| `ladders` | Ordem de escalada para cada rota inicial |
-| `verifiers` | Seleção automática, gates, júri, `null` e perfis adicionais |
-| `default_verifier` | Perfil usado quando `--verifier` não é informado |
-| `log` | Caminho e política de conteúdo do JSONL |
-
-Todos esses valores são configuráveis. Rotas, thresholds, ladders e tetos vêm
-do `config.json`.
-
-## Limites e erros
-
-A configuração padrão permite quatro tentativas de worker, doze sessões de
-judge, dezesseis sessões no total e 1.800 segundos por execução completa. Cada
-worker tem timeout de 900 segundos e cada judge, 300 segundos.
-
-Executável ausente, variável de ambiente obrigatória ausente, exit code
-diferente de zero, timeout e saída inválida são tratados separadamente.
-Processos são iniciados em grupo; quando o timeout expira, o runner encerra o
-grupo. O exit code final é `0` para aprovação, `1` para reprovação, teto ou
-deadline esgotado, e `2` para erro de uso ou configuração.
-
-## Logs
-
-O modo automático grava eventos JSONL em `logs/auto.jsonl`, caminho resolvido a
-partir do diretório do `config.json`. A pasta `logs/` é criada na primeira
-execução e está no `.gitignore`.
-
-Os eventos são `run_started`, `route_selected`, `worker_finished`,
-`verifier_selected`, `gate_finished`, `judge_finished`, `verification_finished`
-e `run_finished`.
-Eles registram rota, tentativas, durações, escaladas e resultado final. Hash e
-tamanho do prompt e da saída são sempre gravados. O conteúdo integral só entra
-no log quando `include_prompt` ou `include_output` está habilitado; ambos são
-`false` por padrão.
-
-## Segurança e permissões
-
-`--auto` trabalha sem humano no loop. Na configuração atual, Claude e GLM usam
-`--dangerously-skip-permissions`; MiniMax usa `--permission-mode dontAsk` e fica
-limitado a `Read,Glob,Grep`; o worker Codex usa `workspace-write`. Judges não
-recebem ferramentas no Claude Code, e o Codex judge usa sandbox `read-only`.
-
-Antes de executar uma tarefa automática:
-
-- use uma branch de trabalho e confira `git status`;
-- trate comandos de gates como código confiável, pois eles são executados no
-  diretório da tarefa;
-- mantenha tokens somente nas variáveis `MINIMAX_API_KEY` e `ZAI_API_KEY`;
-- revise o diff e o JSONL depois da execução;
-- defina tetos menores para tarefas de alto risco.
-
-O runner não faz rollback e não isola o workspace em um container.
-
-## Por que o Plano-Orchestrator-4B
-
-Escolhido por benchmark local (Mac mini M2 Pro, 192 prompts rotulados, mesma política nos
-três modelos):
-
-| Modelo                | Acurácia         | Latência mediana | RAM    |
-|-----------------------|------------------|------------------|--------|
-| Plano-Orchestrator-4B | 92,2% (177/192)  | ~843 ms          | 2,5 GB |
-| Mellum2-12B-A2.5B     | 87,0% (167/192)  | ~862 ms          | 8,1 GB |
-| Arch-Router-1.5B      | 80,2% (154/192)  | ~594 ms          | 1,0 GB |
-
-O Plano venceu em acurácia com 3x menos RAM que o Mellum. Requer `think:false`
-(o Qwen3 põe a resposta no campo `thinking` por padrão) e o formato nativo
-`<routes>`. O JSON Schema exige uma lista com exatamente uma intenção:
-`{"route": ["intent_name"]}`.
-
-## Requisitos
-
-- Ollama em execução.
-- Modelo do classificador baixado:
-
-  ```bash
-  ollama pull hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M
-  ```
-
-- `jq` e `curl` disponíveis no PATH.
-- `uv` com Python disponível para `--auto`.
-- `trash` para limpar arquivos temporários de saída sem exclusão permanente.
-- CLIs `claude` e `codex` autenticadas para `--auto`.
-- `MINIMAX_API_KEY` e `ZAI_API_KEY` definidas para usar essas rotas headless.
-- Ghostty e os aliases `cld`, `cdx`, `m3` e `glm` no `~/.zshrc` para `--run`.
-
-Ghostty e os aliases são usados somente por `--run`.
+MiniMax recebe somente operações literais de baixo risco. Qualquer mutação tem piso GLM. Tradução pura também tem piso GLM. Arquitetura ou planejamento complexo elevam para Claude. Revisão, auditoria, segurança, texto técnico de precisão e implementação difícil elevam para Codex.
+
+Planejamento de uma correção difícil, sem diagnóstico executado nem implementação, usa Claude. A investigação executada e a implementação usam Codex quando o trabalho entra no nível difícil.
+
+O effort do Claude é dinâmico:
+
+| Tipo de tarefa | Effort |
+| --- | --- |
+| Planejamento, arquitetura, produto, ideação, copy e criação | `max` |
+| Discussão aberta, debate, trade-offs, política e falsificação | `xhigh` |
+| Demais casos aceitos pelo Claude | `max` |
+
+Essa decisão vem da comparação cega registrada em [BENCHMARK.md](BENCHMARK.md).
+
+## Orquestração no OpenCode
+
+O agente primário `router` usa GPT-5.6 Sol com `reasoningEffort: xhigh` e `textVerbosity: medium`. Para cada etapa, ele chama `llm_route` somente com `stage` e delega de acordo com o contrato retornado. O plugin `llm_router_prompt_guard.ts` captura o texto da mensagem do usuário em memória por sessão, e `llm_route` lê esse texto diretamente pelo `sessionID` da chamada. Assim, a UI mostra apenas `stage`, enquanto aspas, paráfrases ou contexto acrescentado pelo agente não chegam ao classificador. O texto capturado é removido quando a sessão fica ociosa ou é apagada.
+
+### Subagentes nativos
+
+| Subagente | Modelo | Papel | Permissão principal |
+| --- | --- | --- | --- |
+| `minimax` | `minimax-coding-plan/MiniMax-M3` | Leitura literal e respostas mecânicas | Somente `repo_query`, sem Bash ou ferramentas de escrita |
+| `glm` | `zai-coding-plan/glm-5.2` | Trabalho simples ou intermediário | Pode executar e editar dentro das permissões do OpenCode |
+| `codex` | `openai/gpt-5.6-sol` | Engenharia difícil e execução complexa | Pode executar e editar dentro das permissões do OpenCode |
+| `codex-reviewer` | `openai/gpt-5.6-sol` | Revisão independente | Somente `repo_query`, sem Bash ou ferramentas de escrita |
+
+Esses quatro destinos usam a ferramenta nativa `task` em primeiro plano. O `subagent_type` deve corresponder exatamente ao nome da tabela. As execuções criam sessões filhas navegáveis no OpenCode.
+
+`repo_query` oferece ações fixas para status, arquivos versionados, leitura com linhas numeradas, busca literal, diff, log e maiores arquivos por linhas. A implementação usa argumentos separados, limita a saída ao worktree, ignora arquivos sensíveis e rejeita symlinks que apontam para fora. Arquivos não rastreados só entram quando a chamada define `include_untracked: true`.
+
+A etapa `review` vai diretamente ao `codex-reviewer`. Em trabalho significativo, o fluxo esperado é planejamento, execução e revisão. Se a revisão encontrar um defeito, o router permite uma correção e uma revisão final antes de encerrar.
+
+### Claude Agent SDK
+
+Claude Opus 4.8 é chamado pela ferramenta `claude_agent`, que usa `@anthropic-ai/claude-agent-sdk`. A integração aceita apenas as etapas `request` e `plan` e limita as ferramentas a `Read`, `Glob` e `Grep` dentro do worktree.
+
+O SDK bloqueia escrita, edição, Bash, rede, subagentes, skills, MCPs, persistência de sessão, caminhos externos, `.git`, `.env*` e arquivos sensíveis. `xhigh` e `max` são enviados sem rebaixamento. Cancelamento do OpenCode e timeout são propagados para a consulta.
+
+Claude fica fora das etapas que exigem mutação. Uma classificação Claude em `execute` sobe para Codex.
+
+## Preparação e verificação determinísticas
+
+Antes de uma etapa GLM ou Codex que possa alterar o workspace, o router chama `stage_prepare`. A ferramenta exige que o diretório da sessão seja a raiz de um worktree Git e devolve um `baseline_id` opaco.
+
+Depois da execução, inclusive após falha do subagente, o router chama `stage_verify` com o mesmo identificador. O verificador compara conteúdo, tipo e modo dos arquivos, separa mudanças preexistentes e calcula somente o delta líquido produzido depois do baseline.
+
+O baseline é de uso único. Reutilização, identificador ausente ou baseline inválido produz erro de infraestrutura.
+
+### Status
+
+| Status | Origem | Ação do router |
+| --- | --- | --- |
+| `prepared` | `stage_prepare` | Guarda o `baseline_id` para a etapa |
+| `pass` | Gates aplicáveis passaram | Aprova a etapa de forma determinística |
+| `fail` | Um gate encontrou falha objetiva | Solicita correção usando a evidência do gate |
+| `no_changes` | Nenhum delta líquido foi encontrado | Envia ao `codex-reviewer` para decidir se a entrega atende ao pedido |
+| `no_applicable_gates` | Houve mudança sem regra compatível | Envia ao `codex-reviewer` |
+| `infrastructure_error` | Git, baseline, comando ou timeout impediram a verificação | Envia ao `codex-reviewer` com a evidência disponível |
+
+O runtime não usa júri LLM. Gates determinísticos aprovam resultados cobertos; o `codex-reviewer` trata somente revisão explícita e estados sem decisão determinística.
+
+As regras atuais são:
+
+| Regra | Condição principal | Gate |
+| --- | --- | --- |
+| `llm-router-tests` | CLI, configuração e verificador deste projeto | `bash tests/smoke.sh` e testes do `stage_verifier.py` |
+| `llm-router-opencode-tests` | Bundle, tools, plugin ou bibliotecas do OpenCode | Teste do instalador e 15 testes Node |
+| `llm-router-quality-tests` | Executor ou benchmark de qualidade | 64 testes Python |
+| `pnpm-tests` | Projeto JS ou TS com script `test` | `pnpm test` |
+| `python-pytest` | Projeto Python com estrutura pytest | `uv run --no-sync pytest` |
+| `rust-tests` | Projeto Rust | `cargo test` |
+| `go-tests` | Projeto Go | `go test ./...` |
+
+Os gates usam listas de argumentos, `shell:false`, timeout e diretório resolvido. Todos os gates aplicáveis são executados, e a saída limitada vira evidência para a correção. Se o worker alterar o teste, manifesto ou arquivo de configuração que define um gate, o resultado vira `infrastructure_error` e segue para o reviewer. Uma mudança de `HEAD` durante o estágio produz `fail` mesmo sem delta de arquivos.
+
+### Retry e escalada
+
+Uma falha transitória da ferramenta `task` permite uma única repetição no mesmo subagente. Quando o OpenCode devolve um `task_id`, a repetição reutiliza a mesma sessão. Persistindo a falha, a política escala assim:
+
+| Rota atual | Próxima rota |
+| --- | --- |
+| MiniMax | GLM |
+| GLM | Codex |
+| Claude | Codex |
+| Codex | encerra e reporta |
+| Codex reviewer | encerra e reporta |
+
+Uma correção que possa mutar o workspace recebe um baseline novo e outra verificação. Retry e escalada cobrem falha de execução. O status `fail` segue o ciclo de correção baseado nos gates.
+
+Os eventos de preparação e verificação são gravados em JSONL em `~/.config/opencode/logs/router.jsonl` na instalação padrão.
 
 ## Instalação
 
-Depois de clonar o repositório, entre na raiz do clone e exponha o `route` no
-PATH. O exemplo abaixo funciona em qualquer diretório de clone:
+### Requisitos
+
+- OpenCode instalado.
+- Ollama em execução com o modelo do classificador.
+- `curl`, `jq`, `perl`, `trash` e `uv` disponíveis no `PATH`.
+- Autenticação OpenAI configurada no OpenCode.
+- Claude Code autenticado, ou `ANTHROPIC_API_KEY` disponível no shell que inicia o OpenCode.
+- `MINIMAX_API_KEY` e `ZAI_API_KEY` disponíveis no shell que inicia o OpenCode.
+
+Baixe o classificador local:
 
 ```bash
-export PATH="$(pwd):$PATH"
+ollama pull hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M
 ```
 
-### OpenCode
-
-A integração com o OpenCode é um bundle de configuração e ferramentas
-customizadas, sem plugin adicional. Toda a fonte necessária fica em
-`opencode/`: configuração, coordenador, workers, providers, política de effort,
-permissões, ferramentas e instalador.
-
-Antes da instalação, autentique o provider OpenAI usado pelo coordenador e
-pelos workers Codex, autentique a CLI do Claude e defina as chaves dos planos
-MiniMax e Z.AI no shell que iniciará o OpenCode:
+Autentique e exporte as chaves:
 
 ```bash
 opencode auth login --provider openai
 claude auth login
+export ANTHROPIC_API_KEY="..."
 export MINIMAX_API_KEY="..."
 export ZAI_API_KEY="..."
 ```
 
-O instalador exige `opencode`, `claude`, `perl` e `trash` no PATH, além do
-script `route` deste clone. O classificador local também exige Ollama e o modelo
-listado em Requisitos.
+O `claude auth login` e `ANTHROPIC_API_KEY` são alternativas. Confira o estado com `claude auth status`. Consulte a [documentação oficial de autenticação da Anthropic](https://platform.claude.com/docs/en/manage-claude/authentication).
 
-Confira a instalação antes de alterar a configuração global:
+Não publique a saída de `opencode debug config`: a versão validada durante esta integração expandiu os valores das variáveis de autenticação no diagnóstico. Para conferir agentes sem revelar tokens, use `opencode debug agent <nome>`.
+
+### Instalar o bundle do OpenCode
+
+O instalador resolve os caminhos a partir do próprio clone, então o repositório pode ficar em qualquer diretório. Primeiro confira as mudanças:
 
 ```bash
 bash opencode/install.sh --dry-run
 ```
 
-Instale ou sincronize o bundle:
+Depois instale:
 
 ```bash
 bash opencode/install.sh
 ```
 
-O instalador resolve os caminhos de `route`, `claude` e `opencode`, copia a
-configuração para `~/.config/opencode/` e guarda cada arquivo substituído em
-`/tmp/claude-backups/AAAAMMDD_HHMMSS/`. Uma segunda execução idêntica não
-reescreve arquivos nem cria outro backup. Use `bash opencode/install.sh --help`
-para configurar paths alternativos.
+Opções disponíveis:
 
-O `opencode.jsonc` versionado passa a ser a configuração global gerenciada
-por este repositório. O dry-run informa se uma configuração existente será
-substituída, e a instalação guarda sua cópia antes da troca.
+```text
+--config-dir PATH
+--backup-root PATH
+--router-path PATH
+--dry-run
+```
 
-Ao iniciar `opencode`, o agente padrão `router` usa GPT-5.6 Sol com `xhigh` e
-verbosidade média. Ele chama `llm_route` para cada etapa e delega para MiniMax,
-GLM, Claude ou Codex. O MiniMax aceita somente trabalho literal read-only. Uma
-barreira determinística eleva ao menos para GLM qualquer pedido de mutação
-que o classificador tenha enviado ao MiniMax. Em uma etapa `execute`, ela
-também direciona uma classificação Claude para Codex, pois o worker Claude é
-read-only.
+Use `bash opencode/install.sh --help` para a descrição completa.
 
-O coordenador passa o pedido original ao `llm_route` sem reescrita. A etapa
-segue no argumento separado `stage`; `plan` seleciona Claude, `review` seleciona
-o reviewer Codex e `execute` aplica as barreiras da política. Somente depois da
-decisão o coordenador pode montar uma solicitação autocontida para o worker,
-preservando o pedido original e acrescentando apenas contexto operacional da
-etapa, como diretório, plano concluído ou evidências de validação.
+O instalador:
 
-Confirme a configuração resolvida e inicie o roteador:
+1. Renderiza caminhos absolutos do clone e da configuração de destino.
+2. Faz preflight de todos os destinos e cria os backups necessários antes da primeira substituição.
+3. Sincroniza tools, plugins, bibliotecas, configuração do classificador e verificador, gravando `opencode.jsonc` por último.
+4. Mescla as dependências exigidas em `package.json`, preservando o tipo de módulo, chaves, scripts e dependências existentes. As versões exigidas pelo bundle vencem conflitos do mesmo pacote.
+5. Copia cada arquivo alterado para `/tmp/claude-backups/AAAAMMDD_HHMMSS/` antes da substituição.
+6. Aposenta `llm_router_prompt_guard.js`, `tools/claude_opus.ts` e `tools/delegate_task.ts` instalados por versões antigas, com backup e envio para a lixeira.
+7. Mantém uma reinstalação idêntica sem reescrita nem novo backup.
+
+O instalador mescla o manifesto e não executa um gerenciador de pacotes. O OpenCode resolve as dependências configuradas ao carregar o bundle.
+
+O `opencode.jsonc` versionado passa a gerenciar a configuração global no diretório escolhido. Por padrão, o destino é `$XDG_CONFIG_HOME/opencode` quando essa variável existe, ou `~/.config/opencode`.
+
+## Providers
+
+| Provider | Modelo usado | Autenticação |
+| --- | --- | --- |
+| OpenAI | GPT-5.6 Sol para router, Codex e reviewer | `opencode auth login --provider openai` |
+| `minimax-coding-plan` | somente `MiniMax-M3` | `MINIMAX_API_KEY` |
+| `zai-coding-plan` | `glm-5.2` por API compatível com OpenAI | `ZAI_API_KEY` |
+| Anthropic | Claude Opus 4.8 pelo Agent SDK | sessão do Claude Code ou `ANTHROPIC_API_KEY` |
+
+`github-copilot` e `opencode-go` ficam em `disabled_providers`.
+
+## Uso no OpenCode
+
+Confirme a configuração resolvida:
 
 ```bash
 opencode debug agent router
-opencode
 ```
+
+Inicie o OpenCode na raiz do projeto em que você quer trabalhar:
+
+```bash
+opencode .
+```
+
+Envie o pedido normalmente ao agente `router`:
+
+```text
+Planeje a migração sem downtime e depois implemente com testes.
+```
+
+O router classifica cada etapa. No exemplo, Claude pode produzir o plano, Codex executa a etapa difícil e `codex-reviewer` revisa o resultado. A resposta final informa o modelo usado em cada etapa e o status da verificação determinística.
+
+As tarefas nativas aparecem como sessões filhas. A [documentação de agentes do OpenCode](https://opencode.ai/docs/agents/) define estas ações de navegação e atalhos padrão atuais:
+
+| Ação | Atalho padrão | Efeito |
+| --- | --- | --- |
+| `session_child_first` | `<Leader>+Down` | Abre a primeira sessão filha |
+| `session_child_cycle` | `Right` | Avança para a próxima filha |
+| `session_child_cycle_reverse` | `Left` | Volta para a filha anterior |
+| `session_parent` | `Up` | Retorna à sessão pai |
+
+Os atalhos podem mudar se o usuário personalizar os keybindings. A chamada ao Claude ocorre como ferramenta do router e não cria uma sessão filha nativa.
+
+## Benchmark offline
+
+O benchmark de qualidade usa `benchmark_config.json` e `BenchmarkExecutor`. Essa configuração contém executores externos single-shot para reproduzir as rodadas históricas. Eles existem somente no benchmark offline e nunca participam do roteamento do OpenCode.
+
+Valide dataset e executores sem consumir chamadas:
+
+```bash
+uv run --no-project --no-python-downloads python quality_eval.py \
+  --config benchmark_config.json \
+  --cases tests/quality-cases-v2.json \
+  --output /tmp/llm-router-quality.json \
+  --validate-only
+```
+
+Remova `--validate-only` para executar. `--replay-report` reaplica rubricas às saídas registradas; `--selection` limita as rotas por caso; `--parallel` controla a concorrência. Consulte métricas, limitações e hashes em [BENCHMARK.md](BENCHMARK.md).
+
+## Por que o Plano-Orchestrator-4B
+
+O classificador foi escolhido em benchmark local no Mac mini M2 Pro, com 192 prompts rotulados e a mesma política nos três modelos:
+
+| Modelo | Acurácia | Latência mediana | RAM |
+| --- | ---: | ---: | ---: |
+| Plano-Orchestrator-4B | 92,2% (177/192) | ~843 ms | 2,5 GB |
+| Mellum2-12B-A2.5B | 87,0% (167/192) | ~862 ms | 8,1 GB |
+| Arch-Router-1.5B | 80,2% (154/192) | ~594 ms | 1,0 GB |
+
+O Plano teve a maior acurácia e usou cerca de um terço da RAM do Mellum. O formato nativo é `<routes>` e o JSON Schema exige uma lista com exatamente uma intenção: `{"route":["intent_name"]}`.
 
 ## Testes
 
@@ -475,39 +325,9 @@ opencode
 bash tests/smoke.sh
 bash tests/routing-eval.sh
 bash tests/opencode-bundle.sh
+node --test tests/claude-agent.test.mjs
+uv run --no-project --no-python-downloads python -m unittest tests/test_stage_verifier.py
 uv run --no-project --no-python-downloads python -m unittest tests/test_quality_eval.py
-uv run --no-project --no-python-downloads python quality_eval.py --help
 ```
 
-O smoke usa executores falsos e uma configuração temporária. Ele valida o
-cascade sem chamar Ollama, Claude, Codex, MiniMax ou GLM e sem consumir
-créditos. O `routing-eval.sh` chama somente o classificador local no Ollama e
-exige 100% de acerto na matriz de regressão. Essa matriz valida a
-política do projeto; ela não substitui um benchmark independente dos modelos.
-O `opencode-bundle.sh` valida os templates, o prompt original sem reescrita, a
-política por etapa, a barreira de mutação, o dry-run, o backup e a idempotência
-do instalador em uma configuração temporária.
-
-O `quality_eval.py` mede qualidade de resposta com workspaces isolados, auditoria
-determinística e relatórios JSON e Markdown. `tests/quality-cases.json` preserva
-o piloto V1 de seis casos, quatro rotas e três repetições. A matriz V2 em
-`tests/quality-cases-v2.json` cobre 36 casos, 12 categorias e três dificuldades.
-Ela aceita seleção adaptativa por caso, checkpoint, retomada e execução
-concorrente. Antes de consumir créditos, valide o dataset e os executores:
-
-```bash
-uv run --no-project --no-python-downloads python quality_eval.py \
-  --config config.json \
-  --cases tests/quality-cases.json \
-  --output /tmp/llm-router-quality.json \
-  --validate-only
-```
-
-Remova `--validate-only` para executar as chamadas. Use `--replay-report` para
-reaplicar rubricas corrigidas às saídas já registradas, sem chamar os modelos de
-novo. `--selection` limita rotas por caso e `--parallel` controla a concorrência.
-Na rodada adaptativa local, `--parallel 30` terminou 132 chamadas físicas em 9
-minutos e 9 segundos, com ganho efetivo de 21,07 vezes sobre a soma das durações.
-Esse número descreve esta máquina e estes provedores. O benchmark avalia os
-executores configurados e não representa uma classificação geral dos modelos
-base.
+`tests/smoke.sh` cobre help, saída humana, contrato JSON, erros e rejeição de argumentos desconhecidos. `tests/router-prompt-guard.test.mjs` comprova a preservação literal do pedido entre a mensagem do usuário e `llm_route`. `tests/routing-eval.sh` mede a matriz de classificação. Os demais testes cobrem instalação do bundle, Agent SDK, verificação determinística e benchmark offline.

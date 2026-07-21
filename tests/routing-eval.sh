@@ -84,12 +84,22 @@ total=0
 for row in "${cases[@]}"; do
   expected="${row%%|*}"
   prompt="${row#*|}"
-  output="$($ROUTE_COMMAND "$prompt" 2>&1)" || {
+  output="$($ROUTE_COMMAND --classify --json "$prompt" 2>&1)" || {
     printf 'ERRO esperado=%-7s obtido=falha   %s\n' "$expected" "$prompt"
     total=$((total + 1))
     continue
   }
-  selected="$(awk '/^rota:/ {print $2}' <<<"$output")"
+  if ! jq -e '
+    .schema_version == 1 and
+    (.intent | type == "string" and length > 0) and
+    (.route | IN("minimax", "glm", "claude", "codex")) and
+    (keys | sort == ["intent", "route", "schema_version"])
+  ' <<<"$output" >/dev/null; then
+    printf 'ERRO esperado=%-7s obtido=contrato-invalido %s\n' "$expected" "$prompt"
+    total=$((total + 1))
+    continue
+  fi
+  selected="$(jq -r '.route' <<<"$output")"
   total=$((total + 1))
   if [[ "$selected" == "$expected" ]]; then
     correct=$((correct + 1))

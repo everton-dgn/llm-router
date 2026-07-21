@@ -15,7 +15,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from auto_runner import AutoRunner, ProcessResult, select_claude_effort
+from benchmark_executor import BenchmarkExecutor, ProcessResult, select_claude_effort
 from quality_eval import (
     EvaluationError,
     _atomic_write_json,
@@ -1459,7 +1459,7 @@ class BenchmarkTests(unittest.TestCase):
     def test_execution_fingerprint_changes_with_each_effective_input(self) -> None:
         engine = {
             "quality_eval_sha256": "quality",
-            "auto_runner_sha256": "runner",
+            "benchmark_executor_sha256": "executor",
             "python_implementation": "cpython",
             "python_version": "3.13.5",
         }
@@ -2161,7 +2161,7 @@ class BenchmarkV2Tests(unittest.TestCase):
         )
         changed_engine = {
             "quality_eval_sha256": "different-quality-engine",
-            "auto_runner_sha256": "different-runner",
+            "benchmark_executor_sha256": "different-executor",
             "python_implementation": "cpython",
             "python_version": "3.13.5",
         }
@@ -2553,32 +2553,32 @@ class ClaudeEffortRoutingTests(unittest.TestCase):
                 self.assertEqual(select_claude_effort(prompt), expected)
 
     def test_config_applies_dynamic_effort_only_to_claude_worker(self) -> None:
-        config_path = Path(__file__).resolve().parents[1] / "config.json"
+        config_path = Path(__file__).resolve().parents[1] / "benchmark_config.json"
         config = json.loads(config_path.read_text(encoding="utf-8"))
         claude = next(route for route in config["routes"] if route["name"] == "claude")
         worker = claude["headless"]["worker"]
         judge = claude["headless"]["judge"]
-        runner = object.__new__(AutoRunner)
-        runner.project_root = config_path.parent
+        executor = object.__new__(BenchmarkExecutor)
+        executor.project_root = config_path.parent
 
         worker_efforts = []
         for prompt in (
             "Planeje a arquitetura do produto.",
             "Conduza uma discussão aberta sobre os trade-offs.",
         ):
-            worker_values = runner._profile_runtime_values(worker, "worker", prompt)
-            worker_argv = runner._prepare_argv(
+            worker_values = executor._profile_runtime_values(worker, "worker", prompt)
+            worker_argv = executor._prepare_argv(
                 worker["argv"],
                 None,
                 config_path.parent,
                 worker_values,
             )
             worker_efforts.append(worker_argv[worker_argv.index("--effort") + 1])
-        judge_argv = runner._prepare_argv(
+        judge_argv = executor._prepare_argv(
             judge["argv"],
             None,
             config_path.parent,
-            runner._profile_runtime_values(judge, "judge", "Avalie o resultado."),
+            executor._profile_runtime_values(judge, "judge", "Avalie o resultado."),
         )
 
         self.assertEqual(worker["effort_policy"], "claude_dynamic")
@@ -2714,15 +2714,12 @@ class SafetyTests(unittest.TestCase):
         try:
             captured: dict[str, Path] = {}
 
-            class FakeRunner:
+            class FakeBenchmarkExecutor:
                 def __init__(
                     self,
                     config_path: Path,
                     config: dict[str, object],
                     cwd: Path,
-                    route: str,
-                    prompt: str,
-                    verifier: str | None,
                 ) -> None:
                     captured["config_path"] = config_path
 
@@ -2731,12 +2728,12 @@ class SafetyTests(unittest.TestCase):
 
             import quality_eval
 
-            original = quality_eval.AutoRunner
-            quality_eval.AutoRunner = FakeRunner
+            original = quality_eval.BenchmarkExecutor
+            quality_eval.BenchmarkExecutor = FakeBenchmarkExecutor
             try:
                 result = _make_executor({})("route", "judge", "prompt", fixture)
             finally:
-                quality_eval.AutoRunner = original
+                quality_eval.BenchmarkExecutor = original
 
             self.assertEqual(result.status, "success")
             self.assertEqual(captured["config_path"].parent, fixture)
