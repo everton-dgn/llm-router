@@ -1,35 +1,48 @@
 # llm-router
 
-Roteador local de tarefas entre MiniMax M3, GLM 5.2, Claude Opus 4.8 e GPT-5.6 Sol. O classificador local escolhe uma rota sem executar o modelo. A execução e a coordenação ficam no OpenCode.
+Roteador local de mensagens do OpenCode entre MiniMax M3, GLM 5.2, Claude Opus 4.8 e GPT-5.6 Sol. O modelo pequeno no Ollama classifica o pedido uma vez. Um plugin troca o `agent` e o `model` da própria mensagem antes da execução, e o modelo escolhido responde na sessão atual.
 
 ## Arquitetura
 
 | Componente | Responsabilidade |
 | --- | --- |
-| `route` | Classifica um pedido e devolve uma rota para uma pessoa ou para uma integração JSON |
-| `config.json` | Define as intenções, as quatro rotas e as regras de verificação determinística |
-| `opencode/opencode.jsonc` | Configura o agente `router`, os subagentes e os providers do OpenCode |
-| `opencode/tools/llm_route.ts` | Chama `route --classify --json`, valida o contrato e aplica os pisos de segurança |
-| `opencode/tools/claude_agent.ts` | Usa o Claude Agent SDK em modo read-only para planejamento e raciocínio criativo |
-| `opencode/tools/repo_query.ts` | Dá aos agentes read-only consultas fixas e seguras sobre o worktree |
-| `opencode/plugins/llm_router_prompt_guard.ts` | Preserva o pedido original até a classificação da etapa |
-| `stage_verifier.py` | Registra o baseline, calcula o delta exato e executa gates determinísticos |
-| `benchmark_executor.py` | Executa modelos single-shot somente no benchmark offline |
+| `route` | Envia o pedido ao classificador local e devolve uma das quatro rotas |
+| `config.json` | Define as intenções semânticas e os modelos exibidos pela CLI |
+| `opencode/plugins/llm_router_handoff.ts` | Chama `route` e inicia o handoff no hook `chat.message` |
+| `opencode/lib/direct_handoff.mjs` | Valida a classificação e troca `message.agent` e `message.model` |
+| `opencode/lib/opencode_transport.mjs` | Reutiliza o transporte in-process do OpenCode 1.18.4 para a API v2 |
+| `opencode/lib/routing_policy.mjs` | Mapeia cada rota para um destino nativo e protege o piso do MiniMax |
+| `opencode/providers/claude_agent_provider.mjs` | Expõe a CLI oficial do Claude como provider `LanguageModelV3` local |
+| `opencode/lib/claude_agent.mjs` | Executa `claude -p` sem ferramentas e converte o stream JSONL |
+| `opencode/opencode.jsonc` | Configura o Ollama, providers nativos e o adapter local do Claude |
+| `opencode/tools/repo_query.ts` | Oferece consultas read-only fixas para MiniMax |
 
-O fluxo de produção é:
+Fluxo de uma mensagem:
 
 ```text
-pedido
-  -> router do OpenCode
-  -> llm_route
-  -> task nativa ou claude_agent
-  -> stage_prepare e stage_verify quando houver mutação
-  -> resposta ou correção baseada nas evidências
+pedido do usuário
+  -> hook chat.message
+  -> route --classify --json
+  -> Ollama: Plano-Orchestrator-4B
+  -> troca agent/model na mesma mensagem
+  -> MiniMax, GLM, Claude CLI ou Codex executa
+  -> resposta na sessão atual
 ```
+
+O classificador encerra depois de devolver a rota. Ele não gera plano, não chama ferramentas do projeto, não cria sessão filha do OpenCode e não espera a resposta do worker. Também não existe um turno posterior de coordenador para resumir o resultado. Quando a rota é Claude, o OpenCode chama diretamente o adapter local, que executa a CLI oficial e devolve o resultado à mesma mensagem.
+
+O plugin mostra um aviso de três segundos na interface, por exemplo:
+
+```text
+llm-router
+claude -> claude-agent/claude-opus-4-8
+```
+
+Se a classificação falhar, a mensagem permanece no agente `router` e a execução é interrompida. O modelo local configurado no agente serve como sentinela: se o plugin não carregar, ele informa a falha de configuração e não executa o pedido.
 
 ## Classificador local
 
-O `route` tem duas saídas. A saída humana mostra a decisão de forma legível:
+A saída humana mostra a decisão:
 
 ```bash
 ./route "otimiza essa query lenta"
@@ -39,7 +52,7 @@ O `route` tem duas saídas. A saída humana mostra a decisão de forma legível:
 rota: codex -> GPT-5.6 Sol (xhigh)
 ```
 
-A saída de integração usa um contrato JSON estável:
+A integração usa um contrato JSON fechado e versionado:
 
 ```bash
 ./route --classify --json "traduza este parágrafo para inglês"
@@ -49,253 +62,151 @@ A saída de integração usa um contrato JSON estável:
 {"schema_version":1,"intent":"translation_simple_brainstorm_docs_or_intermediate_work","route":"glm"}
 ```
 
-Erros do modo JSON também têm `schema_version` e um objeto `error` com `code` e `message`. Consulte os argumentos aceitos com:
+Erros também contêm `schema_version` e um objeto `error` com `code` e `message`. O classificador usa `/api/chat` do Ollama com `think:false` e restringe a saída por JSON Schema. Resposta vazia, rota desconhecida e JSON inválido encerram a chamada sem fallback silencioso.
+
+Consulte todos os argumentos com:
 
 ```bash
 ./route --help
 ```
 
-O comando encerra depois da classificação. Toda execução de modelo acontece no OpenCode ou no benchmark offline.
-
-O classificador envia ao Ollama as intenções semânticas de `routing`, usa o endpoint `/api/chat` com `think:false` e restringe a resposta com JSON Schema. Resposta vazia, rota desconhecida ou JSON inválido termina com erro, sem fallback silencioso.
-
 ## Matriz de rotas
 
-| Intenção | Rota | Destino de produção | Uso principal |
+| Intenção | Rota | Destino no OpenCode | Uso principal |
 | --- | --- | --- | --- |
-| `literal_read_only_no_writing` | `minimax` | subagente nativo `minimax` | Contagem, listagem, busca, extração e formatação literais sem mutação |
-| `translation_simple_brainstorm_docs_or_intermediate_work` | `glm` | subagente nativo `glm` | Tradução e trabalho simples ou intermediário com escopo claro |
-| `complex_creative_product_or_architecture` | `claude` | ferramenta `claude_agent` | Arquitetura, produto, estratégia e escrita criativa complexa sem implementação |
-| `review_security_hard_engineering_or_technical_writing` | `codex` | subagente nativo `codex` | Engenharia difícil, texto técnico, auditoria, segurança e revisão |
+| `literal_read_only_no_writing` | `minimax` | `minimax-coding-plan/MiniMax-M3` | Contagem, listagem, busca, extração e formatação literal |
+| `translation_simple_brainstorm_docs_or_intermediate_work` | `glm` | `zai-coding-plan/glm-5.2` | Tradução e trabalho simples ou intermediário |
+| `complex_creative_product_or_architecture` | `claude` | `claude-agent/claude-opus-4-8` | Arquitetura, produto, estratégia e criação complexa |
+| `review_security_hard_engineering_or_technical_writing` | `codex` | `openai/gpt-5.6-sol` | Engenharia difícil, revisão, segurança e texto técnico |
 
-Para as categorias medidas no benchmark V2, a política usa esta matriz:
+MiniMax recebe somente operações literais read-only. Se o classificador devolver MiniMax para um pedido com verbo de mutação ou para tradução, resumo, reescrita, documentação ou brainstorm, a política eleva a rota para GLM antes do handoff.
 
-| Categoria | Simples | Intermediária | Difícil |
-| --- | --- | --- | --- |
-| Discussão aberta | GLM | Claude | Claude |
-| Brainstorm | GLM | Claude | Claude |
-| Ideias de produto | Claude | Claude | Claude |
-| Arquitetura | Claude | Claude | Claude |
-| PR review | Codex | Codex | Codex |
-| Texto técnico | Codex | Codex | Codex |
-| Documentação | GLM | GLM | Codex |
-| Rede social | GLM | Codex técnico, GLM geral | Claude |
-| Resolução de bugs | GLM | GLM | Codex |
-| Refatoração | GLM | GLM | Codex |
-| Escrita de testes | GLM | GLM | Codex |
-| Sales copy | GLM | Claude | Claude |
+As permissões ficam nos agentes nativos:
 
-MiniMax recebe somente operações literais de baixo risco. Qualquer mutação tem piso GLM. Tradução pura também tem piso GLM. Arquitetura ou planejamento complexo elevam para Claude. Revisão, auditoria, segurança, texto técnico de precisão e implementação difícil elevam para Codex.
+- MiniMax usa somente `repo_query` para consultar o repositório.
+- Claude não recebe ferramentas externas do OpenCode nem ferramentas internas da CLI. O modelo recebe somente texto.
+- GLM e Codex podem editar dentro das permissões do OpenCode, mas não podem chamar `task` nem rotear outra vez.
+- Git com mutação, deploy, instalação global e comandos destrutivos ficam bloqueados na configuração versionada.
 
-Planejamento de uma correção difícil, sem diagnóstico executado nem implementação, usa Claude. A investigação executada e a implementação usam Codex quando o trabalho entra no nível difícil.
+Os nomes dos agentes existem porque o OpenCode associa permissões e prompt a um agente. Eles não coordenam etapas. Cada mensagem recebe exatamente um destino. O plugin persiste o agente e o modelo selecionados na sessão pela API v2 do OpenCode antes de atualizar o turno corrente. Se a troca do modelo falhar após a troca do agente, ele restaura o agente anterior; falhas simultâneas da troca e da compensação são preservadas juntas.
 
-O effort do Claude é dinâmico:
+No OpenCode 1.18.4, o contexto público do plugin entrega somente o cliente legado, enquanto a troca de agente/modelo existe no SDK v2. Em `opencode run`, o loader coloca um `fetch` in-process no transporte protegido desse cliente e não abre um listener HTTP. O helper de compatibilidade reutiliza `baseUrl`, `headers` e `fetch` desse transporte para criar o cliente v2. Essa dependência de `_client.getConfig()` está isolada e falha com uma mensagem explícita se uma versão futura mudar o contrato; ela deve ser removida quando o OpenCode expuser um cliente v2 público no contexto do plugin.
 
-| Tipo de tarefa | Effort |
-| --- | --- |
-| Planejamento, arquitetura, produto, ideação, copy e criação | `max` |
-| Discussão aberta, debate, trade-offs, política e falsificação | `xhigh` |
-| Demais casos aceitos pelo Claude | `max` |
+## Claude via CLI oficial
 
-Essa decisão vem da comparação cega registrada em [BENCHMARK.md](BENCHMARK.md).
+Claude Opus 4.8 usa o provider local `claude-agent`. Esse provider implementa o contrato `LanguageModelV3` esperado pelo OpenCode e inicia o executável oficial do Claude Code com `claude -p`.
 
-## Orquestração no OpenCode
+Autentique o Claude Code pelo fluxo oficial:
 
-O agente primário `router` usa GPT-5.6 Sol com `reasoningEffort: xhigh` e `textVerbosity: medium`. Para cada etapa, ele chama `llm_route` somente com `stage` e delega de acordo com o contrato retornado. O plugin `llm_router_prompt_guard.ts` captura o texto da mensagem do usuário em memória por sessão, e `llm_route` lê esse texto diretamente pelo `sessionID` da chamada. Assim, a UI mostra apenas `stage`, enquanto aspas, paráfrases ou contexto acrescentado pelo agente não chegam ao classificador. O texto capturado é removido quando a sessão fica ociosa ou é apagada.
+```bash
+claude auth login
+claude auth status
+```
 
-### Subagentes nativos
+O adapter não lê, copia nem persiste tokens. A autenticação continua sob responsabilidade do executável `claude`, do mesmo modo que numa execução direta do Claude Code. Cada chamada encaminha pela entrada padrão somente a última mensagem do usuário. Prompts de sistema recebidos do OpenCode e todo o histórico anterior, inclusive anexos, chamadas e resultados de ferramentas, são descartados sem inspeção. Anexos, ferramentas e partes desconhecidas na mensagem atual falham fechado.
 
-| Subagente | Modelo | Papel | Permissão principal |
-| --- | --- | --- | --- |
-| `minimax` | `minimax-coding-plan/MiniMax-M3` | Leitura literal e respostas mecânicas | Somente `repo_query`, sem Bash ou ferramentas de escrita |
-| `glm` | `zai-coding-plan/glm-5.2` | Trabalho simples ou intermediário | Pode executar e editar dentro das permissões do OpenCode |
-| `codex` | `openai/gpt-5.6-sol` | Engenharia difícil e execução complexa | Pode executar e editar dentro das permissões do OpenCode |
-| `codex-reviewer` | `openai/gpt-5.6-sol` | Revisão independente | Somente `repo_query`, sem Bash ou ferramentas de escrita |
+A CLI roda com `--safe-mode`, `--tools ""`, configuração MCP vazia e estrita, slash commands e Chrome desabilitados e sem persistência de sessão. O modelo não recebe ferramenta capaz de ler o filesystem, executar comandos, abrir navegador, carregar skills ou delegar. `--system-prompt` substitui o prompt padrão por um texto constante do adapter que declara esse contrato; conteúdo dinâmico nunca entra nos argumentos do processo. O instalador confere no `claude --help` todas as flags usadas antes de alterar a configuração. O provider transmite os deltas de texto do `stream-json` e usa a mensagem `result` final para uso de tokens e motivo de término. Exit code diferente de zero, stderr, JSON inválido, timeout e cancelamento geram erros explícitos.
 
-Esses quatro destinos usam a ferramenta nativa `task` em primeiro plano. O `subagent_type` deve corresponder exatamente ao nome da tabela. As execuções criam sessões filhas navegáveis no OpenCode.
+Antes de iniciar a CLI, o adapter limita textos de sistema mais pedido atual a 128 KiB em UTF-8. A CLI instalada não oferece uma opção equivalente a `maxOutputTokens`; por isso o provider trata o valor recebido do OpenCode como um teto conservador de bytes UTF-8. Ao exceder, ele encerra o processo com erro explícito. Nenhum conteúdo é truncado silenciosamente.
 
-`repo_query` oferece ações fixas para status, arquivos versionados, leitura com linhas numeradas, busca literal, diff, log e maiores arquivos por linhas. A implementação usa argumentos separados, limita a saída ao worktree, ignora arquivos sensíveis e rejeita symlinks que apontam para fora. Arquivos não rastreados só entram quando a chamada define `include_untracked: true`.
+Depois da instalação, confira o destino sem imprimir credenciais:
 
-A etapa `review` vai diretamente ao `codex-reviewer`. Em trabalho significativo, o fluxo esperado é planejamento, execução e revisão. Se a revisão encontrar um defeito, o router permite uma correção e uma revisão final antes de encerrar.
-
-### Claude Agent SDK
-
-Claude Opus 4.8 é chamado pela ferramenta `claude_agent`, que usa `@anthropic-ai/claude-agent-sdk`. A integração aceita apenas as etapas `request` e `plan` e limita as ferramentas a `Read`, `Glob` e `Grep` dentro do worktree.
-
-O SDK bloqueia escrita, edição, Bash, rede, subagentes, skills, MCPs, persistência de sessão, caminhos externos, `.git`, `.env*` e arquivos sensíveis. `xhigh` e `max` são enviados sem rebaixamento. Cancelamento do OpenCode e timeout são propagados para a consulta.
-
-Claude fica fora das etapas que exigem mutação. Uma classificação Claude em `execute` sobe para Codex.
-
-## Preparação e verificação determinísticas
-
-Antes de uma etapa GLM ou Codex que possa alterar o workspace, o router chama `stage_prepare`. A ferramenta exige que o diretório da sessão seja a raiz de um worktree Git e devolve um `baseline_id` opaco.
-
-Depois da execução, inclusive após falha do subagente, o router chama `stage_verify` com o mesmo identificador. O verificador compara conteúdo, tipo e modo dos arquivos, separa mudanças preexistentes e calcula somente o delta líquido produzido depois do baseline.
-
-O baseline é de uso único. Reutilização, identificador ausente ou baseline inválido produz erro de infraestrutura.
-
-### Status
-
-| Status | Origem | Ação do router |
-| --- | --- | --- |
-| `prepared` | `stage_prepare` | Guarda o `baseline_id` para a etapa |
-| `pass` | Gates aplicáveis passaram | Aprova a etapa de forma determinística |
-| `fail` | Um gate encontrou falha objetiva | Solicita correção usando a evidência do gate |
-| `no_changes` | Nenhum delta líquido foi encontrado | Envia ao `codex-reviewer` para decidir se a entrega atende ao pedido |
-| `no_applicable_gates` | Houve mudança sem regra compatível | Envia ao `codex-reviewer` |
-| `infrastructure_error` | Git, baseline, comando ou timeout impediram a verificação | Envia ao `codex-reviewer` com a evidência disponível |
-
-O runtime não usa júri LLM. Gates determinísticos aprovam resultados cobertos; o `codex-reviewer` trata somente revisão explícita e estados sem decisão determinística.
-
-As regras atuais são:
-
-| Regra | Condição principal | Gate |
-| --- | --- | --- |
-| `llm-router-tests` | CLI, configuração e verificador deste projeto | `bash tests/smoke.sh` e testes do `stage_verifier.py` |
-| `llm-router-opencode-tests` | Bundle, tools, plugin ou bibliotecas do OpenCode | Teste do instalador e 15 testes Node |
-| `llm-router-quality-tests` | Executor ou benchmark de qualidade | 64 testes Python |
-| `pnpm-tests` | Projeto JS ou TS com script `test` | `pnpm test` |
-| `python-pytest` | Projeto Python com estrutura pytest | `uv run --no-sync pytest` |
-| `rust-tests` | Projeto Rust | `cargo test` |
-| `go-tests` | Projeto Go | `go test ./...` |
-
-Os gates usam listas de argumentos, `shell:false`, timeout e diretório resolvido. Todos os gates aplicáveis são executados, e a saída limitada vira evidência para a correção. Se o worker alterar o teste, manifesto ou arquivo de configuração que define um gate, o resultado vira `infrastructure_error` e segue para o reviewer. Uma mudança de `HEAD` durante o estágio produz `fail` mesmo sem delta de arquivos.
-
-### Retry e escalada
-
-Uma falha transitória da ferramenta `task` permite uma única repetição no mesmo subagente. Quando o OpenCode devolve um `task_id`, a repetição reutiliza a mesma sessão. Persistindo a falha, a política escala assim:
-
-| Rota atual | Próxima rota |
-| --- | --- |
-| MiniMax | GLM |
-| GLM | Codex |
-| Claude | Codex |
-| Codex | encerra e reporta |
-| Codex reviewer | encerra e reporta |
-
-Uma correção que possa mutar o workspace recebe um baseline novo e outra verificação. Retry e escalada cobrem falha de execução. O status `fail` segue o ciclo de correção baseado nos gates.
-
-Os eventos de preparação e verificação são gravados em JSONL em `~/.config/opencode/logs/router.jsonl` na instalação padrão.
+```bash
+opencode models claude-agent
+```
 
 ## Instalação
 
 ### Requisitos
 
 - OpenCode instalado.
+- Claude Code instalado e autenticado.
 - Ollama em execução com o modelo do classificador.
-- `curl`, `jq`, `perl`, `trash` e `uv` disponíveis no `PATH`.
-- Autenticação OpenAI configurada no OpenCode.
-- Claude Code autenticado, ou `ANTHROPIC_API_KEY` disponível no shell que inicia o OpenCode.
-- `MINIMAX_API_KEY` e `ZAI_API_KEY` disponíveis no shell que inicia o OpenCode.
+- `curl`, `jq`, `perl` e `trash` disponíveis no `PATH`.
+- OpenAI autenticado no OpenCode.
+- `MINIMAX_API_KEY` e `ZAI_API_KEY` no processo que inicia o OpenCode.
 
-Baixe o classificador local:
+Baixe o classificador:
 
 ```bash
 ollama pull hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M
 ```
 
-Autentique e exporte as chaves:
-
-```bash
-opencode auth login --provider openai
-claude auth login
-export ANTHROPIC_API_KEY="..."
-export MINIMAX_API_KEY="..."
-export ZAI_API_KEY="..."
-```
-
-O `claude auth login` e `ANTHROPIC_API_KEY` são alternativas. Confira o estado com `claude auth status`. Consulte a [documentação oficial de autenticação da Anthropic](https://platform.claude.com/docs/en/manage-claude/authentication).
-
-Não publique a saída de `opencode debug config`: a versão validada durante esta integração expandiu os valores das variáveis de autenticação no diagnóstico. Para conferir agentes sem revelar tokens, use `opencode debug agent <nome>`.
-
-### Instalar o bundle do OpenCode
-
-O instalador resolve os caminhos a partir do próprio clone, então o repositório pode ficar em qualquer diretório. Primeiro confira as mudanças:
+Faça um preflight sem alterar a configuração:
 
 ```bash
 bash opencode/install.sh --dry-run
 ```
 
-Depois instale:
+Instale o bundle:
 
 ```bash
 bash opencode/install.sh
 ```
 
-Opções disponíveis:
+Opções:
 
 ```text
 --config-dir PATH
 --backup-root PATH
 --router-path PATH
+--claude-path PATH
 --dry-run
 ```
 
-Use `bash opencode/install.sh --help` para a descrição completa.
-
 O instalador:
 
-1. Renderiza caminhos absolutos do clone e da configuração de destino.
-2. Faz preflight de todos os destinos e cria os backups necessários antes da primeira substituição.
-3. Sincroniza tools, plugins, bibliotecas, configuração do classificador e verificador, gravando `opencode.jsonc` por último.
-4. Mescla as dependências exigidas em `package.json`, preservando o tipo de módulo, chaves, scripts e dependências existentes. As versões exigidas pelo bundle vencem conflitos do mesmo pacote.
-5. Copia cada arquivo alterado para `/tmp/claude-backups/AAAAMMDD_HHMMSS/` antes da substituição.
-6. Aposenta `llm_router_prompt_guard.js`, `tools/claude_opus.ts` e `tools/delegate_task.ts` instalados por versões antigas, com backup e envio para a lixeira.
-7. Mantém uma reinstalação idêntica sem reescrita nem novo backup.
+1. Renderiza os caminhos absolutos de `route`, do provider local e do executável `claude`.
+2. Valida todos os destinos antes da primeira substituição.
+3. Preserva dependências e scripts já presentes em `package.json`, exceto a dependência aposentada do backend anterior.
+4. Instala as dependências pinadas do plugin e do SDK do OpenCode.
+5. Copia cada arquivo alterado para `/tmp/claude-backups/AAAAMMDD_HHMMSS/`.
+6. Envia tools, plugins e bibliotecas do orquestrador antigo para a lixeira.
+7. Mantém reinstalações idênticas sem novo backup.
 
-O instalador mescla o manifesto e não executa um gerenciador de pacotes. O OpenCode resolve as dependências configuradas ao carregar o bundle.
+O instalador não executa gerenciador de pacotes. O OpenCode resolve `@opencode-ai/plugin` ao carregar a configuração.
 
-O `opencode.jsonc` versionado passa a gerenciar a configuração global no diretório escolhido. Por padrão, o destino é `$XDG_CONFIG_HOME/opencode` quando essa variável existe, ou `~/.config/opencode`.
+Por padrão, o destino é `$XDG_CONFIG_HOME/opencode` quando essa variável existe. Nos demais casos, usa `~/.config/opencode`.
 
 ## Providers
 
-| Provider | Modelo usado | Autenticação |
+| Provider | Modelo | Autenticação |
 | --- | --- | --- |
-| OpenAI | GPT-5.6 Sol para router, Codex e reviewer | `opencode auth login --provider openai` |
-| `minimax-coding-plan` | somente `MiniMax-M3` | `MINIMAX_API_KEY` |
-| `zai-coding-plan` | `glm-5.2` por API compatível com OpenAI | `ZAI_API_KEY` |
-| Anthropic | Claude Opus 4.8 pelo Agent SDK | sessão do Claude Code ou `ANTHROPIC_API_KEY` |
+| `ollama` | Plano-Orchestrator-4B local | Serviço em `127.0.0.1:11434` |
+| `minimax-coding-plan` | MiniMax M3 | `MINIMAX_API_KEY` |
+| `zai-coding-plan` | GLM 5.2 | `ZAI_API_KEY` |
+| `claude-agent` | Claude Opus 4.8 | Login mantido pelo executável oficial do Claude Code |
+| `openai` | GPT-5.6 Sol | Login do OpenCode |
 
 `github-copilot` e `opencode-go` ficam em `disabled_providers`.
 
-## Uso no OpenCode
-
-Confirme a configuração resolvida:
+Evite publicar a saída de `opencode debug config`, pois ela pode expandir valores de ambiente. Para conferir cada agente sem revelar tokens, use:
 
 ```bash
 opencode debug agent router
+opencode debug agent minimax
+opencode debug agent glm
+opencode debug agent claude
+opencode debug agent codex
 ```
 
-Inicie o OpenCode na raiz do projeto em que você quer trabalhar:
+## Uso no OpenCode
+
+Inicie o OpenCode no projeto em que deseja trabalhar:
 
 ```bash
 opencode .
 ```
 
-Envie o pedido normalmente ao agente `router`:
+Envie o pedido ao agente `router`. Uma mensagem como "planeje a migração sem downtime" tende a ir para Claude. Uma implementação difícil tende a ir para Codex. Cada pedido produz uma classificação e uma execução, sem ciclo de plano, execução e review conduzido por outro modelo.
 
-```text
-Planeje a migração sem downtime e depois implemente com testes.
-```
-
-O router classifica cada etapa. No exemplo, Claude pode produzir o plano, Codex executa a etapa difícil e `codex-reviewer` revisa o resultado. A resposta final informa o modelo usado em cada etapa e o status da verificação determinística.
-
-As tarefas nativas aparecem como sessões filhas. A [documentação de agentes do OpenCode](https://opencode.ai/docs/agents/) define estas ações de navegação e atalhos padrão atuais:
-
-| Ação | Atalho padrão | Efeito |
-| --- | --- | --- |
-| `session_child_first` | `<Leader>+Down` | Abre a primeira sessão filha |
-| `session_child_cycle` | `Right` | Avança para a próxima filha |
-| `session_child_cycle_reverse` | `Left` | Volta para a filha anterior |
-| `session_parent` | `Up` | Retorna à sessão pai |
-
-Os atalhos podem mudar se o usuário personalizar os keybindings. A chamada ao Claude ocorre como ferramenta do router e não cria uma sessão filha nativa.
+Depois do handoff, a interface pode manter `minimax`, `glm`, `claude` ou `codex` como agente visível. O hook reconhece os cinco agentes gerenciados e classifica novamente a mensagem seguinte. Agentes customizados fora desse conjunto são ignorados.
 
 ## Benchmark offline
 
-O benchmark de qualidade usa `benchmark_config.json` e `BenchmarkExecutor`. Essa configuração contém executores externos single-shot para reproduzir as rodadas históricas. Eles existem somente no benchmark offline e nunca participam do roteamento do OpenCode.
+O benchmark de qualidade usa `benchmark_config.json` e `BenchmarkExecutor`. Os executores externos single-shot reproduzem as rodadas históricas e ficam fora do runtime do OpenCode.
 
-Valide dataset e executores sem consumir chamadas:
+Valide o dataset e os executores sem consumir chamadas:
 
 ```bash
 uv run --no-project --no-python-downloads python quality_eval.py \
@@ -305,19 +216,19 @@ uv run --no-project --no-python-downloads python quality_eval.py \
   --validate-only
 ```
 
-Remova `--validate-only` para executar. `--replay-report` reaplica rubricas às saídas registradas; `--selection` limita as rotas por caso; `--parallel` controla a concorrência. Consulte métricas, limitações e hashes em [BENCHMARK.md](BENCHMARK.md).
+Remova `--validate-only` para executar. Consulte métricas, limitações e hashes em [BENCHMARK.md](BENCHMARK.md).
 
-## Por que o Plano-Orchestrator-4B
-
-O classificador foi escolhido em benchmark local no Mac mini M2 Pro, com 192 prompts rotulados e a mesma política nos três modelos:
+O classificador foi escolhido em benchmark local com 192 prompts rotulados:
 
 | Modelo | Acurácia | Latência mediana | RAM |
 | --- | ---: | ---: | ---: |
-| Plano-Orchestrator-4B | 92,2% (177/192) | ~843 ms | 2,5 GB |
-| Mellum2-12B-A2.5B | 87,0% (167/192) | ~862 ms | 8,1 GB |
-| Arch-Router-1.5B | 80,2% (154/192) | ~594 ms | 1,0 GB |
+| Plano-Orchestrator-4B | 92,2% (177/192) | cerca de 843 ms | 2,5 GB |
+| Mellum2-12B-A2.5B | 87,0% (167/192) | cerca de 862 ms | 8,1 GB |
+| Arch-Router-1.5B | 80,2% (154/192) | cerca de 594 ms | 1,0 GB |
 
-O Plano teve a maior acurácia e usou cerca de um terço da RAM do Mellum. O formato nativo é `<routes>` e o JSON Schema exige uma lista com exatamente uma intenção: `{"route":["intent_name"]}`.
+## Componentes experimentais
+
+`stage_verifier.py`, `quality_eval.py` e `qeval/` continuam versionados para os benchmarks e experimentos determinísticos. Eles não são instalados no OpenCode e não participam do handoff de produção.
 
 ## Testes
 
@@ -325,9 +236,9 @@ O Plano teve a maior acurácia e usou cerca de um terço da RAM do Mellum. O for
 bash tests/smoke.sh
 bash tests/routing-eval.sh
 bash tests/opencode-bundle.sh
-node --test tests/claude-agent.test.mjs
+node --test tests/router-handoff.test.mjs tests/claude-agent.test.mjs tests/claude-agent-provider.test.mjs tests/repo-query.test.mjs
 uv run --no-project --no-python-downloads python -m unittest tests/test_stage_verifier.py
 uv run --no-project --no-python-downloads python -m unittest tests/test_quality_eval.py
 ```
 
-`tests/smoke.sh` cobre help, saída humana, contrato JSON, erros e rejeição de argumentos desconhecidos. `tests/router-prompt-guard.test.mjs` comprova a preservação literal do pedido entre a mensagem do usuário e `llm_route`. `tests/routing-eval.sh` mede a matriz de classificação. Os demais testes cobrem instalação do bundle, Agent SDK, verificação determinística e benchmark offline.
+`tests/router-handoff.test.mjs` cobre os quatro destinos, preservação literal do pedido, piso de mutação, persistência da seleção pela API v2, falha fechada, continuidade após troca visual e agentes externos. `tests/claude-agent.test.mjs` cobre as flags da CLI, stdin, JSONL, exit code, stderr, cancelamento e deadline. `tests/claude-agent-provider.test.mjs` cobre o contrato `LanguageModelV3`, descarte de prompts de sistema e histórico, streaming progressivo, uso e falhas fechadas. `tests/opencode-bundle.sh` cobre configuração, limites, dependências, compatibilidade da CLI, paths especiais, instalação, backup, aposentadoria do fluxo antigo e idempotência.
