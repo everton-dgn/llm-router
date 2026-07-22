@@ -157,6 +157,7 @@
             "benchmark_config.json",
             "benchmark_executor.py",
             "quality_eval.py",
+            "qeval/*.py",
             "tests/test_quality_eval.py"
           ],
           "commands_all": ["uv"]

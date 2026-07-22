@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import hashlib
-import random
-import json
+import importlib
 import io
+import json
 import os
+import random
 import re
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -15,7 +18,13 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+import quality_eval
 from benchmark_executor import BenchmarkExecutor, ProcessResult, select_claude_effort
+from qeval.fingerprint import (
+    _collect_engine_sources,
+    _engine_aggregate_sha256,
+    _engine_source_manifest,
+)
 from quality_eval import (
     EvaluationError,
     _atomic_write_json,
@@ -79,6 +88,57 @@ def make_v2_case(**overrides: object) -> dict[str, object]:
     if "turns" in overrides:
         case.pop("prompt", None)
     return case
+
+
+class FacadeCompatibilityTests(unittest.TestCase):
+    def test_facade_delegates_implementation_to_qeval_modules(self) -> None:
+        expected_modules = {
+            "_atomic_write_json": "qeval.persistence",
+            "_execute_work_item": "qeval.execution",
+            "_execution_fingerprint": "qeval.fingerprint",
+            "_make_executor": "qeval.executor",
+            "_run_sandboxed_python": "qeval.sandbox",
+            "_snapshot_files": "qeval.filesystem",
+            "_truncate_capture": "qeval.textutil",
+            "build_execution_manifest": "qeval.manifest",
+            "evaluate_assertions": "qeval.assertions",
+            "prepare_execution_config": "qeval.execution_config",
+            "render_markdown": "qeval.reporting",
+            "run_benchmark": "qeval.orchestration",
+            "validate_dataset": "qeval.validation",
+        }
+
+        for symbol, module_name in expected_modules.items():
+            with self.subTest(symbol=symbol):
+                implementation = getattr(importlib.import_module(module_name), symbol)
+                self.assertIs(getattr(quality_eval, symbol), implementation)
+
+    def test_qeval_modules_import_without_loading_facade(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        module_names = sorted(
+            f"qeval.{path.stem}"
+            for path in (project_root / "qeval").glob("*.py")
+            if path.stem != "__init__"
+        )
+        script = (
+            "import importlib, sys\n"
+            f"modules = {module_names!r}\n"
+            "for module in modules:\n"
+            "    importlib.import_module(module)\n"
+            "assert 'quality_eval' not in sys.modules\n"
+        )
+
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=project_root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=10,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout)
 
 
 class DatasetValidationTests(unittest.TestCase):
@@ -733,7 +793,7 @@ class AssertionTests(unittest.TestCase):
                 "stdout_sha256": "response-hash",
             }
 
-        with patch("quality_eval._run_sandboxed_python", side_effect=fake_grader):
+        with patch("qeval.sandbox._run_sandboxed_python", side_effect=fake_grader):
             score, results = evaluate_assertions(assertions, "OK", self.cwd)
 
         self.assertEqual(score, 100.0)
@@ -960,7 +1020,7 @@ class AssertionTests(unittest.TestCase):
                 "_stdout": response + "\n",
             }
 
-        with patch("quality_eval._run_sandboxed_python", side_effect=fake_sandbox):
+        with patch("qeval.sandbox._run_sandboxed_python", side_effect=fake_sandbox):
             score, results = evaluate_assertions(assertions, "OK", self.cwd)
 
         self.assertEqual(score, 100.0)
@@ -1263,7 +1323,7 @@ class BenchmarkTests(unittest.TestCase):
             (cwd / "large.bin").write_bytes(b"x" * 17)
             return ProcessResult("success", 0, "OK", "", "", 0.1)
 
-        with patch("quality_eval.MAX_SNAPSHOT_FILE_BYTES", 16):
+        with patch("qeval.constants.MAX_SNAPSHOT_FILE_BYTES", 16):
             report = run_benchmark(
                 Path("missing-config.json"),
                 self.config,
@@ -1286,7 +1346,7 @@ class BenchmarkTests(unittest.TestCase):
             (cwd / "large.txt").write_text("0123456789abcdefg", encoding="utf-8")
             return ProcessResult("success", 0, "OK", "", "", 0.1)
 
-        with patch("quality_eval.MAX_SNAPSHOT_FILE_BYTES", 16):
+        with patch("qeval.constants.MAX_SNAPSHOT_FILE_BYTES", 16):
             report = run_benchmark(
                 Path("missing-config.json"),
                 self.config,
@@ -1390,7 +1450,7 @@ class BenchmarkTests(unittest.TestCase):
             active_fixture.append(cwd)
             return fake_execute(route, role, prompt, cwd)
 
-        with patch("quality_eval._audit_files", side_effect=swap_after_audit):
+        with patch("qeval.execution._audit_files", side_effect=swap_after_audit):
             report = run_benchmark(
                 Path("missing-config.json"),
                 self.config,
@@ -1463,7 +1523,7 @@ class BenchmarkTests(unittest.TestCase):
             "python_implementation": "cpython",
             "python_version": "3.13.5",
         }
-        with patch("quality_eval._engine_identity", return_value=engine):
+        with patch("qeval.fingerprint._engine_identity", return_value=engine):
             fingerprints = {
                 _execution_fingerprint({"profile": "a"}, [], {})["sha256"],
                 _execution_fingerprint({"profile": "b"}, [], {})["sha256"],
@@ -1476,6 +1536,57 @@ class BenchmarkTests(unittest.TestCase):
             }
 
         self.assertEqual(len(fingerprints), 4)
+
+    def test_aggregate_engine_fingerprint_is_deterministic_and_covers_sources(self) -> None:
+        sources = [
+            ("qeval/zeta.py", b"zeta"),
+            ("quality_eval.py", b"facade"),
+            ("qeval/alpha.py", b"alpha"),
+        ]
+        expected_manifest = [
+            {
+                "path": path,
+                "sha256": hashlib.sha256(content).hexdigest(),
+            }
+            for path, content in sorted(sources)
+        ]
+        expected_hash = hashlib.sha256(
+            json.dumps(
+                expected_manifest,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+
+        self.assertEqual(_engine_source_manifest(sources), expected_manifest)
+        self.assertEqual(_engine_aggregate_sha256(sources), expected_hash)
+        self.assertEqual(_engine_aggregate_sha256(list(reversed(sources))), expected_hash)
+
+        collected_paths = [path for path, _ in _collect_engine_sources()]
+        project_root = Path(__file__).resolve().parents[1]
+        expected_paths = sorted(
+            ["quality_eval.py"]
+            + [
+                path.relative_to(project_root).as_posix()
+                for path in (project_root / "qeval").glob("*.py")
+            ]
+        )
+        self.assertEqual(collected_paths, expected_paths)
+
+    def test_aggregate_engine_fingerprint_changes_with_path_or_content(self) -> None:
+        baseline = [("quality_eval.py", b"facade"), ("qeval/core.py", b"core")]
+        fingerprints = {
+            _engine_aggregate_sha256(baseline),
+            _engine_aggregate_sha256(
+                [("quality_eval.py", b"changed"), ("qeval/core.py", b"core")]
+            ),
+            _engine_aggregate_sha256(
+                [("quality_eval.py", b"facade"), ("qeval/renamed.py", b"core")]
+            ),
+        }
+
+        self.assertEqual(len(fingerprints), 3)
 
     def test_rescore_updates_output_only_and_retains_workspace_result(self) -> None:
         dataset = make_dataset(
@@ -1970,7 +2081,7 @@ class BenchmarkV2Tests(unittest.TestCase):
                 active -= 1
             return ProcessResult("success", 0, "OK", "", "", 0.1)
 
-        with patch("quality_eval._atomic_write_json", side_effect=observed_write):
+        with patch("qeval.orchestration._atomic_write_json", side_effect=observed_write):
             report = run_benchmark(
                 Path("missing-config.json"),
                 self.config,
@@ -2031,7 +2142,7 @@ class BenchmarkV2Tests(unittest.TestCase):
             return ProcessResult("success", 0, "OK", "", "", 0.1)
 
         with (
-            patch("quality_eval._atomic_write_json", side_effect=observed_write),
+            patch("qeval.orchestration._atomic_write_json", side_effect=observed_write),
             self.assertRaises(KeyboardInterrupt),
         ):
             run_benchmark(
@@ -2167,7 +2278,7 @@ class BenchmarkV2Tests(unittest.TestCase):
         }
 
         with (
-            patch("quality_eval._engine_identity", return_value=changed_engine),
+            patch("qeval.fingerprint._engine_identity", return_value=changed_engine),
             self.assertRaisesRegex(EvaluationError, "perfil efetivo"),
         ):
             run_benchmark(
@@ -2726,14 +2837,8 @@ class SafetyTests(unittest.TestCase):
                 def execute_model(self, route: str, role: str, prompt: str) -> ProcessResult:
                     return ProcessResult("success", 0, "OK", "", "", 0.1)
 
-            import quality_eval
-
-            original = quality_eval.BenchmarkExecutor
-            quality_eval.BenchmarkExecutor = FakeBenchmarkExecutor
-            try:
+            with patch("qeval.executor.BenchmarkExecutor", FakeBenchmarkExecutor):
                 result = _make_executor({})("route", "judge", "prompt", fixture)
-            finally:
-                quality_eval.BenchmarkExecutor = original
 
             self.assertEqual(result.status, "success")
             self.assertEqual(captured["config_path"].parent, fixture)

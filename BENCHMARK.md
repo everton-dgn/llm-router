@@ -184,6 +184,10 @@ Load average, CPU e swap foram observados ao vivo com `uptime`, `top` e
 preservados. Contagens, durações e `--parallel 30` estão nos relatórios e
 checkpoints.
 
+O fingerprint da engine agrega `quality_eval.py` e todos os arquivos Python de
+`qeval/`, em ordem determinística. Assim, o resume de checkpoints anteriores à
+modularização pode ser recusado por divergência de fingerprint, como esperado.
+
 ### Confiabilidade do processo
 
 Agregado das três rodadas que fizeram chamadas, sem contar o rescore:
