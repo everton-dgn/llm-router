@@ -7,15 +7,13 @@ REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 INSTALLER="$REPO_ROOT/opencode/install.sh"
 POLICY="$REPO_ROOT/opencode/lib/routing_policy.mjs"
 CONTRACT="$REPO_ROOT/opencode/lib/route_contract.mjs"
-STAGE_TOOLS="$REPO_ROOT/opencode/lib/stage_tools.mjs"
 TRASH_PATH=$(command -v trash || true)
 NODE_PATH=$(command -v node || true)
-BUN_PATH=$(command -v bun || true)
 [[ -n "$TRASH_PATH" ]] || { printf 'FAIL: trash is required\n' >&2; exit 1; }
 [[ -n "$NODE_PATH" ]] || { printf 'FAIL: node is required\n' >&2; exit 1; }
-[[ -n "$BUN_PATH" ]] || { printf 'FAIL: bun is required\n' >&2; exit 1; }
 
 FIXTURE=$(mktemp -d "${TMPDIR:-/tmp}/llm-router-opencode-test.XXXXXX")
+FIXTURE=$(cd "$FIXTURE" && pwd)
 cleanup() {
   [[ ! -d "$FIXTURE" ]] || "$TRASH_PATH" "$FIXTURE" >/dev/null 2>&1 || true
 }
@@ -32,12 +30,31 @@ assert_contains() {
   grep -F "$expected" "$file" >/dev/null || fail "$file does not contain: $expected"
 }
 
-assert_not_contains() {
-  local file=$1
-  local unexpected=$2
-  if grep -F "$unexpected" "$file" >/dev/null; then
-    fail "$file unexpectedly contains: $unexpected"
-  fi
+write_compatible_claude() {
+  local target=$1
+  printf '%s\n' \
+    '#!/bin/sh' \
+    'if [ "${1:-}" = "--help" ]; then' \
+    '  printf "%s\n" \' \
+    '    "  -p, --print" \' \
+    '    "  --input-format <format>" \' \
+    '    "  --output-format <format>" \' \
+    '    "  --verbose" \' \
+    '    "  --include-partial-messages" \' \
+    '    "  --model <model>" \' \
+    '    "  --permission-mode <mode>" \' \
+    '    "  --safe-mode" \' \
+    '    "  --tools <tools...>" \' \
+    '    "  --strict-mcp-config" \' \
+    '    "  --mcp-config <configs...>" \' \
+    '    "  --disable-slash-commands" \' \
+    '    "  --no-chrome" \' \
+    '    "  --no-session-persistence" \' \
+    '    "  --system-prompt <prompt>"' \
+    '  exit 0' \
+    'fi' \
+    'exit 0' | tee "$target" >/dev/null
+  chmod +x "$target"
 }
 
 bash -n "$INSTALLER"
@@ -48,81 +65,87 @@ if grep -E '(^|[[:space:]])(rm|rmdir|unlink)([[:space:]]|$)' "$INSTALLER" >/dev/
 fi
 
 CONFIG_TEMPLATE="$REPO_ROOT/opencode/opencode.jsonc"
-assert_contains "$CONFIG_TEMPLATE" '"disabled_providers": ["github-copilot", "opencode-go"]'
-assert_contains "$CONFIG_TEMPLATE" '"whitelist": ["MiniMax-M3"]'
-assert_contains "$CONFIG_TEMPLATE" '"model": "openai/gpt-5.6-sol"'
-assert_contains "$CONFIG_TEMPLATE" '"reasoningEffort": "xhigh"'
-assert_contains "$CONFIG_TEMPLATE" '"textVerbosity": "medium"'
-assert_contains "$CONFIG_TEMPLATE" '"mode": "subagent"'
-assert_contains "$CONFIG_TEMPLATE" '"claude_agent": "allow"'
-assert_contains "$CONFIG_TEMPLATE" '"stage_prepare": "allow"'
-assert_contains "$CONFIG_TEMPLATE" '"stage_verify": "allow"'
-assert_contains "$CONFIG_TEMPLATE" '"minimax": "allow"'
-assert_contains "$CONFIG_TEMPLATE" '"codex-reviewer": "allow"'
-assert_contains "$CONFIG_TEMPLATE" 'Pass only the stage argument to llm_route'
-assert_contains "$CONFIG_TEMPLATE" "do not add a request argument"
-assert_contains "$CONFIG_TEMPLATE" 'never use an LLM jury'
-jq -e '.agent.minimax.permission == {"*":"deny","repo_query":"allow"}' "$CONFIG_TEMPLATE" >/dev/null || fail "MiniMax permissions are not read-only"
-jq -e '.agent["codex-reviewer"].permission == {"*":"deny","repo_query":"allow"}' "$CONFIG_TEMPLATE" >/dev/null || fail "reviewer permissions are not read-only"
+jq empty "$CONFIG_TEMPLATE"
+jq -e '
+  .model == "ollama/hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M"
+  and .default_agent == "router"
+  and .agent.router.model == .model
+  and .agent.router.permission == {"*":"deny"}
+  and .agent.minimax.mode == "all"
+  and .agent.glm.mode == "all"
+  and .agent.claude.mode == "all"
+  and .agent.codex.mode == "all"
+  and .agent.claude.model == "claude-agent/claude-opus-4-8"
+  and .agent.claude.permission == {"*":"deny"}
+  and .provider["claude-agent"].npm == "__CLAUDE_AGENT_PROVIDER_URL__"
+  and .provider["claude-agent"].name == "Claude CLI"
+  and .provider["claude-agent"].options.claudePath == "__CLAUDE_CODE_PATH__"
+  and .provider["claude-agent"].models["claude-opus-4-8"].limit == {"context":200000,"output":32000}
+  and .agent.codex.model == "openai/gpt-5.6-sol"
+  and (.agent | keys | sort) == ["claude", "codex", "glm", "minimax", "router"]
+' "$CONFIG_TEMPLATE" >/dev/null || fail "direct handoff config is invalid"
 
-[[ ! -e "$REPO_ROOT/opencode/tools/delegate_task.ts" ]] || fail "legacy delegate_task tool still exists"
-[[ ! -e "$REPO_ROOT/opencode/tools/claude_opus.ts" ]] || fail "legacy claude_opus tool still exists"
-assert_contains "$REPO_ROOT/opencode/tools/llm_route.ts" '"--classify", "--json"'
-assert_contains "$REPO_ROOT/opencode/tools/llm_route.ts" 'if (args.stage === "review")'
-assert_contains "$REPO_ROOT/opencode/tools/claude_agent.ts" '@anthropic-ai/claude-agent-sdk'
-assert_contains "$REPO_ROOT/opencode/lib/claude_agent.mjs" 'if (effort === "xhigh") return "xhigh"'
-assert_contains "$REPO_ROOT/opencode/tools/stage_verify.ts" 'baseline_id'
-assert_contains "$REPO_ROOT/opencode/tools/stage_prepare.ts" 'prepareStagePayload(context.worktree'
-assert_contains "$REPO_ROOT/opencode/lib/prompt_guard.mjs" 'export function requireRouterRequest(sessionID)'
-assert_contains "$REPO_ROOT/opencode/tools/llm_route.ts" 'requireRouterRequest(context.sessionID)'
-assert_not_contains "$REPO_ROOT/opencode/lib/prompt_guard.mjs" 'tool.execute.before'
+for removed in \
+  opencode/tools/llm_route.ts \
+  opencode/tools/claude_agent.ts \
+  opencode/tools/stage_prepare.ts \
+  opencode/tools/stage_verify.ts \
+  opencode/lib/prompt_guard.mjs \
+  opencode/lib/stage_tools.mjs \
+  opencode/plugins/llm_router_prompt_guard.ts; do
+  [[ ! -e "$REPO_ROOT/$removed" ]] || fail "retired orchestration file still exists: $removed"
+done
+
+assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" '"--classify", "--json", "--", request'
+assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'client.tui.showToast'
+assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'createOpenCodeV2ClientFromLegacyTransport({'
+assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'persistDirectModelSelection('
+assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'output.options.cwd = worktree || directory'
+assert_contains "$REPO_ROOT/opencode/lib/opencode_transport.mjs" 'const transport = legacyClient?._client'
+assert_contains "$REPO_ROOT/opencode/lib/opencode_transport.mjs" 'fetch: config.fetch'
+if grep -F 'serverUrl' "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" >/dev/null; then
+  fail "handoff plugin still creates an independent HTTP transport"
+fi
+assert_contains "$REPO_ROOT/opencode/lib/direct_handoff.mjs" 'output.message.agent = target.agent'
+assert_contains "$REPO_ROOT/opencode/lib/direct_handoff.mjs" 'output.message.model = {'
+assert_contains "$REPO_ROOT/opencode/lib/direct_handoff.mjs" 'client.v2.session.switchAgent('
+assert_contains "$REPO_ROOT/opencode/lib/direct_handoff.mjs" 'client.v2.session.switchModel('
+assert_contains "$REPO_ROOT/opencode/providers/claude_agent_provider.mjs" 'specificationVersion: "v3"'
+assert_contains "$REPO_ROOT/opencode/providers/claude_agent_provider.mjs" 'CLAUDE_MAX_INPUT_BYTES = 128 * 1024'
+assert_contains "$REPO_ROOT/opencode/lib/claude_agent.mjs" 'from "node:child_process"'
+assert_contains "$REPO_ROOT/opencode/lib/claude_agent.mjs" '"--output-format",'
+assert_contains "$REPO_ROOT/opencode/lib/claude_agent.mjs" '"--tools",'
+assert_contains "$REPO_ROOT/opencode/lib/claude_agent.mjs" '"--safe-mode",'
+assert_contains "$REPO_ROOT/opencode/lib/claude_agent.mjs" '"--no-session-persistence",'
+assert_contains "$REPO_ROOT/opencode/lib/direct_handoff.mjs" 'new AggregateError('
 assert_contains "$REPO_ROOT/opencode/tools/repo_query.ts" 'runRepositoryQuery(args, context.worktree)'
-[[ ! -e "$REPO_ROOT/opencode/plugins/llm_router_prompt_guard.js" ]] || fail "CommonJS-sensitive prompt guard still exists"
+jq -e '.dependencies == {"@opencode-ai/plugin":"1.18.4","@opencode-ai/sdk":"1.18.4"}' "$REPO_ROOT/opencode/package.json" >/dev/null || fail "bundle dependencies are not pinned"
 
-"$NODE_PATH" --input-type=module - "$POLICY" "$CONTRACT" "$STAGE_TOOLS" <<'NODE'
+"$NODE_PATH" --input-type=module - "$POLICY" "$CONTRACT" <<'NODE'
 import { pathToFileURL } from "node:url"
 
 const policy = await import(pathToFileURL(process.argv[2]))
 const contract = await import(pathToFileURL(process.argv[3]))
-const stageTools = await import(pathToFileURL(process.argv[4]))
-
-if (JSON.stringify(stageTools.verifyStagePayload("a".repeat(32))) !== JSON.stringify({ baseline_id: "a".repeat(32) })) {
-  throw new Error("verify payload must contain only baseline_id")
-}
 
 const routeCases = [
-  ["minimax", "request", "crie router-proof.txt com conteúdo exato", "glm"],
-  ["minimax", "request", "quantos arquivos existem no projeto?", "minimax"],
-  ["minimax", "request", "conte os arquivos. Não altere arquivos.", "minimax"],
-  ["minimax", "request", "conte os arquivos. Não deve alterar arquivos.", "minimax"],
-  ["minimax", "request", "count the files. Do not modify files.", "minimax"],
-  ["minimax", "request", "count the files. You must not modify files.", "minimax"],
-  ["minimax", "request", "crie o relatório. Não altere os testes.", "glm"],
-  ["minimax", "request", "traduza esta mensagem para português", "glm"],
-  ["minimax", "request", "resuma este log em uma frase", "glm"],
-  ["codex", "plan", "planeje e implemente uma correção complexa", "claude"],
-  ["claude", "execute", "implemente a arquitetura do produto", "codex"],
+  ["minimax", "crie router-proof.txt com conteúdo exato", "glm"],
+  ["minimax", "quantos arquivos existem no projeto?", "minimax"],
+  ["minimax", "conte os arquivos. Não altere arquivos.", "minimax"],
+  ["minimax", "traduza esta mensagem para português", "glm"],
+  ["claude", "planeje uma arquitetura", "claude"],
+  ["codex", "corrija uma condição de corrida", "codex"],
 ]
-for (const [route, stage, request, expected] of routeCases) {
-  const actual = policy.enforceMinimumRoute(route, stage, request)
+for (const [route, request, expected] of routeCases) {
+  const actual = policy.enforceMinimumRoute(route, request)
   if (actual !== expected) throw new Error(`${request}: expected ${expected}, received ${actual}`)
 }
 
-if (policy.selectClaudeEffort("request", "Discuta os trade-offs.") !== "xhigh") {
-  throw new Error("open discussion should use xhigh")
-}
-if (policy.selectClaudeEffort("plan", "Defina a estratégia.") !== "max") {
-  throw new Error("planning should use max")
-}
-if (policy.routeTarget("glm").subagent_type !== "glm") {
-  throw new Error("GLM target is not a native task")
-}
-if (policy.routeTarget("claude").tool !== "claude_agent") {
-  throw new Error("Claude target is not the SDK tool")
-}
-if (policy.executionPolicy("minimax").escalate_to !== "glm") {
-  throw new Error("MiniMax escalation is invalid")
-}
+const claude = policy.routeTarget("claude")
+if (JSON.stringify(claude) !== JSON.stringify({
+  agent: "claude",
+  providerID: "claude-agent",
+  modelID: "claude-opus-4-8",
+})) throw new Error("Claude target is not the local CLI provider")
 
 const parsed = contract.parseClassifierResult(JSON.stringify({
   schema_version: 1,
@@ -149,150 +172,185 @@ NODE
 
 CONFIG_DIR="$FIXTURE/config"
 BACKUP_ROOT="$FIXTURE/backups"
-mkdir -p "$CONFIG_DIR/tools" "$CONFIG_DIR/plugins"
+CLAUDE_PATH="$FIXTURE/claude"
+write_compatible_claude "$CLAUDE_PATH"
+
+INCOMPATIBLE_CLAUDE="$FIXTURE/incompatible-claude"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'if [ "${1:-}" = "--help" ]; then' \
+  '  printf "%s\n" "--print --input-format --output-format"' \
+  '  exit 0' \
+  'fi' \
+  'exit 0' | tee "$INCOMPATIBLE_CLAUDE" >/dev/null
+chmod +x "$INCOMPATIBLE_CLAUDE"
+if INCOMPATIBLE_OUTPUT=$(bash "$INSTALLER" \
+  --config-dir "$FIXTURE/incompatible-config" \
+  --backup-root "$FIXTURE/incompatible-backups" \
+  --router-path "$REPO_ROOT/route" \
+  --claude-path "$INCOMPATIBLE_CLAUDE" 2>&1); then
+  fail "installer accepted a Claude CLI without all required flags"
+fi
+[[ "$INCOMPATIBLE_OUTPUT" == *"does not support required flag"* ]] \
+  || fail "incompatible Claude CLI did not report the missing flag"
+[[ ! -e "$FIXTURE/incompatible-config" ]] \
+  || fail "incompatible Claude CLI created the target config"
+[[ ! -e "$FIXTURE/incompatible-backups" ]] \
+  || fail "incompatible Claude CLI created backups"
+
+mkdir -p "$CONFIG_DIR/tools" "$CONFIG_DIR/plugins" "$CONFIG_DIR/lib" "$CONFIG_DIR/providers"
 printf '%s\n' '{"previous":true}' | tee "$CONFIG_DIR/opencode.jsonc" >/dev/null
-printf '%s\n' '{"private":true,"type":"commonjs","dependencies":{"user-package":"7.0.0","@opencode-ai/plugin":"0.1.0"},"scripts":{"keep":"true"}}' | tee "$CONFIG_DIR/package.json" >/dev/null
-printf '%s\n' 'legacy claude tool' | tee "$CONFIG_DIR/tools/claude_opus.ts" >/dev/null
-printf '%s\n' 'legacy delegate tool' | tee "$CONFIG_DIR/tools/delegate_task.ts" >/dev/null
-printf '%s\n' 'legacy prompt guard' | tee "$CONFIG_DIR/plugins/llm_router_prompt_guard.js" >/dev/null
+printf '%s\n' '{"private":true,"dependencies":{"user-package":"7.0.0","@anthropic-ai/claude-agent-sdk":"0.3.100","@opencode-ai/plugin":"0.1.0"},"scripts":{"keep":"true"}}' | tee "$CONFIG_DIR/package.json" >/dev/null
+printf '%s\n' 'stale helper' | tee "$CONFIG_DIR/lib/claude_agent.mjs" >/dev/null
+for legacy in \
+  "$CONFIG_DIR/tools/llm_route.ts" \
+  "$CONFIG_DIR/tools/claude_agent.ts" \
+  "$CONFIG_DIR/tools/stage_prepare.ts" \
+  "$CONFIG_DIR/tools/stage_verify.ts" \
+  "$CONFIG_DIR/plugins/llm_router_prompt_guard.ts" \
+  "$CONFIG_DIR/plugins/llm_router_prompt_guard.js" \
+  "$CONFIG_DIR/lib/prompt_guard.mjs" \
+  "$CONFIG_DIR/lib/stage_tools.mjs"; do
+  printf '%s\n' legacy | tee "$legacy" >/dev/null
+done
 BEFORE_DRY_RUN=$(shasum -a 256 "$CONFIG_DIR/opencode.jsonc" "$CONFIG_DIR/package.json")
 
 DRY_RUN_OUTPUT=$(bash "$INSTALLER" \
   --dry-run \
   --config-dir "$CONFIG_DIR" \
   --backup-root "$BACKUP_ROOT" \
-  --router-path "$REPO_ROOT/route")
+  --router-path "$REPO_ROOT/route" \
+  --claude-path "$CLAUDE_PATH")
 
 AFTER_DRY_RUN=$(shasum -a 256 "$CONFIG_DIR/opencode.jsonc" "$CONFIG_DIR/package.json")
 [[ "$BEFORE_DRY_RUN" == "$AFTER_DRY_RUN" ]] || fail "dry-run modified target files"
-[[ -e "$CONFIG_DIR/tools/claude_opus.ts" ]] || fail "dry-run retired claude_opus"
-[[ -e "$CONFIG_DIR/tools/delegate_task.ts" ]] || fail "dry-run retired delegate_task"
-[[ -e "$CONFIG_DIR/plugins/llm_router_prompt_guard.js" ]] || fail "dry-run retired legacy prompt guard"
+[[ -e "$CONFIG_DIR/tools/llm_route.ts" ]] || fail "dry-run retired llm_route"
 [[ ! -e "$BACKUP_ROOT" ]] || fail "dry-run created a backup directory"
-[[ "$DRY_RUN_OUTPUT" == *"would retire $CONFIG_DIR/tools/claude_opus.ts (with backup)"* ]] || fail "dry-run did not report claude_opus retirement"
-[[ "$DRY_RUN_OUTPUT" == *"would retire $CONFIG_DIR/tools/delegate_task.ts (with backup)"* ]] || fail "dry-run did not report delegate_task retirement"
+[[ "$DRY_RUN_OUTPUT" == *"would retire $CONFIG_DIR/tools/llm_route.ts (with backup)"* ]] || fail "dry-run did not report llm_route retirement"
 
 FIRST_OUTPUT=$(bash "$INSTALLER" \
   --config-dir "$CONFIG_DIR" \
   --backup-root "$BACKUP_ROOT" \
-  --router-path "$REPO_ROOT/route")
+  --router-path "$REPO_ROOT/route" \
+  --claude-path "$CLAUDE_PATH")
 
-cmp -s "$CONFIG_TEMPLATE" "$CONFIG_DIR/opencode.jsonc" || fail "installed config differs from template"
-cmp -s "$REPO_ROOT/config.json" "$CONFIG_DIR/lib/llm-router-config.json" || fail "installed router config differs"
-cmp -s "$REPO_ROOT/stage_verifier.py" "$CONFIG_DIR/lib/stage_verifier.py" || fail "installed stage verifier differs"
-assert_contains "$CONFIG_DIR/tools/llm_route.ts" "const ROUTER_PATH = \"$REPO_ROOT/route\""
-assert_contains "$CONFIG_DIR/tools/llm_route.ts" 'const ROUTER_TIMEOUT_MS = 120_000'
-assert_contains "$CONFIG_DIR/tools/claude_agent.ts" '@anthropic-ai/claude-agent-sdk'
-assert_contains "$CONFIG_DIR/tools/repo_query.ts" 'runRepositoryQuery(args, context.worktree)'
-assert_contains "$CONFIG_DIR/tools/stage_prepare.ts" "const CONFIG_PATH = \"$CONFIG_DIR/lib/llm-router-config.json\""
-assert_contains "$CONFIG_DIR/lib/stage_tools.mjs" "const STAGE_VERIFIER_PATH = \"$CONFIG_DIR/lib/stage_verifier.py\""
-cmp -s "$REPO_ROOT/opencode/plugins/llm_router_prompt_guard.ts" "$CONFIG_DIR/plugins/llm_router_prompt_guard.ts" || fail "installed prompt guard differs"
-[[ ! -e "$CONFIG_DIR/tools/claude_opus.ts" ]] || fail "legacy claude_opus was not retired"
-[[ ! -e "$CONFIG_DIR/tools/delegate_task.ts" ]] || fail "legacy delegate_task was not retired"
-[[ ! -e "$CONFIG_DIR/plugins/llm_router_prompt_guard.js" ]] || fail "legacy prompt guard was not retired"
+assert_contains "$CONFIG_DIR/plugins/llm_router_handoff.ts" "const ROUTER_PATH = \"$REPO_ROOT/route\""
+cmp -s "$REPO_ROOT/opencode/lib/direct_handoff.mjs" "$CONFIG_DIR/lib/direct_handoff.mjs" || fail "installed handoff helper differs"
+cmp -s "$REPO_ROOT/opencode/lib/opencode_transport.mjs" "$CONFIG_DIR/lib/opencode_transport.mjs" || fail "installed OpenCode transport helper differs"
+cmp -s "$REPO_ROOT/opencode/lib/claude_agent.mjs" "$CONFIG_DIR/lib/claude_agent.mjs" || fail "installed Claude helper differs"
+cmp -s "$REPO_ROOT/opencode/providers/claude_agent_provider.mjs" "$CONFIG_DIR/providers/claude_agent_provider.mjs" || fail "installed Claude provider differs"
+jq -e --arg provider "file://$CONFIG_DIR/providers/claude_agent_provider.mjs" --arg claude "$CLAUDE_PATH" '
+  .provider["claude-agent"].npm == $provider
+  and .provider["claude-agent"].options.claudePath == $claude
+  and .provider["claude-agent"].models["claude-opus-4-8"].limit == {"context":200000,"output":32000}
+  and .agent.claude.model == "claude-agent/claude-opus-4-8"
+' "$CONFIG_DIR/opencode.jsonc" >/dev/null || fail "installed Claude provider config is invalid"
+for legacy in \
+  "$CONFIG_DIR/tools/llm_route.ts" \
+  "$CONFIG_DIR/tools/claude_agent.ts" \
+  "$CONFIG_DIR/tools/stage_prepare.ts" \
+  "$CONFIG_DIR/tools/stage_verify.ts" \
+  "$CONFIG_DIR/plugins/llm_router_prompt_guard.ts" \
+  "$CONFIG_DIR/plugins/llm_router_prompt_guard.js" \
+  "$CONFIG_DIR/lib/prompt_guard.mjs" \
+  "$CONFIG_DIR/lib/stage_tools.mjs"; do
+  [[ ! -e "$legacy" ]] || fail "legacy file was not retired: $legacy"
+done
 
 jq -e '.dependencies["user-package"] == "7.0.0"' "$CONFIG_DIR/package.json" >/dev/null || fail "package merge removed user dependency"
 jq -e '.scripts.keep == "true"' "$CONFIG_DIR/package.json" >/dev/null || fail "package merge removed user script"
-jq -e '.type == "commonjs"' "$CONFIG_DIR/package.json" >/dev/null || fail "package merge changed the user module type"
 jq -e '.dependencies["@opencode-ai/plugin"] == "1.18.4"' "$CONFIG_DIR/package.json" >/dev/null || fail "plugin dependency was not pinned"
-jq -e '.dependencies["@anthropic-ai/claude-agent-sdk"] == "0.3.216"' "$CONFIG_DIR/package.json" >/dev/null || fail "Claude SDK dependency was not installed"
-
-PROJECT_DIR="$FIXTURE/project"
-mkdir -p "$PROJECT_DIR"
-git -C "$PROJECT_DIR" init -q
-printf '%s\n' 'before' | tee "$PROJECT_DIR/tracked.txt" >/dev/null
-git -C "$PROJECT_DIR" add tracked.txt
-git -C "$PROJECT_DIR" -c user.name='Bundle Test' -c user.email='bundle@example.invalid' commit -q -m initial
-STAGE_SCRIPT="$FIXTURE/stage-tools-test.mjs"
-tee "$STAGE_SCRIPT" >/dev/null <<'STAGE_TEST'
-import { appendFile } from "node:fs/promises"
-import { pathToFileURL } from "node:url"
-
-const [helperPath, projectRoot, configPath, logPath] = process.argv.slice(2)
-const { runStageVerifier } = await import(pathToFileURL(helperPath))
-const context = {
-  directory: `${projectRoot}/subdirectory`,
-  worktree: projectRoot,
-  abort: new AbortController().signal,
-}
-const prepared = await runStageVerifier("prepare", {
-  project_root: projectRoot,
-  config_path: configPath,
-  log_path: logPath,
-}, context, 30_000)
-if (prepared.status !== "prepared" || !/^[a-f0-9]{32}$/.test(prepared.baseline_id)) {
-  throw new Error(`unexpected prepare result: ${JSON.stringify(prepared)}`)
-}
-await appendFile(`${projectRoot}/tracked.txt`, "after\n")
-const verified = await runStageVerifier("verify", {
-  baseline_id: prepared.baseline_id,
-}, context, 30_000)
-if (verified.status !== "no_applicable_gates") {
-  throw new Error(`unexpected verify result: ${JSON.stringify(verified)}`)
-}
-if (JSON.stringify(verified.changed_files) !== JSON.stringify(["tracked.txt"])) {
-  throw new Error(`unexpected changed files: ${JSON.stringify(verified.changed_files)}`)
-}
-STAGE_TEST
-mkdir -p "$PROJECT_DIR/subdirectory"
-"$BUN_PATH" "$STAGE_SCRIPT" \
-  "$CONFIG_DIR/lib/stage_tools.mjs" \
-  "$PROJECT_DIR" \
-  "$CONFIG_DIR/lib/llm-router-config.json" \
-  "$FIXTURE/stage-events.jsonl"
-
-if grep -R -E '__[A-Z0-9_]+__' "$CONFIG_DIR" >/dev/null; then
-  fail "installed bundle contains an unresolved placeholder"
-fi
+jq -e '.dependencies["@opencode-ai/sdk"] == "1.18.4"' "$CONFIG_DIR/package.json" >/dev/null || fail "OpenCode SDK dependency was not pinned"
+jq -e '.dependencies["@anthropic-ai/claude-agent-sdk"] == null' "$CONFIG_DIR/package.json" >/dev/null || fail "retired Claude package dependency was preserved"
 
 BACKUP_CONFIG=$(find "$BACKUP_ROOT" -type f -name opencode.jsonc -print)
-BACKUP_CLAUDE=$(find "$BACKUP_ROOT" -type f -name claude_opus.ts -print)
-BACKUP_DELEGATE=$(find "$BACKUP_ROOT" -type f -name delegate_task.ts -print)
-BACKUP_PROMPT_GUARD=$(find "$BACKUP_ROOT" -type f -name llm_router_prompt_guard.js -print)
+BACKUP_ROUTE=$(find "$BACKUP_ROOT" -type f -name llm_route.ts -print)
 [[ -n "$BACKUP_CONFIG" ]] || fail "changed config was not backed up"
-[[ -n "$BACKUP_CLAUDE" ]] || fail "retired claude_opus was not backed up"
-[[ -n "$BACKUP_DELEGATE" ]] || fail "retired delegate_task was not backed up"
-[[ -n "$BACKUP_PROMPT_GUARD" ]] || fail "retired prompt guard was not backed up"
-assert_contains "$BACKUP_CONFIG" '{"previous":true}'
+[[ -n "$BACKUP_ROUTE" ]] || fail "retired route tool was not backed up"
 [[ "$(stat -f '%Lp' "$BACKUP_ROOT")" == "700" ]] || fail "backup root permissions are not 0700"
-[[ "$(stat -f '%Lp' "$(dirname "$BACKUP_CONFIG")")" == "700" ]] || fail "timestamped backup permissions are not 0700"
 [[ "$(stat -f '%Lp' "$BACKUP_CONFIG")" == "600" ]] || fail "backup file permissions are not 0600"
 BACKUP_COUNT_BEFORE=$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -print | wc -l | tr -d ' ')
 
 SECOND_OUTPUT=$(bash "$INSTALLER" \
   --config-dir "$CONFIG_DIR" \
   --backup-root "$BACKUP_ROOT" \
-  --router-path "$REPO_ROOT/route")
-
+  --router-path "$REPO_ROOT/route" \
+  --claude-path "$CLAUDE_PATH")
 BACKUP_COUNT_AFTER=$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -print | wc -l | tr -d ' ')
 [[ "$BACKUP_COUNT_BEFORE" == "$BACKUP_COUNT_AFTER" ]] || fail "idempotent install created another backup"
 [[ "$SECOND_OUTPUT" == *"unchanged $CONFIG_DIR/opencode.jsonc"* ]] || fail "idempotent install did not report unchanged config"
-[[ "$SECOND_OUTPUT" == *"unchanged $CONFIG_DIR/package.json"* ]] || fail "idempotent install did not report unchanged package"
 [[ "$FIRST_OUTPUT" == *"backup $BACKUP_ROOT/"* ]] || fail "first install did not report its backup"
 
 ATOMIC_CONFIG="$FIXTURE/atomic-config"
-mkdir -p "$ATOMIC_CONFIG/tools"
+mkdir -p "$ATOMIC_CONFIG/plugins"
 printf '%s\n' '{"sentinel":"config"}' | tee "$ATOMIC_CONFIG/opencode.jsonc" >/dev/null
 printf '%s\n' '{"sentinel":"package"}' | tee "$ATOMIC_CONFIG/package.json" >/dev/null
 printf '%s\n' 'symlink target' | tee "$FIXTURE/late-target" >/dev/null
-ln -s "$FIXTURE/late-target" "$ATOMIC_CONFIG/tools/stage_verify.ts"
+ln -s "$FIXTURE/late-target" "$ATOMIC_CONFIG/plugins/llm_router_handoff.ts"
 ATOMIC_BEFORE=$(shasum -a 256 "$ATOMIC_CONFIG/opencode.jsonc" "$ATOMIC_CONFIG/package.json")
-if bash "$INSTALLER" --config-dir "$ATOMIC_CONFIG" --backup-root "$FIXTURE/atomic-backups" --router-path "$REPO_ROOT/route" >/dev/null 2>&1; then
-  fail "installer accepted a late symlink target"
+if bash "$INSTALLER" --config-dir "$ATOMIC_CONFIG" --backup-root "$FIXTURE/atomic-backups" --router-path "$REPO_ROOT/route" --claude-path "$CLAUDE_PATH" >/dev/null 2>&1; then
+  fail "installer accepted a symlink target"
 fi
 ATOMIC_AFTER=$(shasum -a 256 "$ATOMIC_CONFIG/opencode.jsonc" "$ATOMIC_CONFIG/package.json")
 [[ "$ATOMIC_BEFORE" == "$ATOMIC_AFTER" ]] || fail "preflight failure partially changed the active bundle"
 [[ ! -e "$FIXTURE/atomic-backups" ]] || fail "preflight failure created backups"
 
 RELATIVE_ROUTE="$FIXTURE/relative-route"
+RELATIVE_CLAUDE="$FIXTURE/relative-claude"
 cp "$REPO_ROOT/route" "$RELATIVE_ROUTE"
+cp "$CLAUDE_PATH" "$RELATIVE_CLAUDE"
 chmod +x "$RELATIVE_ROUTE"
+chmod +x "$RELATIVE_CLAUDE"
 (
   cd "$FIXTURE"
-  bash "$INSTALLER" --config-dir relative-config --backup-root relative-backups --router-path relative-route >/dev/null
+  bash "$INSTALLER" --config-dir relative-config --backup-root relative-backups --router-path relative-route --claude-path relative-claude >/dev/null
 )
 RELATIVE_ROOT=$(cd "$FIXTURE" && pwd)
-assert_contains "$FIXTURE/relative-config/tools/llm_route.ts" "const ROUTER_PATH = \"$RELATIVE_ROOT/relative-route\""
-assert_contains "$FIXTURE/relative-config/tools/stage_prepare.ts" "const CONFIG_PATH = \"$RELATIVE_ROOT/relative-config/lib/llm-router-config.json\""
+assert_contains "$FIXTURE/relative-config/plugins/llm_router_handoff.ts" "const ROUTER_PATH = \"$RELATIVE_ROOT/relative-route\""
+assert_contains "$FIXTURE/relative-config/opencode.jsonc" "file://$RELATIVE_ROOT/relative-config/providers/claude_agent_provider.mjs"
+assert_contains "$FIXTURE/relative-config/opencode.jsonc" "$RELATIVE_ROOT/relative-claude"
 
-printf 'PASS: native OpenCode tasks, safe repository queries, Claude SDK, JSON routing, verifier bundle, atomic install, backup, retirement, and idempotence\n'
+SPECIAL_ROOT="$FIXTURE/special path 'single' \"double\" \\backslash"
+SPECIAL_CONFIG="$SPECIAL_ROOT/config path 'quoted' \"double\" \\backslash"
+SPECIAL_BACKUPS="$SPECIAL_ROOT/backup path"
+SPECIAL_ROUTE="$SPECIAL_ROOT/route 'quoted' \"double\" \\backslash"
+SPECIAL_CLAUDE="$SPECIAL_ROOT/claude 'quoted' \"double\" \\backslash"
+mkdir -p "$SPECIAL_ROOT"
+cp "$REPO_ROOT/route" "$SPECIAL_ROUTE"
+chmod +x "$SPECIAL_ROUTE"
+write_compatible_claude "$SPECIAL_CLAUDE"
+
+bash "$INSTALLER" \
+  --config-dir "$SPECIAL_CONFIG" \
+  --backup-root "$SPECIAL_BACKUPS" \
+  --router-path "$SPECIAL_ROUTE" \
+  --claude-path "$SPECIAL_CLAUDE" >/dev/null
+
+jq empty "$SPECIAL_CONFIG/opencode.jsonc" \
+  || fail "special-path opencode.jsonc is invalid"
+"$NODE_PATH" --input-type=module --check - \
+  < "$SPECIAL_CONFIG/plugins/llm_router_handoff.ts" \
+  || fail "special-path handoff plugin is invalid"
+"$NODE_PATH" --input-type=module - \
+  "$SPECIAL_CONFIG/plugins/llm_router_handoff.ts" "$SPECIAL_ROUTE" <<'NODE'
+import { readFileSync } from "node:fs"
+
+const source = readFileSync(process.argv[2], "utf8")
+const match = source.match(/^const ROUTER_PATH = (.+)$/m)
+if (!match) throw new Error("rendered ROUTER_PATH literal was not found")
+const actual = JSON.parse(match[1])
+if (actual !== process.argv[3]) {
+  throw new Error(`rendered ROUTER_PATH mismatch: ${JSON.stringify(actual)}`)
+}
+NODE
+SPECIAL_PROVIDER_URL=$("$NODE_PATH" -e '
+  const { pathToFileURL } = require("node:url")
+  process.stdout.write(pathToFileURL(process.argv[1]).href)
+' "$SPECIAL_CONFIG/providers/claude_agent_provider.mjs")
+jq -e --arg provider "$SPECIAL_PROVIDER_URL" --arg claude "$SPECIAL_CLAUDE" '
+  .provider["claude-agent"].npm == $provider
+  and .provider["claude-agent"].options.claudePath == $claude
+' "$SPECIAL_CONFIG/opencode.jsonc" >/dev/null \
+  || fail "special paths were not preserved in opencode.jsonc"
+
+printf 'PASS: direct handoff, tool-free Claude CLI provider, safe install, backup, retirement and idempotence\n'

@@ -7,7 +7,8 @@ Este documento descreve somente o benchmark offline. `quality_eval.py` lê
 `benchmark_config.json` e usa `BenchmarkExecutor` para executar chamadas
 single-shot. Os comandos externos e ambientes de provider dessa configuração
 servem para reproduzir as medições e nunca participam do roteamento no
-OpenCode. O runtime de produção usa subagentes nativos e o Claude Agent SDK.
+OpenCode. O runtime de produção usa o handoff direto para providers nativos e
+para o adapter local da CLI oficial do Claude.
 
 ## V1: piloto inicial
 

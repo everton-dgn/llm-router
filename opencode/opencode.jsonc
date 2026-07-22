@@ -1,11 +1,22 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "autoupdate": false,
-  "model": "zai-coding-plan/glm-5.2",
+  "model": "ollama/hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M",
   "default_agent": "router",
-  "subagent_depth": 1,
   "disabled_providers": ["github-copilot", "opencode-go"],
   "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama local",
+      "options": {
+        "baseURL": "http://127.0.0.1:11434/v1"
+      },
+      "models": {
+        "hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M": {
+          "name": "Plano Orchestrator 4B"
+        }
+      }
+    },
     "minimax-coding-plan": {
       "name": "MiniMax Coding Plan",
       "whitelist": ["MiniMax-M3"],
@@ -25,64 +36,61 @@
           "name": "GLM 5.2"
         }
       }
+    },
+    "claude-agent": {
+      "npm": "__CLAUDE_AGENT_PROVIDER_URL__",
+      "name": "Claude CLI",
+      "options": {
+        "claudePath": "__CLAUDE_CODE_PATH__"
+      },
+      "models": {
+        "claude-opus-4-8": {
+          "name": "Claude Opus 4.8",
+          "limit": {
+            "context": 200000,
+            "output": 32000
+          }
+        }
+      }
     }
   },
   "agent": {
     "router": {
-      "description": "Central router that classifies each workflow stage and delegates it to the configured model.",
+      "description": "Local model selector. The handoff plugin replaces this agent and model before execution.",
       "mode": "primary",
-      "model": "openai/gpt-5.6-sol",
-      "reasoningEffort": "xhigh",
-      "textVerbosity": "medium",
-      "steps": 40,
-      "prompt": "You are the central orchestration agent. For every user request, call llm_route before doing substantive work. Never perform the delegated task yourself. Pass only the stage argument to llm_route. The tool reads the user's exact original message from the current session; do not add a request argument. Set the workflow stage through stage. For a single-stage request, use stage=request, except that a request whose deliverable is a review, audit, threat model, or security analysis must use stage=review. Review is routed directly to codex-reviewer. Follow the returned target exactly. For kind=task, call the native task tool in the foreground with subagent_type exactly as returned, a short description, and a self-contained prompt. For kind=tool, call claude_agent with the returned stage and effort. Include the original user request verbatim in the worker prompt and add only operational context required for that stage, such as the working directory, an approved plan, or validation evidence. Never broaden the deliverable or invent requirements. Before any GLM or Codex worker that may modify files, call stage_prepare and retain its baseline_id. After that worker returns or fails, always call stage_verify with the baseline_id. Treat pass as deterministic approval. Treat fail as a correction request using the gate evidence. Treat no_changes, no_applicable_gates, or infrastructure_error as requiring codex-reviewer; never use an LLM jury. For a transient task failure, retry the same subagent at most once, reusing task_id when available. If it still fails, use escalate_to returned by llm_route when present. Before each corrective mutation, capture a new baseline and verify it afterward. For work that explicitly requests planning followed by execution, or that changes architecture, a public contract, security-sensitive behavior, or five or more files, coordinate separate stages in this order: plan, execute, review. Call llm_route separately for each stage with only the appropriate stage argument; the prompt guard reuses the current exact original request. Pass the completed plan output into the execution worker request only after routing. If review finds a concrete defect, allow one correction through the routed executor and one final review, then stop. Keep control in this parent session. Do not let workers route or delegate. Preserve the user's language, constraints, and requested output format. In the final response, state which model handled each completed stage and the deterministic verification status when applicable.",
+      "model": "ollama/hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M",
+      "steps": 1,
+      "prompt": "If this prompt reaches the model, report that the llm-router handoff plugin is unavailable. Do not execute the user's task.",
       "permission": {
-        "*": "deny",
-        "llm_route": "allow",
-        "claude_agent": "allow",
-        "stage_prepare": "allow",
-        "stage_verify": "allow",
-        "task": {
-          "*": "deny",
-          "minimax": "allow",
-          "glm": "allow",
-          "codex": "allow",
-          "codex-reviewer": "allow"
-        },
-        "question": "allow"
+        "*": "deny"
       }
     },
     "minimax": {
-      "description": "MiniMax M3 worker for literal, low-risk, read-only counting, listing, locating, extraction, and exact formatting.",
-      "mode": "subagent",
+      "description": "MiniMax M3 for literal, low-risk, read-only requests.",
+      "mode": "all",
       "model": "minimax-coding-plan/MiniMax-M3",
       "steps": 8,
-      "prompt": "Perform only the delegated literal read-only task. Use repo_query for repository evidence and return exact findings. Do not summarize, translate, rewrite, brainstorm, review, edit files, run project code, or broaden the scope. Include file paths or the material query result when applicable.",
+      "prompt": "Handle the user's current request directly. Stay read-only, preserve the exact requested format, and use repo_query when repository evidence is needed. Do not delegate or route again.",
       "permission": {
         "*": "deny",
         "repo_query": "allow"
       }
     },
     "glm": {
-      "description": "GLM 5.2 worker for translation and simple or intermediate implementation, debugging, refactoring, tests, documentation, and contained content work.",
-      "mode": "subagent",
+      "description": "GLM 5.2 for simple and intermediate work.",
+      "mode": "all",
       "model": "zai-coding-plan/glm-5.2",
       "steps": 24,
-      "prompt": "Handle the delegated simple or intermediate task completely. Inspect relevant sources before changing code, preserve the requested language and format, keep edits scoped, and run focused validation after edits. Do not delegate or change the routing decision.",
+      "prompt": "Handle the user's current request directly and completely. Inspect relevant sources before changing code, keep edits scoped, and run focused validation. Do not delegate or route again.",
       "permission": {
         "*": "allow",
         "task": "deny",
-        "llm_route": "deny",
-        "claude_agent": "deny",
-        "stage_prepare": "deny",
-        "stage_verify": "deny",
         "external_directory": "deny",
         "bash": {
           "*": "ask",
           "rm *": "deny",
           "rmdir *": "deny",
           "unlink *": "deny",
-          "trash *": "deny",
           "git commit*": "deny",
           "git push*": "deny",
           "git merge*": "deny",
@@ -100,29 +108,34 @@
           "pnpm add -g*": "deny",
           "pnpm add --global*": "deny"
         }
+      }
+    },
+    "claude": {
+      "description": "Claude Opus 4.8 through the tool-free local Claude CLI adapter for planning, architecture, product and open-ended reasoning.",
+      "mode": "all",
+      "model": "claude-agent/claude-opus-4-8",
+      "steps": 24,
+      "prompt": "Handle the user's current request directly using only the supplied text. Stay read-only, do not claim to inspect the workspace, and do not delegate or route again.",
+      "permission": {
+        "*": "deny"
       }
     },
     "codex": {
-      "description": "GPT-5.6 Sol xhigh worker for difficult engineering, deep debugging, hard refactoring, security work, and precise technical writing.",
-      "mode": "subagent",
+      "description": "GPT-5.6 Sol xhigh for difficult engineering, review and security work.",
+      "mode": "all",
       "model": "openai/gpt-5.6-sol",
       "reasoningEffort": "xhigh",
       "steps": 32,
-      "prompt": "Handle the delegated difficult engineering task completely. Inspect definitions, consumers, tests, and configuration before acting. Keep changes scoped, validate in proportion to risk, and report concrete evidence. Do not delegate or change the routing decision.",
+      "prompt": "Handle the user's current request directly and completely. Inspect definitions, consumers, tests and configuration before acting. Keep changes scoped and validate in proportion to risk. For review requests, stay read-only and report only evidence-backed findings. Do not delegate or route again.",
       "permission": {
         "*": "allow",
         "task": "deny",
-        "llm_route": "deny",
-        "claude_agent": "deny",
-        "stage_prepare": "deny",
-        "stage_verify": "deny",
         "external_directory": "deny",
         "bash": {
           "*": "ask",
           "rm *": "deny",
           "rmdir *": "deny",
           "unlink *": "deny",
-          "trash *": "deny",
           "git commit*": "deny",
           "git push*": "deny",
           "git merge*": "deny",
@@ -140,18 +153,6 @@
           "pnpm add -g*": "deny",
           "pnpm add --global*": "deny"
         }
-      }
-    },
-    "codex-reviewer": {
-      "description": "GPT-5.6 Sol xhigh read-only reviewer for code review, audit, security analysis, and verification of completed work.",
-      "mode": "subagent",
-      "model": "openai/gpt-5.6-sol",
-      "reasoningEffort": "xhigh",
-      "steps": 24,
-      "prompt": "Review the delegated result without modifying files. Use repo_query to inspect status, diffs, files, literal matches, and line-numbered source. Always inspect status first; when it reports untracked paths, request diff with include_untracked=true so new files are reviewed. Verify claims against code and test evidence. Report only actionable findings with severity, file and line, evidence, impact, and a concrete correction. If there are no findings, say so and list what was verified. Do not delegate.",
-      "permission": {
-        "*": "deny",
-        "repo_query": "allow"
       }
     }
   }

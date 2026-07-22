@@ -8,6 +8,7 @@ DRY_RUN=false
 CONFIG_DIR=""
 BACKUP_ROOT="/tmp/claude-backups"
 ROUTER_PATH=""
+CLAUDE_PATH=""
 RENDER_DIR=""
 PENDING_TARGET=""
 BACKUP_DIR=""
@@ -24,6 +25,7 @@ Options:
   --config-dir PATH       OpenCode config directory. Defaults to the XDG or user config path.
   --backup-root PATH      Backup root. Defaults to /tmp/claude-backups.
   --router-path PATH      llm-router executable. Defaults to this repository's route script.
+  --claude-path PATH      Claude Code executable. Defaults to claude from PATH.
   -h, --help              Show this help.
 
 Existing changed files are copied to a timestamped backup before replacement.
@@ -62,6 +64,11 @@ while [[ $# -gt 0 ]]; do
       ROUTER_PATH=$2
       shift 2
       ;;
+    --claude-path)
+      require_value "$@"
+      CLAUDE_PATH=$2
+      shift 2
+      ;;
     -h|--help)
       show_help
       exit 0
@@ -81,19 +88,47 @@ if [[ -z "$CONFIG_DIR" ]]; then
 fi
 
 [[ -n "$ROUTER_PATH" ]] || ROUTER_PATH="$REPO_ROOT/route"
-PERL_PATH=$(command -v perl || true)
+[[ -n "$CLAUDE_PATH" ]] || CLAUDE_PATH=$(command -v claude || true)
 TRASH_PATH=$(command -v trash || true)
 JQ_PATH=$(command -v jq || true)
-UV_PATH=$(command -v uv || true)
-[[ -n "$PERL_PATH" ]] || fail "perl is required to render executable paths"
+NODE_PATH=$(command -v node || true)
 [[ -n "$TRASH_PATH" ]] || fail "trash is required for recoverable temporary cleanup"
 [[ -n "$JQ_PATH" ]] || fail "jq is required to merge package.json"
-[[ -n "$UV_PATH" ]] || fail "uv is required to run deterministic verification"
+[[ -n "$NODE_PATH" ]] || fail "node is required to render and validate the bundle"
 
 case "$CONFIG_DIR" in /*) ;; *) CONFIG_DIR="$PWD/$CONFIG_DIR" ;; esac
 case "$BACKUP_ROOT" in /*) ;; *) BACKUP_ROOT="$PWD/$BACKUP_ROOT" ;; esac
 ROUTER_PATH="$(cd "$(dirname "$ROUTER_PATH")" && pwd)/$(basename "$ROUTER_PATH")"
 [[ -x "$ROUTER_PATH" ]] || fail "llm-router executable not found: $ROUTER_PATH"
+[[ -n "$CLAUDE_PATH" ]] || fail "Claude Code executable not found in PATH"
+CLAUDE_PATH="$(cd "$(dirname "$CLAUDE_PATH")" && pwd)/$(basename "$CLAUDE_PATH")"
+[[ -x "$CLAUDE_PATH" ]] || fail "Claude Code executable not found: $CLAUDE_PATH"
+
+CLAUDE_HELP=$("$CLAUDE_PATH" --help 2>&1) || fail "Claude Code --help failed: $CLAUDE_PATH"
+CLAUDE_REQUIRED_FLAGS=(
+  --print
+  --input-format
+  --output-format
+  --verbose
+  --include-partial-messages
+  --model
+  --permission-mode
+  --safe-mode
+  --tools
+  --strict-mcp-config
+  --mcp-config
+  --disable-slash-commands
+  --no-chrome
+  --no-session-persistence
+  --system-prompt
+)
+for required_flag in "${CLAUDE_REQUIRED_FLAGS[@]}"; do
+  if ! grep -E \
+    "^[[:space:]]+([^[:space:]]+,[[:space:]]+)?${required_flag}([[:space:]]|$)" \
+    <<< "$CLAUDE_HELP" >/dev/null; then
+    fail "Claude Code does not support required flag: $required_flag"
+  fi
+done
 
 cleanup() {
   if [[ -n "$PENDING_TARGET" && -e "$PENDING_TARGET" ]]; then
@@ -106,38 +141,42 @@ cleanup() {
 trap cleanup EXIT
 
 RENDER_DIR=$(mktemp -d "${TMPDIR:-/tmp}/llm-router-opencode.XXXXXX")
-mkdir -p "$RENDER_DIR/tools" "$RENDER_DIR/lib" "$RENDER_DIR/plugins"
-cp "$SCRIPT_DIR/opencode.jsonc" "$RENDER_DIR/opencode.jsonc"
+mkdir -p "$RENDER_DIR/tools" "$RENDER_DIR/lib" "$RENDER_DIR/plugins" "$RENDER_DIR/providers"
 cp "$SCRIPT_DIR/package.json" "$RENDER_DIR/package.required.json"
-cp "$REPO_ROOT/config.json" "$RENDER_DIR/lib/llm-router-config.json"
-cp "$REPO_ROOT/stage_verifier.py" "$RENDER_DIR/lib/stage_verifier.py"
-cp "$SCRIPT_DIR/tools/llm_route.ts" "$RENDER_DIR/tools/llm_route.ts"
-cp "$SCRIPT_DIR/tools/claude_agent.ts" "$RENDER_DIR/tools/claude_agent.ts"
-cp "$SCRIPT_DIR/tools/stage_prepare.ts" "$RENDER_DIR/tools/stage_prepare.ts"
-cp "$SCRIPT_DIR/tools/stage_verify.ts" "$RENDER_DIR/tools/stage_verify.ts"
 cp "$SCRIPT_DIR/lib/claude_agent.mjs" "$RENDER_DIR/lib/claude_agent.mjs"
-cp "$SCRIPT_DIR/lib/prompt_guard.mjs" "$RENDER_DIR/lib/prompt_guard.mjs"
+cp "$SCRIPT_DIR/lib/direct_handoff.mjs" "$RENDER_DIR/lib/direct_handoff.mjs"
+cp "$SCRIPT_DIR/lib/opencode_transport.mjs" "$RENDER_DIR/lib/opencode_transport.mjs"
 cp "$SCRIPT_DIR/lib/repo_query.mjs" "$RENDER_DIR/lib/repo_query.mjs"
 cp "$SCRIPT_DIR/lib/route_contract.mjs" "$RENDER_DIR/lib/route_contract.mjs"
 cp "$SCRIPT_DIR/lib/routing_policy.mjs" "$RENDER_DIR/lib/routing_policy.mjs"
-cp "$SCRIPT_DIR/lib/stage_tools.mjs" "$RENDER_DIR/lib/stage_tools.mjs"
 cp "$SCRIPT_DIR/tools/repo_query.ts" "$RENDER_DIR/tools/repo_query.ts"
-cp "$SCRIPT_DIR/plugins/llm_router_prompt_guard.ts" "$RENDER_DIR/plugins/llm_router_prompt_guard.ts"
+cp "$SCRIPT_DIR/plugins/llm_router_handoff.ts" "$RENDER_DIR/plugins/llm_router_handoff.ts"
+cp "$SCRIPT_DIR/providers/claude_agent_provider.mjs" "$RENDER_DIR/providers/claude_agent_provider.mjs"
 
-# Perl reads the replacement values from its environment.
-# shellcheck disable=SC2016
-LLM_ROUTER_INSTALL_PATH=$ROUTER_PATH \
-STAGE_VERIFIER_INSTALL_PATH="$CONFIG_DIR/lib/stage_verifier.py" \
-LLM_ROUTER_CONFIG_INSTALL_PATH="$CONFIG_DIR/lib/llm-router-config.json" \
-STAGE_LOG_INSTALL_PATH="$CONFIG_DIR/logs/router.jsonl" \
-UV_INSTALL_PATH=$UV_PATH \
-  "$PERL_PATH" -0pi -e '
-    s/__LLM_ROUTER_PATH__/$ENV{"LLM_ROUTER_INSTALL_PATH"}/g;
-    s/__STAGE_VERIFIER_PATH__/$ENV{"STAGE_VERIFIER_INSTALL_PATH"}/g;
-    s/__LLM_ROUTER_CONFIG_PATH__/$ENV{"LLM_ROUTER_CONFIG_INSTALL_PATH"}/g;
-    s/__STAGE_LOG_PATH__/$ENV{"STAGE_LOG_INSTALL_PATH"}/g;
-    s/__UV_PATH__/$ENV{"UV_INSTALL_PATH"}/g;
-  ' "$RENDER_DIR/tools/llm_route.ts" "$RENDER_DIR/tools/stage_prepare.ts" "$RENDER_DIR/tools/stage_verify.ts" "$RENDER_DIR/lib/stage_tools.mjs"
+PROVIDER_URL=$("$NODE_PATH" -e '
+  const { pathToFileURL } = require("node:url")
+  process.stdout.write(pathToFileURL(process.argv[1]).href)
+' "$CONFIG_DIR/providers/claude_agent_provider.mjs")
+
+ROUTER_PATH_VALUE="$ROUTER_PATH" "$NODE_PATH" -e '
+  const { readFileSync } = require("node:fs")
+  const template = readFileSync(process.argv[1], "utf8")
+  const token = "__LLM_ROUTER_PATH_LITERAL__"
+  const fragments = template.split(token)
+  if (fragments.length !== 2) throw new Error(`expected exactly one ${token} token`)
+  process.stdout.write(fragments.join(JSON.stringify(process.env.ROUTER_PATH_VALUE)))
+' "$SCRIPT_DIR/plugins/llm_router_handoff.ts" \
+  | tee "$RENDER_DIR/plugins/llm_router_handoff.ts" >/dev/null
+
+"$JQ_PATH" --arg provider_url "$PROVIDER_URL" --arg claude_path "$CLAUDE_PATH" '
+  .provider["claude-agent"].npm = $provider_url
+  | .provider["claude-agent"].options.claudePath = $claude_path
+' "$SCRIPT_DIR/opencode.jsonc" | tee "$RENDER_DIR/opencode.jsonc" >/dev/null
+
+"$JQ_PATH" empty "$RENDER_DIR/opencode.jsonc" >/dev/null 2>&1 \
+  || fail "rendered opencode.jsonc is invalid"
+"$NODE_PATH" --check "$RENDER_DIR/plugins/llm_router_handoff.ts" >/dev/null 2>&1 \
+  || fail "rendered llm_router_handoff.ts is invalid"
 
 PACKAGE_TARGET="$CONFIG_DIR/package.json"
 [[ ! -L "$PACKAGE_TARGET" ]] || fail "refusing to replace symlink: $PACKAGE_TARGET"
@@ -149,6 +188,7 @@ if [[ -e "$PACKAGE_TARGET" ]]; then
         private: ($current.private // $required[0].private // true),
         dependencies: (($current.dependencies // {}) + ($required[0].dependencies // {}))
       }
+    | del(.dependencies["@anthropic-ai/claude-agent-sdk"])
   ' "$PACKAGE_TARGET" | tee "$RENDER_DIR/package.json" >/dev/null
 else
   cp "$RENDER_DIR/package.required.json" "$RENDER_DIR/package.json"
@@ -255,40 +295,39 @@ retire_file() {
 SOURCES=(
   "$RENDER_DIR/package.json"
   "$RENDER_DIR/lib/claude_agent.mjs"
-  "$RENDER_DIR/lib/prompt_guard.mjs"
+  "$RENDER_DIR/lib/direct_handoff.mjs"
+  "$RENDER_DIR/lib/opencode_transport.mjs"
   "$RENDER_DIR/lib/repo_query.mjs"
   "$RENDER_DIR/lib/route_contract.mjs"
   "$RENDER_DIR/lib/routing_policy.mjs"
-  "$RENDER_DIR/lib/stage_tools.mjs"
-  "$RENDER_DIR/lib/llm-router-config.json"
-  "$RENDER_DIR/lib/stage_verifier.py"
-  "$RENDER_DIR/tools/llm_route.ts"
-  "$RENDER_DIR/tools/claude_agent.ts"
   "$RENDER_DIR/tools/repo_query.ts"
-  "$RENDER_DIR/tools/stage_prepare.ts"
-  "$RENDER_DIR/tools/stage_verify.ts"
-  "$RENDER_DIR/plugins/llm_router_prompt_guard.ts"
+  "$RENDER_DIR/plugins/llm_router_handoff.ts"
+  "$RENDER_DIR/providers/claude_agent_provider.mjs"
   "$RENDER_DIR/opencode.jsonc"
 )
 TARGETS=(
   "$CONFIG_DIR/package.json"
   "$CONFIG_DIR/lib/claude_agent.mjs"
-  "$CONFIG_DIR/lib/prompt_guard.mjs"
+  "$CONFIG_DIR/lib/direct_handoff.mjs"
+  "$CONFIG_DIR/lib/opencode_transport.mjs"
   "$CONFIG_DIR/lib/repo_query.mjs"
   "$CONFIG_DIR/lib/route_contract.mjs"
   "$CONFIG_DIR/lib/routing_policy.mjs"
+  "$CONFIG_DIR/tools/repo_query.ts"
+  "$CONFIG_DIR/plugins/llm_router_handoff.ts"
+  "$CONFIG_DIR/providers/claude_agent_provider.mjs"
+  "$CONFIG_DIR/opencode.jsonc"
+)
+RETIRED_TARGETS=(
+  "$CONFIG_DIR/lib/prompt_guard.mjs"
   "$CONFIG_DIR/lib/stage_tools.mjs"
   "$CONFIG_DIR/lib/llm-router-config.json"
   "$CONFIG_DIR/lib/stage_verifier.py"
   "$CONFIG_DIR/tools/llm_route.ts"
   "$CONFIG_DIR/tools/claude_agent.ts"
-  "$CONFIG_DIR/tools/repo_query.ts"
   "$CONFIG_DIR/tools/stage_prepare.ts"
   "$CONFIG_DIR/tools/stage_verify.ts"
   "$CONFIG_DIR/plugins/llm_router_prompt_guard.ts"
-  "$CONFIG_DIR/opencode.jsonc"
-)
-RETIRED_TARGETS=(
   "$CONFIG_DIR/plugins/llm_router_prompt_guard.js"
   "$CONFIG_DIR/tools/claude_opus.ts"
   "$CONFIG_DIR/tools/delegate_task.ts"

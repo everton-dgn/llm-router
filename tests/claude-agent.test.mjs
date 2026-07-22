@@ -1,247 +1,289 @@
 import assert from "node:assert/strict"
-import { execFile } from "node:child_process"
-import { mkdtemp, symlink, writeFile } from "node:fs/promises"
-import { tmpdir } from "node:os"
-import path from "node:path"
+import { EventEmitter } from "node:events"
+import { PassThrough } from "node:stream"
 import test from "node:test"
-import { promisify } from "node:util"
 
 import {
-  DISALLOWED_TOOLS,
-  READ_ONLY_TOOLS,
-  buildClaudeQueryOptions,
+  CLAUDE_SYSTEM_PROMPT,
+  buildClaudeCliInvocation,
   consumeClaudeResult,
-  enforceClaudeReadOnlyTool,
-  isSensitiveClaudePath,
-  mapClaudeEffort,
-  runClaudeAgentQuery,
+  parseClaudeJsonLines,
+  runClaudeCli,
 } from "../opencode/lib/claude_agent.mjs"
 
-const execFileAsync = promisify(execFile)
-
-function fakeQueryFrom(messages, onClose = () => {}) {
-  return () => {
-    const stream = (async function* () {
-      yield* messages
-    })()
-    stream.close = async () => onClose()
-    return stream
+function successResult(result = "done") {
+  return {
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    result,
+    session_id: "session-1",
+    stop_reason: "end_turn",
+    total_cost_usd: 0.01,
+    num_turns: 1,
+    modelUsage: {},
   }
 }
 
-test("maps router effort to Agent SDK effort", () => {
-  assert.equal(mapClaudeEffort("xhigh"), "xhigh")
-  assert.equal(mapClaudeEffort("max"), "max")
-  assert.throws(() => mapClaudeEffort("medium"), /Unsupported Claude effort/)
-})
+function spawnHarness(start, { closeOnKill = true } = {}) {
+  const calls = []
+  const children = []
+  const spawnProcess = (command, args, options) => {
+    const child = new EventEmitter()
+    child.stdin = new PassThrough()
+    child.stdout = new PassThrough()
+    child.stderr = new PassThrough()
+    child.exitCode = null
+    child.signalCode = null
+    child.stdinText = ""
+    child.kills = []
+    child.stdin.on("data", (chunk) => { child.stdinText += chunk.toString("utf8") })
 
-test("builds an isolated read-only request configuration", async () => {
-  const abortController = new AbortController()
-  const options = buildClaudeQueryOptions({
-    stage: "request",
-    effort: "xhigh",
-    cwd: "/tmp/project",
-    abortController,
-  })
-
-  assert.equal(options.abortController, abortController)
-  assert.equal(options.model, "claude-opus-4-8")
-  assert.equal(options.effort, "xhigh")
-  assert.equal(options.permissionMode, "dontAsk")
-  assert.equal(options.persistSession, false)
-  assert.equal(options.strictMcpConfig, true)
-  assert.deepEqual(options.settingSources, [])
-  assert.deepEqual(options.mcpServers, {})
-  assert.deepEqual(options.tools, READ_ONLY_TOOLS)
-  assert.deepEqual(options.allowedTools, READ_ONLY_TOOLS)
-  assert.deepEqual(options.disallowedTools, DISALLOWED_TOOLS)
-
-  assert.equal(options.canUseTool, undefined)
-  assert.equal(typeof options.hooks.PreToolUse[0].hooks[0], "function")
-  assert.deepEqual(await enforceClaudeReadOnlyTool({ tool_name: "Write" }, process.cwd()), {
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: "Tool Write is not allowed in read-only Claude delegation",
-    },
-  })
-})
-
-test("blocks sensitive, external, and escaping symlink reads", async () => {
-  const workspace = await mkdtemp(path.join(tmpdir(), "claude-guard-workspace-"))
-  const external = await mkdtemp(path.join(tmpdir(), "claude-guard-external-"))
-  try {
-    await writeFile(path.join(workspace, "safe.txt"), "safe\n")
-    await writeFile(path.join(workspace, "secret.pem"), "sensitive\n")
-    await symlink(external, path.join(workspace, "escape"))
-    await symlink(path.join(workspace, "secret.pem"), path.join(workspace, "public.txt"))
-
-    const allow = await enforceClaudeReadOnlyTool(
-      { tool_name: "Read", tool_input: { file_path: "safe.txt" } },
-      workspace,
-    )
-    assert.equal(allow.hookSpecificOutput.permissionDecision, "allow")
-
-    for (const filePath of [
-      path.join(external, "outside.txt"),
-      "escape/outside.txt",
-      "public.txt",
-      "secret.pem",
-      ".env",
-      "nested/.env.local",
-      ".git/config",
-      "credentials.json",
-      ".ssh/config",
-      ".aws/credentials",
-      ".kube/config",
-      "service_account-prod.json",
-    ]) {
-      const decision = await enforceClaudeReadOnlyTool(
-        { tool_name: "Read", tool_input: { file_path: filePath } },
-        workspace,
-      )
-      assert.equal(decision.hookSpecificOutput.permissionDecision, "deny", filePath)
+    let closed = false
+    const close = (code = 0, signal = null) => {
+      if (closed) return
+      closed = true
+      child.exitCode = code
+      child.signalCode = signal
+      child.stdout.end()
+      child.stderr.end()
+      child.emit("close", code, signal)
+    }
+    const emit = (message) => child.stdout.write(`${JSON.stringify(message)}\n`)
+    child.kill = (signal) => {
+      child.kills.push(signal)
+      if (closeOnKill) close(null, signal)
+      return true
     }
 
-    assert.equal(isSensitiveClaudePath("nested/private.key"), true)
-    assert.equal(isSensitiveClaudePath("src/public.ts"), false)
-  } finally {
-    await execFileAsync("trash", [workspace, external])
+    calls.push({ command, args, options, child })
+    children.push(child)
+    queueMicrotask(() => start({ child, close, emit }))
+    return child
   }
+
+  return { calls, children, spawnProcess }
+}
+
+test("builds a tool-free Claude CLI invocation with a constant system prompt", () => {
+  const invocation = buildClaudeCliInvocation({
+    cwd: process.cwd(),
+    claudePath: process.execPath,
+    model: "claude-opus-4-8",
+  })
+
+  assert.equal(invocation.command, process.execPath)
+  assert.equal(invocation.options.cwd, process.cwd())
+  assert.equal(invocation.options.shell, false)
+  assert.deepEqual(invocation.options.stdio, ["pipe", "pipe", "pipe"])
+  for (const expected of [
+    ["-p"],
+    ["--input-format", "text"],
+    ["--output-format", "stream-json"],
+    ["--verbose"],
+    ["--include-partial-messages"],
+    ["--model", "claude-opus-4-8"],
+    ["--permission-mode", "dontAsk"],
+    ["--safe-mode"],
+    ["--tools", ""],
+    ["--strict-mcp-config"],
+    ["--mcp-config", '{"mcpServers":{}}'],
+    ["--disable-slash-commands"],
+    ["--no-chrome"],
+    ["--no-session-persistence"],
+  ]) {
+    const index = invocation.args.indexOf(expected[0])
+    assert.notEqual(index, -1, `${expected[0]} is required`)
+    if (expected.length === 2) assert.equal(invocation.args[index + 1], expected[1])
+  }
+  const systemIndex = invocation.args.indexOf("--system-prompt")
+  assert.equal(invocation.args[systemIndex + 1], CLAUDE_SYSTEM_PROMPT)
+  assert.match(CLAUDE_SYSTEM_PROMPT, /You have no tools/)
+  assert.match(CLAUDE_SYSTEM_PROMPT, /no access to files/)
 })
 
-test("uses plan permission mode and rejects unsupported stages", () => {
-  const plan = buildClaudeQueryOptions({
-    stage: "plan",
-    effort: "max",
-    cwd: "/tmp/project",
-    abortController: new AbortController(),
-  })
-  assert.equal(plan.permissionMode, "plan")
-  assert.equal(plan.effort, "max")
+test("rejects invalid CLI invocation parameters", () => {
+  const common = {
+    cwd: process.cwd(),
+    claudePath: process.execPath,
+    model: "claude-opus-4-8",
+  }
+  assert.throws(() => buildClaudeCliInvocation({ ...common, cwd: "" }), /working directory/)
+  assert.throws(() => buildClaudeCliInvocation({ ...common, claudePath: "claude" }), /must be absolute/)
+  assert.throws(() => buildClaudeCliInvocation({ ...common, model: "" }), /model/)
+})
 
-  assert.throws(
-    () => buildClaudeQueryOptions({
-      stage: "execute",
-      effort: "max",
-      cwd: "/tmp/project",
-      abortController: new AbortController(),
-    }),
-    /Unsupported Claude stage/,
+test("parses chunked JSONL and rejects malformed output", async () => {
+  const messages = []
+  const valid = (async function* () {
+    yield Buffer.from('{"type":"system"}\n{"type":"res')
+    yield Buffer.from('ult","subtype":"success","result":"ok"}')
+  })()
+  for await (const message of parseClaudeJsonLines(valid)) messages.push(message)
+  assert.deepEqual(messages, [
+    { type: "system" },
+    { type: "result", subtype: "success", result: "ok" },
+  ])
+
+  await assert.rejects(
+    async () => {
+      for await (const message of parseClaudeJsonLines((async function* () {
+        yield Buffer.from('{"type":bad}\n')
+      })())) void message
+    },
+    /invalid stream JSON on line 1/,
   )
 })
 
-test("returns only the final successful result message", async () => {
+test("validates the final CLI result", async () => {
   const result = await consumeClaudeResult((async function* () {
-    yield { type: "assistant", message: { content: [{ type: "text", text: "intermediate" }] } }
-    yield { type: "result", subtype: "success", is_error: false, result: "  final answer  " }
+    yield { type: "assistant" }
+    yield successResult("  final answer  ")
   })())
+  assert.equal(result.result, "final answer")
+  assert.equal(result.uuid, "session-1")
 
-  assert.equal(result, "final answer")
-})
-
-test("rejects missing, failed, error, and empty result messages", async () => {
   await assert.rejects(
     consumeClaudeResult((async function* () { yield { type: "assistant" } })()),
     /without a result message/,
   )
   await assert.rejects(
     consumeClaudeResult((async function* () {
-      yield { type: "result", subtype: "error_max_turns", errors: ["turn limit"] }
+      yield { type: "result", subtype: "error_during_execution", errors: ["failed"] }
     })()),
-    /error_max_turns: turn limit/,
+    /error_during_execution: failed/,
   )
   await assert.rejects(
-    consumeClaudeResult((async function* () {
-      yield { type: "result", subtype: "success", is_error: true, result: "billing error" }
-    })()),
-    /billing error/,
+    consumeClaudeResult((async function* () { yield { ...successResult("error"), is_error: true } })()),
+    /error result/,
   )
   await assert.rejects(
-    consumeClaudeResult((async function* () {
-      yield { type: "result", subtype: "success", is_error: false, result: "   " }
-    })()),
+    consumeClaudeResult((async function* () { yield successResult("   ") })()),
     /empty response/,
   )
+  await assert.rejects(
+    consumeClaudeResult((async function* () {
+      yield { type: "system", subtype: "init", tools: ["Read"], mcp_servers: [] }
+      yield successResult()
+    })()),
+    /violated the tool-free contract/,
+  )
 })
 
-test("passes the SDK options, returns success, and closes the query", async () => {
-  let received
-  let closed = false
-  const query = ({ prompt, options }) => {
-    received = { prompt, options }
-    return fakeQueryFrom([
-      { type: "result", subtype: "success", is_error: false, result: "done" },
-    ], () => { closed = true })()
-  }
+test("spawns Claude once, writes the prompt to stdin, and streams JSON messages", async () => {
+  const received = []
+  const harness = spawnHarness(({ emit, close }) => {
+    emit({ type: "system", subtype: "init" })
+    emit(successResult())
+    close(0)
+  })
 
-  const result = await runClaudeAgentQuery({
-    query,
-    request: "Plan the migration",
-    stage: "plan",
-    effort: "max",
-    cwd: "/tmp/project",
+  const result = await runClaudeCli({
+    request: "serialized request",
+    cwd: process.cwd(),
+    model: "claude-opus-4-8",
+    claudePath: process.execPath,
     parentSignal: new AbortController().signal,
     timeoutMs: 1_000,
+    onMessage: (message) => received.push(message.type),
+    spawnProcess: harness.spawnProcess,
   })
 
-  assert.equal(result, "done")
-  assert.equal(received.prompt, "Plan the migration")
-  assert.equal(received.options.permissionMode, "plan")
-  assert.equal(closed, true)
+  assert.equal(result.result, "done")
+  assert.deepEqual(received, ["system", "result"])
+  assert.equal(harness.calls.length, 1)
+  assert.equal(harness.calls[0].command, process.execPath)
+  assert.equal(harness.calls[0].child.stdinText, "serialized request")
+  assert.equal(harness.calls[0].child.kills.length, 0)
 })
 
-test("propagates parent abort and closes the query", async () => {
-  const parent = new AbortController()
-  let closed = false
-  const query = ({ options }) => {
-    const stream = (async function* () {
-      await new Promise((resolve, reject) => {
-        options.abortController.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true })
-      })
-    })()
-    stream.close = async () => { closed = true }
-    return stream
-  }
-
-  const pending = runClaudeAgentQuery({
-    query,
-    request: "Discuss the architecture",
-    stage: "request",
-    effort: "xhigh",
-    cwd: "/tmp/project",
-    parentSignal: parent.signal,
-    timeoutMs: 1_000,
+test("reports non-zero exit code and bounded stderr", async () => {
+  const harness = spawnHarness(({ child, close }) => {
+    child.stderr.write("authentication failed")
+    close(2)
   })
-  parent.abort()
-
-  await assert.rejects(pending, /aborted by the OpenCode session/)
-  assert.equal(closed, true)
-})
-
-test("enforces timeout and closes the query", async () => {
-  let closed = false
-  const query = ({ options }) => {
-    const stream = (async function* () {
-      await new Promise((resolve, reject) => {
-        options.abortController.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true })
-      })
-    })()
-    stream.close = async () => { closed = true }
-    return stream
-  }
 
   await assert.rejects(
-    runClaudeAgentQuery({
-      query,
-      request: "Discuss the architecture",
-      stage: "request",
-      effort: "xhigh",
-      cwd: "/tmp/project",
-      parentSignal: new AbortController().signal,
-      timeoutMs: 10,
+    runClaudeCli({
+      request: "request",
+      cwd: process.cwd(),
+      claudePath: process.execPath,
+      timeoutMs: 1_000,
+      spawnProcess: harness.spawnProcess,
     }),
-    /timed out after 10ms/,
+    /exited with code 2: authentication failed/,
   )
-  assert.equal(closed, true)
+})
+
+test("rejects invalid JSON emitted by a zero-exit CLI", async () => {
+  const harness = spawnHarness(({ child, close }) => {
+    child.stdout.write("not-json\n")
+    close(0)
+  })
+
+  await assert.rejects(
+    runClaudeCli({
+      request: "request",
+      cwd: process.cwd(),
+      claudePath: process.execPath,
+      timeoutMs: 1_000,
+      spawnProcess: harness.spawnProcess,
+    }),
+    /invalid stream JSON on line 1/,
+  )
+})
+
+test("propagates parent abort and terminates the CLI", async () => {
+  let markStarted
+  const started = new Promise((resolve) => { markStarted = resolve })
+  const harness = spawnHarness(() => { markStarted() })
+  const parent = new AbortController()
+  const pending = runClaudeCli({
+    request: "request",
+    cwd: process.cwd(),
+    claudePath: process.execPath,
+    parentSignal: parent.signal,
+    timeoutMs: 1_000,
+    spawnProcess: harness.spawnProcess,
+  })
+
+  await started
+  parent.abort()
+  await assert.rejects(pending, /aborted by the OpenCode session/)
+  assert.deepEqual(harness.children[0].kills, ["SIGTERM"])
+})
+
+test("enforces the timeout even when the child ignores termination", async () => {
+  const harness = spawnHarness(() => {}, { closeOnKill: false })
+  const startedAt = Date.now()
+
+  await assert.rejects(
+    runClaudeCli({
+      request: "request",
+      cwd: process.cwd(),
+      claudePath: process.execPath,
+      parentSignal: new AbortController().signal,
+      timeoutMs: 20,
+      spawnProcess: harness.spawnProcess,
+    }),
+    /timed out after 20ms/,
+  )
+
+  assert.deepEqual(harness.children[0].kills, ["SIGTERM"])
+  assert.ok(Date.now() - startedAt < 500, "deadline waited for a non-cooperative child")
+})
+
+test("reports synchronous spawn failures", async () => {
+  await assert.rejects(
+    runClaudeCli({
+      request: "request",
+      cwd: process.cwd(),
+      claudePath: process.execPath,
+      timeoutMs: 1_000,
+      spawnProcess() {
+        throw new Error("spawn denied")
+      },
+    }),
+    /failed to start: spawn denied/,
+  )
 })
