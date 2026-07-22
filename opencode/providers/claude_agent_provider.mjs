@@ -4,8 +4,10 @@ import {
   runClaudeCli,
 } from "../lib/claude_agent.mjs"
 
-export const CLAUDE_MAX_INPUT_BYTES = 128 * 1024
-export const CLAUDE_DEFAULT_MAX_OUTPUT_TOKENS = 32_000
+// This guards transport memory only. OpenCode owns the 200k-token compaction
+// threshold, so the byte ceiling must not truncate ordinary context first.
+export const CLAUDE_MAX_INPUT_BYTES = 2 * 1024 * 1024
+export const CLAUDE_DEFAULT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 
 const TRANSCRIPT_INSTRUCTION = "Continue the conversation in the JSON array below. Reply to the final user message."
 
@@ -140,25 +142,25 @@ function runtimeOptions(callOptions, providerName, defaults) {
   if (typeof claudePath !== "string" || !claudePath.trim()) {
     throw new Error("Claude adapter requires an absolute Claude executable path")
   }
-  const maxOutputTokens = callOptions.maxOutputTokens
-    ?? defaults.maxOutputTokens
-    ?? CLAUDE_DEFAULT_MAX_OUTPUT_TOKENS
-  if (!Number.isInteger(maxOutputTokens) || maxOutputTokens <= 0) {
-    throw new Error("Claude adapter requires maxOutputTokens to be a positive integer")
+  const maxOutputBytes = provided.maxOutputBytes
+    ?? defaults.maxOutputBytes
+    ?? CLAUDE_DEFAULT_MAX_OUTPUT_BYTES
+  if (!Number.isInteger(maxOutputBytes) || maxOutputBytes <= 0) {
+    throw new Error("Claude adapter maxOutputBytes must be a positive integer")
   }
   return {
     cwd,
     claudePath,
     safeConversation: provided.safeConversation,
     timeoutMs: provided.timeoutMs ?? defaults.timeoutMs ?? CLAUDE_TIMEOUT_MS,
-    maxOutputTokens,
+    maxOutputBytes,
   }
 }
 
-function limitedMessageHandler(maxOutputTokens, onMessage) {
+function limitedMessageHandler(maxOutputBytes, onMessage) {
   let streamedBytes = 0
   const exceeded = () => new Error(
-    `Claude output exceeded maxOutputTokens ${maxOutputTokens} using conservative UTF-8 byte accounting`,
+    `Claude output exceeded maxOutputBytes ${maxOutputBytes}`,
   )
 
   return async (message) => {
@@ -170,13 +172,31 @@ function limitedMessageHandler(maxOutputTokens, onMessage) {
       if (event?.type === "content_block_delta" && event.delta?.type === "text_delta") {
         streamedBytes += utf8Bytes(event.delta.text ?? "")
       }
-      if (streamedBytes > maxOutputTokens) throw exceeded()
+      if (streamedBytes > maxOutputBytes) throw exceeded()
     }
     if (message?.type === "result" && message.subtype === "success") {
-      if (utf8Bytes(message.result ?? "") > maxOutputTokens) throw exceeded()
+      if (utf8Bytes(message.result ?? "") > maxOutputBytes) throw exceeded()
     }
     await onMessage?.(message)
   }
+}
+
+function callWarnings(callOptions, safeConversation) {
+  const warnings = []
+  if (callOptions.maxOutputTokens !== undefined) {
+    warnings.push({
+      type: "unsupported",
+      feature: "maxOutputTokens",
+      details: "Claude CLI does not expose an enforceable output-token limit",
+    })
+  }
+  if (safeConversation?.contextMetadata?.truncated === true) {
+    warnings.push({
+      type: "other",
+      message: `Claude context was truncated by ${safeConversation.contextMetadata.droppedMessages} messages before serialization`,
+    })
+  }
+  return warnings
 }
 
 function languageModel(modelID, providerName, defaults) {
@@ -190,7 +210,7 @@ function languageModel(modelID, providerName, defaults) {
       claudePath: runtime.claudePath,
       parentSignal: signal,
       timeoutMs: runtime.timeoutMs,
-      onMessage: limitedMessageHandler(runtime.maxOutputTokens, onMessage),
+      onMessage: limitedMessageHandler(runtime.maxOutputBytes, onMessage),
       spawnProcess: defaults.spawn,
     })
   }
@@ -201,12 +221,16 @@ function languageModel(modelID, providerName, defaults) {
     modelId: modelID,
     supportedUrls: {},
     async doGenerate(callOptions) {
+      const warnings = callWarnings(
+        callOptions,
+        callOptions.providerOptions?.[providerName]?.safeConversation,
+      )
       const result = await execute(callOptions)
       return {
         content: [{ type: "text", text: result.result }],
         finishReason: finishReason(result),
         usage: mapClaudeUsage(result),
-        warnings: [],
+        warnings,
         response: {
           id: result.uuid,
           modelId: modelID,
@@ -219,6 +243,10 @@ function languageModel(modelID, providerName, defaults) {
       if (callOptions.abortSignal?.aborted) abortFromParent()
       else callOptions.abortSignal?.addEventListener("abort", abortFromParent, { once: true })
       let cancelled = false
+      const warnings = callWarnings(
+        callOptions,
+        callOptions.providerOptions?.[providerName]?.safeConversation,
+      )
 
       return {
         stream: new ReadableStream({
@@ -269,7 +297,7 @@ function languageModel(modelID, providerName, defaults) {
             }
 
             try {
-              enqueue({ type: "stream-start", warnings: [] })
+              enqueue({ type: "stream-start", warnings })
               const result = await execute(callOptions, streamAbort.signal, onMessage)
               endAllText()
               if (!emittedText) {

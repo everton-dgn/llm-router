@@ -6,6 +6,17 @@
     "seed": 42,
     "num_predict": 32
   },
+  "checkpoint": {
+    "model": "hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M",
+    "timeout_seconds": 30,
+    "max_request_bytes": 131072,
+    "max_summary_bytes": 32768,
+    "options": {
+      "temperature": 0,
+      "seed": 42,
+      "num_predict": 2048
+    }
+  },
   "routing": [
     {
       "intent": "literal_read_only_no_writing",
@@ -111,9 +122,10 @@
             "opencode/lib/*",
             "opencode/plugins/*",
             "opencode/tools/*",
+            "tests/claude-agent-provider.test.mjs",
             "tests/claude-agent.test.mjs",
             "tests/repo-query.test.mjs",
-            "tests/router-prompt-guard.test.mjs",
+            "tests/router-handoff.test.mjs",
             "tests/opencode-bundle.sh"
           ],
           "commands_all": ["bash", "bun", "node", "uv"]
@@ -131,14 +143,16 @@
             "argv": [
               "node",
               "--test",
+              "tests/router-handoff.test.mjs",
               "tests/claude-agent.test.mjs",
-              "tests/router-prompt-guard.test.mjs",
+              "tests/claude-agent-provider.test.mjs",
               "tests/repo-query.test.mjs"
             ],
             "cwd": "{project_root}",
             "untrusted_if_changed": [
+              "tests/router-handoff.test.mjs",
               "tests/claude-agent.test.mjs",
-              "tests/router-prompt-guard.test.mjs",
+              "tests/claude-agent-provider.test.mjs",
               "tests/repo-query.test.mjs"
             ],
             "timeout_seconds": 180

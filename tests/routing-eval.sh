@@ -111,3 +111,22 @@ done
 accuracy=$((100 * correct / total))
 printf 'roteamento: %d/%d (%d%%), minimo=%d%%\n' "$correct" "$total" "$accuracy" "$MIN_ACCURACY"
 (( accuracy >= MIN_ACCURACY )) || exit 1
+
+checkpoint_input='{"schema_version":1,"session_id":"eval-session","source":{"first_message_id":"checkpoint:old","last_message_id":"user-2","previous_compaction_id":"compaction-old","selected_message_count":4},"prior_compaction_ids":["compaction-old"],"messages":[{"role":"assistant","content":"Previous verified checkpoint. Fato anterior: a porta OTLP é 4317. Restrição: não usar serviço remoto."},{"role":"user","content":"Nova decisão: Manual permanece fixo."},{"role":"assistant","content":"Decisão confirmada."},{"role":"user","content":"Pendência: validar compactação."}]}'
+checkpoint_output="$($ROUTE_COMMAND --summarize --json <<<"$checkpoint_input")"
+jq -e '
+  .schema_version == 1
+  and (.summary | type == "string" and length > 0)
+  and (keys | sort == ["schema_version", "summary"])
+' <<<"$checkpoint_output" >/dev/null || {
+  printf 'erro: contrato inválido do checkpoint local: %s\n' "$checkpoint_output" >&2
+  exit 1
+}
+checkpoint_summary=$(jq -r '.summary' <<<"$checkpoint_output")
+for retained in '4317' 'manual' 'compact' 'remot'; do
+  grep -Fi "$retained" <<<"$checkpoint_summary" >/dev/null || {
+    printf 'erro: checkpoint local perdeu o marcador %s: %s\n' "$retained" "$checkpoint_summary" >&2
+    exit 1
+  }
+done
+printf 'checkpoint: OK\n'
