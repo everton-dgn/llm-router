@@ -1,6 +1,4 @@
 import assert from "node:assert/strict"
-import { EventEmitter } from "node:events"
-import { PassThrough } from "node:stream"
 import test from "node:test"
 
 import {
@@ -15,6 +13,7 @@ import {
 import {
   buildSafeClaudeConversation,
   CLAUDE_SAFE_CONTEXT_MAX_BYTES,
+  projectLegacyClaudeContext,
 } from "../opencode/lib/claude_context.mjs"
 import {
   CLAUDE_DEFAULT_MAX_OUTPUT_BYTES,
@@ -45,45 +44,65 @@ function successResult(result = "final answer") {
   }
 }
 
-function spawnHarness(start) {
+function queryHarness(start) {
   const calls = []
-  const spawn = (command, args, options) => {
-    const child = new EventEmitter()
-    child.stdin = new PassThrough()
-    child.stdout = new PassThrough()
-    child.stderr = new PassThrough()
-    child.exitCode = null
-    child.signalCode = null
-    child.stdinText = ""
-    child.kills = []
-    child.stdin.on("data", (chunk) => { child.stdinText += chunk.toString("utf8") })
-
-    let closed = false
-    const close = (code = 0, signal = null) => {
-      if (closed) return
-      closed = true
-      child.exitCode = code
-      child.signalCode = signal
-      child.stdout.end()
-      child.stderr.end()
-      child.emit("close", code, signal)
+  const query = (parameters) => {
+    const queue = []
+    const waiters = []
+    let settled = false
+    let failure
+    const flush = () => {
+      while (waiters.length > 0 && queue.length > 0) {
+        waiters.shift().resolve({ done: false, value: queue.shift() })
+      }
+      if (!settled || queue.length > 0) return
+      while (waiters.length > 0) {
+        const waiter = waiters.shift()
+        if (failure) waiter.reject(failure)
+        else waiter.resolve({ done: true, value: undefined })
+      }
     }
-    const emit = (message) => child.stdout.write(`${JSON.stringify(message)}\n`)
-    child.kill = (signal) => {
-      child.kills.push(signal)
-      close(null, signal)
-      return true
+    const emit = (message) => {
+      if (settled) return
+      queue.push(message)
+      flush()
     }
-
-    calls.push({ command, args, options, child })
-    queueMicrotask(() => start({ child, close, emit }))
-    return child
+    const close = () => {
+      settled = true
+      flush()
+    }
+    const fail = (error) => {
+      failure = error
+      settled = true
+      flush()
+    }
+    const iterator = {
+      [Symbol.asyncIterator]() { return this },
+      next() {
+        if (queue.length > 0) return Promise.resolve({ done: false, value: queue.shift() })
+        if (settled) {
+          return failure
+            ? Promise.reject(failure)
+            : Promise.resolve({ done: true, value: undefined })
+        }
+        return new Promise((resolve, reject) => waiters.push({ resolve, reject }))
+      },
+      return() {
+        close()
+        return Promise.resolve({ done: true, value: undefined })
+      },
+      close,
+      get closed() { return settled },
+    }
+    calls.push({ ...parameters, iterator })
+    queueMicrotask(() => Promise.resolve(start({ close, emit, fail })).catch(fail))
+    return iterator
   }
-  return { calls, spawn }
+  return { calls, query }
 }
 
 function successfulHarness(result = successResult()) {
-  return spawnHarness(({ emit, close }) => {
+  return queryHarness(({ emit, close }) => {
     emit({ type: "assistant" })
     emit(result)
     close(0)
@@ -126,6 +145,111 @@ test("unwraps the OpenCode 1.18.4 v2 context body inside the SDK response envelo
   const messages = [{ id: "user-1", type: "user", text: "pedido", time: { created: 1 } }]
   assert.equal(unwrapOpenCodeV2Context({ data: { data: messages } }), messages)
   assert.throws(() => unwrapOpenCodeV2Context({ data: messages }), /invalid session context/)
+})
+
+test("projects the OpenCode 1.18.4 legacy message API into safe Claude context", () => {
+  const messages = projectLegacyClaudeContext({
+    data: [
+      {
+        info: { id: "user-1", role: "user", time: { created: 1 } },
+        parts: [
+          { type: "text", text: "pedido " },
+          { type: "text", text: "original" },
+          { type: "file", url: "data:text/plain,PRIVATE" },
+          { type: "agent", name: "private-agent" },
+          { type: "text", text: "SYNTHETIC", synthetic: true },
+        ],
+      },
+      {
+        info: { id: "assistant-1", role: "assistant", time: { created: 2 } },
+        parts: [
+          { type: "reasoning", text: "PRIVATE_REASONING" },
+          { type: "text", text: "resposta" },
+          { type: "tool", state: { output: "PRIVATE_TOOL_OUTPUT" } },
+        ],
+      },
+    ],
+  })
+
+  assert.deepEqual(messages, [
+    {
+      id: "user-1",
+      type: "user",
+      text: "pedido original",
+      files: [{ type: "file", url: "data:text/plain,PRIVATE" }],
+      agents: [{ type: "agent", name: "private-agent" }],
+      time: { created: 1 },
+    },
+    {
+      id: "assistant-1",
+      type: "assistant",
+      content: [{ type: "text", text: "resposta" }],
+      error: undefined,
+      time: { created: 2 },
+    },
+  ])
+  assert.throws(
+    () => buildSafeClaudeConversation(messages, "user-1"),
+    /does not accept file attachments/,
+  )
+})
+
+test("projects only the active legacy tail after the latest compaction", () => {
+  const messages = projectLegacyClaudeContext({
+    data: [
+      {
+        info: { id: "user-before", role: "user", time: { created: 1 } },
+        parts: [{ type: "text", text: "PRE_COMPACTION_SECRET" }],
+      },
+      {
+        info: { id: "assistant-before", role: "assistant", parentID: "user-before", time: { created: 2 } },
+        parts: [{ type: "text", text: "OLD_ASSISTANT_SECRET" }],
+      },
+      {
+        info: { id: "compaction-user", role: "user", time: { created: 3 } },
+        parts: [{ type: "compaction", id: "compaction-1", auto: true }],
+      },
+      {
+        info: { id: "compaction-summary", role: "assistant", parentID: "compaction-user", time: { created: 4 } },
+        parts: [{ type: "text", text: "UNTRUSTED_COMPACTION_SUMMARY" }],
+      },
+      {
+        info: { id: "user-current", role: "user", time: { created: 5 } },
+        parts: [
+          { type: "text", text: "IGNORED_SECRET", ignored: true },
+          { type: "text", text: "pedido atual" },
+        ],
+      },
+    ],
+  })
+
+  assert.deepEqual(messages, [
+    {
+      id: "compaction-1",
+      type: "compaction",
+      time: { created: 3 },
+    },
+    {
+      id: "user-current",
+      type: "user",
+      text: "pedido atual",
+      files: [],
+      agents: [],
+      time: { created: 5 },
+    },
+  ])
+  const conversation = buildSafeClaudeConversation(messages, "user-current")
+  assert.deepEqual(conversation, [{ role: "user", content: "pedido atual" }])
+  assert.equal(JSON.stringify(conversation).includes("SECRET"), false)
+  assert.equal(JSON.stringify(conversation).includes("SUMMARY"), false)
+})
+
+test("fails closed on malformed OpenCode legacy messages", () => {
+  assert.throws(() => projectLegacyClaudeContext({ data: {} }), /invalid session messages/)
+  assert.throws(
+    () => projectLegacyClaudeContext({ data: [{ info: { id: "user-1", role: "user" }, parts: [{ type: "text" }] }] }),
+    /invalid user text/,
+  )
 })
 
 test("uses only the current user message without plugin-approved context", () => {
@@ -777,12 +901,12 @@ test("fails closed on unsafe parts in the current user message", () => {
   )
 })
 
-test("rejects oversized input before spawning Claude", async () => {
-  let spawnCalls = 0
+test("rejects oversized input before calling the Agent SDK", async () => {
+  let queryCalls = 0
   const model = createClaudeAgent({
-    spawn: () => {
-      spawnCalls += 1
-      throw new Error("spawn must not be called")
+    query: () => {
+      queryCalls += 1
+      throw new Error("query must not be called")
     },
   }).languageModel("claude-opus-4-8")
   const oversized = [{
@@ -794,7 +918,7 @@ test("rejects oversized input before spawning Claude", async () => {
     model.doGenerate(callOptions(oversized)),
     new RegExp(`exceeds the ${CLAUDE_MAX_INPUT_BYTES}-byte input limit`),
   )
-  assert.equal(spawnCalls, 0)
+  assert.equal(queryCalls, 0)
 })
 
 test("applies the input limit to the complete visible transcript", () => {
@@ -813,7 +937,7 @@ test("applies the input limit to the complete visible transcript", () => {
 
 test("reports maxOutputTokens as unsupported without treating UTF-8 bytes as tokens", async () => {
   const harness = successfulHarness(successResult("ação concluída"))
-  const model = createClaudeAgent({ spawn: harness.spawn }).languageModel("claude-opus-4-8")
+  const model = createClaudeAgent({ query: harness.query }).languageModel("claude-opus-4-8")
   const options = callOptions(textPrompt)
   options.maxOutputTokens = 3
 
@@ -822,13 +946,13 @@ test("reports maxOutputTokens as unsupported without treating UTF-8 bytes as tok
   assert.deepEqual(generated.warnings, [{
     type: "unsupported",
     feature: "maxOutputTokens",
-    details: "Claude CLI does not expose an enforceable output-token limit",
+    details: "Claude Agent SDK does not expose an enforceable output-token limit",
   }])
-  assert.deepEqual(harness.calls[0].child.kills, [])
+  assert.equal(harness.calls[0].iterator.closed, true)
 })
 
 test("stops progressive output above the independent maxOutputBytes guard", async () => {
-  const harness = spawnHarness(({ emit }) => {
+  const harness = queryHarness(({ emit }) => {
     emit({
       type: "stream_event",
       parent_tool_use_id: null,
@@ -845,7 +969,7 @@ test("stops progressive output above the independent maxOutputBytes guard", asyn
       event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "78901" } },
     })
   })
-  const model = createClaudeAgent({ spawn: harness.spawn }).languageModel("claude-opus-4-8")
+  const model = createClaudeAgent({ query: harness.query }).languageModel("claude-opus-4-8")
   const options = callOptions(textPrompt)
   options.providerOptions["claude-agent"].maxOutputBytes = 10
   const response = await model.doStream(options)
@@ -861,18 +985,18 @@ test("stops progressive output above the independent maxOutputBytes guard", asyn
   ])
   assert.equal(parts[2].delta, "123456")
   assert.match(parts.at(-1).error.message, /exceeded maxOutputBytes 10/)
-  assert.deepEqual(harness.calls[0].child.kills, ["SIGTERM"])
+  assert.equal(harness.calls[0].iterator.closed, true)
   assert.equal(parts.filter((part) => ["finish", "error"].includes(part.type)).length, 1)
 })
 
 test("rejects a non-streamed final result above maxOutputBytes", async () => {
   const harness = successfulHarness(successResult("á".repeat(6)))
-  const model = createClaudeAgent({ spawn: harness.spawn }).languageModel("claude-opus-4-8")
+  const model = createClaudeAgent({ query: harness.query }).languageModel("claude-opus-4-8")
   const options = callOptions(textPrompt)
   options.providerOptions["claude-agent"].maxOutputBytes = 10
 
   await assert.rejects(model.doGenerate(options), /exceeded maxOutputBytes 10/)
-  assert.deepEqual(harness.calls[0].child.kills, [])
+  assert.equal(harness.calls[0].iterator.closed, true)
 })
 
 test("uses a bounded byte guard by default and validates explicit maxOutputBytes", async () => {
@@ -880,7 +1004,7 @@ test("uses a bounded byte guard by default and validates explicit maxOutputBytes
   assert.equal(CLAUDE_DEFAULT_MAX_OUTPUT_BYTES > CLAUDE_MAX_INPUT_BYTES, true)
 
   const harness = successfulHarness()
-  const model = createClaudeAgent({ spawn: harness.spawn }).languageModel("claude-opus-4-8")
+  const model = createClaudeAgent({ query: harness.query }).languageModel("claude-opus-4-8")
   const options = callOptions(textPrompt)
   options.providerOptions["claude-agent"].maxOutputBytes = 0
   await assert.rejects(model.doGenerate(options), /maxOutputBytes must be a positive integer/)
@@ -904,7 +1028,7 @@ test("surfaces projected-context truncation as a provider warning", async () => 
   const options = callOptions(prompt)
   options.providerOptions["claude-agent"].safeConversation = conversation
   const harness = successfulHarness()
-  const model = createClaudeAgent({ spawn: harness.spawn }).languageModel("claude-opus-4-8")
+  const model = createClaudeAgent({ query: harness.query }).languageModel("claude-opus-4-8")
 
   const generated = await model.doGenerate(options)
   assert.deepEqual(generated.warnings, [{
@@ -918,16 +1042,16 @@ test("uses the official Claude stop reason and usage when token output cannot be
   result.stop_reason = "max_tokens"
   result.modelUsage["claude-opus-4-8"].outputTokens = 321
   const harness = successfulHarness(result)
-  const model = createClaudeAgent({ spawn: harness.spawn }).languageModel("claude-opus-4-8")
+  const model = createClaudeAgent({ query: harness.query }).languageModel("claude-opus-4-8")
 
   const generated = await model.doGenerate(callOptions(textPrompt))
   assert.deepEqual(generated.finishReason, { unified: "length", raw: "max_tokens" })
   assert.equal(generated.usage.outputTokens.total, 321)
 })
 
-test("implements LanguageModelV3 generation through the Claude CLI", async () => {
+test("implements LanguageModelV3 generation through the Claude Agent SDK", async () => {
   const harness = successfulHarness()
-  const provider = createClaudeAgent({ name: "claude-agent", spawn: harness.spawn })
+  const provider = createClaudeAgent({ name: "claude-agent", query: harness.query })
   const model = provider.languageModel("claude-opus-4-8")
 
   assert.equal(model.specificationVersion, "v3")
@@ -944,22 +1068,24 @@ test("implements LanguageModelV3 generation through the Claude CLI", async () =>
 
   const received = harness.calls[0]
   assert.equal(received.options.cwd, process.cwd())
-  assert.match(received.child.stdinText, /^Continue the conversation in the JSON array below\./)
-  assert.equal(received.child.stdinText.includes("pedido original"), true)
-  assert.equal(received.child.stdinText.includes("contexto anterior"), true)
-  assert.equal(received.child.stdinText.includes("continue"), true)
-  assert.equal(received.args[received.args.indexOf("--tools") + 1], "")
-  assert.equal(received.args.includes("external_tool"), false)
-  assert.equal(received.args.join("\n").includes("Stay read-only."), false)
-  assert.equal(received.child.stdinText.includes("Stay read-only."), false)
+  assert.match(received.prompt, /^Continue the conversation in the JSON array below\./)
+  assert.equal(received.prompt.includes("pedido original"), true)
+  assert.equal(received.prompt.includes("contexto anterior"), true)
+  assert.equal(received.prompt.includes("continue"), true)
+  assert.deepEqual(received.options.tools, { type: "preset", preset: "claude_code" })
+  assert.equal(received.options.permissionMode, "auto")
+  assert.equal(received.options.pathToClaudeCodeExecutable, process.execPath)
+  assert.equal(JSON.stringify(received.options).includes("external_tool"), false)
+  assert.equal(received.options.systemPrompt.append.includes("Stay read-only."), false)
+  assert.equal(received.prompt.includes("Stay read-only."), false)
 })
 
-test("streams CLI text deltas before the final result supplies usage", async () => {
+test("streams Agent SDK text deltas before the final result supplies usage", async () => {
   let releaseResult
   const resultGate = new Promise((resolve) => { releaseResult = resolve })
   let markDelta
   const deltaWritten = new Promise((resolve) => { markDelta = resolve })
-  const harness = spawnHarness(async ({ emit, close }) => {
+  const harness = queryHarness(async ({ emit, close }) => {
     emit({
       type: "stream_event",
       parent_tool_use_id: null,
@@ -980,7 +1106,7 @@ test("streams CLI text deltas before the final result supplies usage", async () 
     emit(successResult("live delta"))
     close(0)
   })
-  const model = createClaudeAgent({ spawn: harness.spawn }).languageModel("claude-opus-4-8")
+  const model = createClaudeAgent({ query: harness.query }).languageModel("claude-opus-4-8")
   const response = await model.doStream(callOptions(textPrompt))
   const reader = response.stream.getReader()
 
@@ -1010,25 +1136,24 @@ test("streams CLI text deltas before the final result supplies usage", async () 
   assert.equal(parts.filter((part) => ["finish", "error"].includes(part.type)).length, 1)
 })
 
-test("requires cwd and exposes CLI process failures as stream errors", async () => {
+test("requires cwd and exposes Agent SDK failures as stream errors", async () => {
   const harness = successfulHarness()
-  const model = createClaudeAgent({ spawn: harness.spawn, claudePath: process.execPath }).languageModel("claude-opus-4-8")
+  const model = createClaudeAgent({ query: harness.query, claudePath: process.execPath }).languageModel("claude-opus-4-8")
   await assert.rejects(
     model.doGenerate({ prompt: textPrompt, providerOptions: {} }),
     /requires a workspace cwd/,
   )
   assert.equal(harness.calls.length, 0)
 
-  const failed = spawnHarness(({ child, close }) => {
-    child.stderr.write("authentication failed")
-    close(3)
+  const failed = queryHarness(({ fail }) => {
+    fail(new Error("authentication failed"))
   })
-  const failedModel = createClaudeAgent({ spawn: failed.spawn }).languageModel("claude-opus-4-8")
+  const failedModel = createClaudeAgent({ query: failed.query }).languageModel("claude-opus-4-8")
   const response = await failedModel.doStream(callOptions(textPrompt))
   const parts = []
   for await (const part of response.stream) parts.push(part)
   assert.deepEqual(parts.map((part) => part.type), ["stream-start", "error"])
-  assert.match(parts[1].error.message, /exited with code 3: authentication failed/)
+  assert.match(parts[1].error.message, /authentication failed/)
 })
 
 test("maps aggregate model usage to the AI SDK contract", () => {

@@ -111,13 +111,13 @@ export const routeCapabilities = Object.freeze({
     canUseExternalTools: true,
   }),
   claude: Object.freeze({
-    canExecuteCommands: false,
+    canExecuteCommands: true,
     canHandleNonLiteralText: true,
-    canMutateProject: false,
-    canReadRepository: false,
+    canMutateProject: true,
+    canReadRepository: true,
     canUseAgentMentions: false,
     canUseAttachments: false,
-    canUseExternalTools: false,
+    canUseExternalTools: true,
   }),
   codex: Object.freeze({
     canExecuteCommands: true,

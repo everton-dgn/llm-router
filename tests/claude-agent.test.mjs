@@ -1,14 +1,12 @@
 import assert from "node:assert/strict"
-import { EventEmitter } from "node:events"
-import { PassThrough } from "node:stream"
 import test from "node:test"
 
 import {
   CLAUDE_SYSTEM_PROMPT,
-  buildClaudeCliInvocation,
+  buildClaudeAgentOptions,
+  buildClaudeEnvironment,
   consumeClaudeResult,
-  parseClaudeJsonLines,
-  runClaudeCli,
+  runClaudeAgent,
 } from "../opencode/lib/claude_agent.mjs"
 
 function successResult(result = "done") {
@@ -25,87 +23,52 @@ function successResult(result = "done") {
   }
 }
 
-function spawnHarness(start, { closeOnKill = true } = {}) {
+function queryHarness(factory) {
   const calls = []
-  const children = []
-  const spawnProcess = (command, args, options) => {
-    const child = new EventEmitter()
-    child.stdin = new PassThrough()
-    child.stdout = new PassThrough()
-    child.stderr = new PassThrough()
-    child.exitCode = null
-    child.signalCode = null
-    child.stdinText = ""
-    child.kills = []
-    child.stdin.on("data", (chunk) => { child.stdinText += chunk.toString("utf8") })
-
+  const queries = []
+  const query = (parameters) => {
+    calls.push(parameters)
+    const iterator = factory(parameters)
     let closed = false
-    const close = (code = 0, signal = null) => {
-      if (closed) return
+    iterator.close = () => {
       closed = true
-      child.exitCode = code
-      child.signalCode = signal
-      child.stdout.end()
-      child.stderr.end()
-      child.emit("close", code, signal)
+      iterator.return?.()
     }
-    const emit = (message) => child.stdout.write(`${JSON.stringify(message)}\n`)
-    child.kill = (signal) => {
-      child.kills.push(signal)
-      const shouldClose = typeof closeOnKill === "function"
-        ? closeOnKill(signal)
-        : closeOnKill
-      if (shouldClose) close(null, signal)
-      return true
-    }
-
-    calls.push({ command, args, options, child })
-    children.push(child)
-    queueMicrotask(() => start({ child, close, emit }))
-    return child
+    Object.defineProperty(iterator, "closed", { get: () => closed })
+    queries.push(iterator)
+    return iterator
   }
-
-  return { calls, children, spawnProcess }
+  return { calls, queries, query }
 }
 
-test("builds a tool-free Claude CLI invocation with a constant system prompt", () => {
-  const invocation = buildClaudeCliInvocation({
+test("builds Agent SDK options with the local Claude executable and complete tools", () => {
+  const abortController = new AbortController()
+  const options = buildClaudeAgentOptions({
+    abortController,
     cwd: process.cwd(),
     claudePath: process.execPath,
     model: "claude-opus-4-8",
   })
 
-  assert.equal(invocation.command, process.execPath)
-  assert.equal(invocation.options.cwd, process.cwd())
-  assert.equal(invocation.options.shell, false)
-  assert.deepEqual(invocation.options.stdio, ["pipe", "pipe", "pipe"])
-  for (const expected of [
-    ["-p"],
-    ["--input-format", "text"],
-    ["--output-format", "stream-json"],
-    ["--verbose"],
-    ["--include-partial-messages"],
-    ["--model", "claude-opus-4-8"],
-    ["--permission-mode", "dontAsk"],
-    ["--safe-mode"],
-    ["--tools", ""],
-    ["--strict-mcp-config"],
-    ["--mcp-config", '{"mcpServers":{}}'],
-    ["--disable-slash-commands"],
-    ["--no-chrome"],
-    ["--no-session-persistence"],
-  ]) {
-    const index = invocation.args.indexOf(expected[0])
-    assert.notEqual(index, -1, `${expected[0]} is required`)
-    if (expected.length === 2) assert.equal(invocation.args[index + 1], expected[1])
-  }
-  const systemIndex = invocation.args.indexOf("--system-prompt")
-  assert.equal(invocation.args[systemIndex + 1], CLAUDE_SYSTEM_PROMPT)
-  assert.match(CLAUDE_SYSTEM_PROMPT, /You have no tools/)
-  assert.match(CLAUDE_SYSTEM_PROMPT, /no access to files/)
-  assert.match(CLAUDE_SYSTEM_PROMPT, /no implicit Claude Code session state/)
-  assert.match(CLAUDE_SYSTEM_PROMPT, /sanitized transcript supplied on stdin/)
-  assert.doesNotMatch(CLAUDE_SYSTEM_PROMPT, /no access to .*session history/)
+  assert.equal(options.abortController, abortController)
+  assert.equal(options.cwd, process.cwd())
+  assert.equal(options.model, "claude-opus-4-8")
+  assert.equal(options.pathToClaudeCodeExecutable, process.execPath)
+  assert.deepEqual(options.tools, { type: "preset", preset: "claude_code" })
+  assert.equal(options.permissionMode, "auto")
+  assert.equal(options.persistSession, false)
+  assert.equal(options.includePartialMessages, true)
+  assert.deepEqual(options.settingSources, [])
+  assert.deepEqual(options.mcpServers, {})
+  assert.equal(options.strictMcpConfig, true)
+  assert.deepEqual(options.extraArgs, { "no-chrome": null, "safe-mode": null })
+  assert.deepEqual(options.systemPrompt, {
+    type: "preset",
+    preset: "claude_code",
+    append: CLAUDE_SYSTEM_PROMPT,
+  })
+  assert.match(CLAUDE_SYSTEM_PROMPT, /Use Claude Code built-in tools/)
+  assert.doesNotMatch(CLAUDE_SYSTEM_PROMPT, /no tools|Stay read-only/)
 })
 
 test("passes only required runtime, Claude authentication, proxy, and TLS variables", () => {
@@ -128,13 +91,9 @@ test("passes only required runtime, Claude authentication, proxy, and TLS variab
     UNRELATED_SECRET: "must-not-reach-claude",
   }
 
-  const invocation = buildClaudeCliInvocation({
-    cwd: process.cwd(),
-    claudePath: process.execPath,
-    parentEnv,
-  })
+  const env = buildClaudeEnvironment(parentEnv)
 
-  assert.deepEqual(invocation.options.env, {
+  assert.deepEqual(env, {
     HOME: parentEnv.HOME,
     PATH: parentEnv.PATH,
     TMPDIR: parentEnv.TMPDIR,
@@ -149,70 +108,49 @@ test("passes only required runtime, Claude authentication, proxy, and TLS variab
     SSL_CERT_FILE: parentEnv.SSL_CERT_FILE,
     NODE_EXTRA_CA_CERTS: parentEnv.NODE_EXTRA_CA_CERTS,
   })
-  assert.equal("ZAI_API_KEY" in invocation.options.env, false)
-  assert.equal("MINIMAX_API_KEY" in invocation.options.env, false)
-  assert.equal("UNRELATED_SECRET" in invocation.options.env, false)
+  assert.equal("ZAI_API_KEY" in env, false)
+  assert.equal("MINIMAX_API_KEY" in env, false)
+  assert.equal("UNRELATED_SECRET" in env, false)
 })
 
 test("filters exported shell functions even when their names are allowed", () => {
-  const invocation = buildClaudeCliInvocation({
-    cwd: process.cwd(),
-    claudePath: process.execPath,
-    parentEnv: {
-      HOME: "/safe/home",
-      PATH: "/safe/bin",
-      CLAUDE_CODE_OAUTH_TOKEN: "  () { echo exposed; }",
-      ANTHROPIC_CUSTOM_AUTH: "() { echo exposed; }",
-      "BASH_FUNC_helper%%": "() { echo exposed; }",
-    },
-  })
-
-  assert.deepEqual(invocation.options.env, {
+  assert.deepEqual(buildClaudeEnvironment({
+    HOME: "/safe/home",
+    PATH: "/safe/bin",
+    CLAUDE_CODE_OAUTH_TOKEN: "  () { echo exposed; }",
+    ANTHROPIC_CUSTOM_AUTH: "() { echo exposed; }",
+    "BASH_FUNC_helper%%": "() { echo exposed; }",
+  }), {
     HOME: "/safe/home",
     PATH: "/safe/bin",
   })
 })
 
-test("rejects invalid CLI invocation parameters", () => {
+test("rejects invalid Agent SDK options", () => {
   const common = {
+    abortController: new AbortController(),
     cwd: process.cwd(),
     claudePath: process.execPath,
     model: "claude-opus-4-8",
   }
-  assert.throws(() => buildClaudeCliInvocation({ ...common, cwd: "" }), /working directory/)
-  assert.throws(() => buildClaudeCliInvocation({ ...common, claudePath: "claude" }), /must be absolute/)
-  assert.throws(() => buildClaudeCliInvocation({ ...common, model: "" }), /model/)
+  assert.throws(() => buildClaudeAgentOptions({ ...common, cwd: "" }), /working directory/)
+  assert.throws(() => buildClaudeAgentOptions({ ...common, claudePath: "claude" }), /must be absolute/)
+  assert.throws(() => buildClaudeAgentOptions({ ...common, model: "" }), /model/)
+  assert.throws(() => buildClaudeAgentOptions({ ...common, abortController: undefined }), /abort controller/)
+  assert.throws(() => buildClaudeEnvironment(null), /parent environment/)
 })
 
-test("parses chunked JSONL and rejects malformed output", async () => {
-  const messages = []
-  const valid = (async function* () {
-    yield Buffer.from('{"type":"system"}\n{"type":"res')
-    yield Buffer.from('ult","subtype":"success","result":"ok"}')
-  })()
-  for await (const message of parseClaudeJsonLines(valid)) messages.push(message)
-  assert.deepEqual(messages, [
-    { type: "system" },
-    { type: "result", subtype: "success", result: "ok" },
-  ])
-
-  await assert.rejects(
-    async () => {
-      for await (const message of parseClaudeJsonLines((async function* () {
-        yield Buffer.from('{"type":bad}\n')
-      })())) void message
-    },
-    /invalid stream JSON on line 1/,
-  )
-})
-
-test("validates the final CLI result", async () => {
+test("accepts SDK tool events and validates the final result", async () => {
+  const received = []
   const result = await consumeClaudeResult((async function* () {
-    yield { type: "assistant" }
+    yield { type: "system", subtype: "init", tools: ["Read", "Edit", "Bash"] }
+    yield { type: "assistant", message: { content: [{ type: "tool_use", name: "Read" }] } }
     yield successResult("  final answer  ")
-  })())
+  })(), { onMessage: (message) => received.push(message.type) })
+
   assert.equal(result.result, "final answer")
   assert.equal(result.uuid, "session-1")
+  assert.deepEqual(received, ["system", "assistant", "result"])
 
   await assert.rejects(
     consumeClaudeResult((async function* () { yield { type: "assistant" } })()),
@@ -232,24 +170,17 @@ test("validates the final CLI result", async () => {
     consumeClaudeResult((async function* () { yield successResult("   ") })()),
     /empty response/,
   )
-  await assert.rejects(
-    consumeClaudeResult((async function* () {
-      yield { type: "system", subtype: "init", tools: ["Read"], mcp_servers: [] }
-      yield successResult()
-    })()),
-    /violated the tool-free contract/,
-  )
 })
 
-test("spawns Claude once, writes the prompt to stdin, and streams JSON messages", async () => {
+test("runs query once without closing the exhausted SDK query again", async () => {
   const received = []
-  const harness = spawnHarness(({ emit, close }) => {
-    emit({ type: "system", subtype: "init" })
-    emit(successResult())
-    close(0)
+  const harness = queryHarness(async function* () {
+    yield { type: "system", subtype: "init", tools: ["Read", "Edit", "Bash"] }
+    yield successResult()
   })
 
-  const result = await runClaudeCli({
+  const result = await runClaudeAgent({
+    query: harness.query,
     request: "serialized request",
     cwd: process.cwd(),
     model: "claude-opus-4-8",
@@ -257,129 +188,92 @@ test("spawns Claude once, writes the prompt to stdin, and streams JSON messages"
     parentSignal: new AbortController().signal,
     timeoutMs: 1_000,
     onMessage: (message) => received.push(message.type),
-    spawnProcess: harness.spawnProcess,
   })
 
   assert.equal(result.result, "done")
   assert.deepEqual(received, ["system", "result"])
   assert.equal(harness.calls.length, 1)
-  assert.equal(harness.calls[0].command, process.execPath)
-  assert.equal(harness.calls[0].child.stdinText, "serialized request")
-  assert.equal(harness.calls[0].child.kills.length, 0)
+  assert.equal(harness.calls[0].prompt, "serialized request")
+  assert.equal(harness.calls[0].options.cwd, process.cwd())
+  assert.equal(harness.calls[0].options.pathToClaudeCodeExecutable, process.execPath)
+  assert.equal(harness.queries[0].closed, false)
 })
 
-test("reports non-zero exit code and bounded stderr", async () => {
-  const harness = spawnHarness(({ child, close }) => {
-    child.stderr.write("authentication failed")
-    close(2)
+test("propagates parent abort and closes a non-cooperative SDK query", async () => {
+  let started
+  const entered = new Promise((resolve) => { started = resolve })
+  const harness = queryHarness(async function* () {
+    started()
+    await new Promise(() => {})
   })
-
-  await assert.rejects(
-    runClaudeCli({
-      request: "request",
-      cwd: process.cwd(),
-      claudePath: process.execPath,
-      timeoutMs: 1_000,
-      spawnProcess: harness.spawnProcess,
-    }),
-    /exited with code 2: authentication failed/,
-  )
-})
-
-test("rejects invalid JSON emitted by a zero-exit CLI", async () => {
-  const harness = spawnHarness(({ child, close }) => {
-    child.stdout.write("not-json\n")
-    close(0)
-  })
-
-  await assert.rejects(
-    runClaudeCli({
-      request: "request",
-      cwd: process.cwd(),
-      claudePath: process.execPath,
-      timeoutMs: 1_000,
-      spawnProcess: harness.spawnProcess,
-    }),
-    /invalid stream JSON on line 1/,
-  )
-})
-
-test("propagates parent abort and terminates the CLI", async () => {
-  let markStarted
-  const started = new Promise((resolve) => { markStarted = resolve })
-  const harness = spawnHarness(() => { markStarted() })
   const parent = new AbortController()
-  const pending = runClaudeCli({
+  const pending = runClaudeAgent({
+    query: harness.query,
     request: "request",
     cwd: process.cwd(),
     claudePath: process.execPath,
     parentSignal: parent.signal,
     timeoutMs: 1_000,
-    spawnProcess: harness.spawnProcess,
   })
 
-  await started
-  parent.abort()
+  await entered
+  parent.abort(new Error("cancelled"))
   await assert.rejects(pending, /aborted by the OpenCode session/)
-  assert.deepEqual(harness.children[0].kills, ["SIGTERM"])
+  assert.equal(harness.calls[0].options.abortController.signal.aborted, true)
+  assert.equal(harness.queries[0].closed, true)
 })
 
-test("escalates parent cancellation to SIGKILL when the child ignores SIGTERM", async () => {
-  let markStarted
-  const started = new Promise((resolve) => { markStarted = resolve })
-  const harness = spawnHarness(
-    () => { markStarted() },
-    { closeOnKill: (signal) => signal === "SIGKILL" },
-  )
-  const parent = new AbortController()
-  const pending = runClaudeCli({
-    request: "request",
-    cwd: process.cwd(),
-    claudePath: process.execPath,
-    parentSignal: parent.signal,
-    timeoutMs: 1_000,
-    forceKillDelayMs: 10,
-    spawnProcess: harness.spawnProcess,
+test("enforces the timeout even when the SDK query does not settle", async () => {
+  const harness = queryHarness(async function* () {
+    await new Promise(() => {})
   })
-
-  await started
-  parent.abort()
-  await assert.rejects(pending, /aborted by the OpenCode session/)
-  await new Promise((resolve) => setTimeout(resolve, 30))
-  assert.deepEqual(harness.children[0].kills, ["SIGTERM", "SIGKILL"])
-})
-
-test("enforces the timeout even when the child ignores termination", async () => {
-  const harness = spawnHarness(() => {}, { closeOnKill: false })
   const startedAt = Date.now()
 
   await assert.rejects(
-    runClaudeCli({
+    runClaudeAgent({
+      query: harness.query,
       request: "request",
       cwd: process.cwd(),
       claudePath: process.execPath,
-      parentSignal: new AbortController().signal,
       timeoutMs: 20,
-      spawnProcess: harness.spawnProcess,
     }),
     /timed out after 20ms/,
   )
 
-  assert.deepEqual(harness.children[0].kills, ["SIGTERM"])
-  assert.ok(Date.now() - startedAt < 500, "deadline waited for a non-cooperative child")
+  assert.ok(Date.now() - startedAt < 500, "deadline waited for a non-cooperative SDK query")
+  assert.equal(harness.calls[0].options.abortController.signal.aborted, true)
+  assert.equal(harness.queries[0].closed, true)
 })
 
-test("reports synchronous spawn failures", async () => {
+test("reports synchronous query failures and invalid requests", async () => {
   await assert.rejects(
-    runClaudeCli({
+    runClaudeAgent({
+      query() {
+        throw new Error("SDK startup failed")
+      },
       request: "request",
       cwd: process.cwd(),
       claudePath: process.execPath,
       timeoutMs: 1_000,
-      spawnProcess() {
-        throw new Error("spawn denied")
-      },
     }),
-    /failed to start: spawn denied/,
+    /SDK startup failed/,
+  )
+  await assert.rejects(
+    runClaudeAgent({
+      query: () => { throw new Error("must not run") },
+      request: "",
+      cwd: process.cwd(),
+      claudePath: process.execPath,
+    }),
+    /non-empty string/,
+  )
+  await assert.rejects(
+    runClaudeAgent({
+      query: undefined,
+      request: "request",
+      cwd: process.cwd(),
+      claudePath: process.execPath,
+    }),
+    /query factory/,
   )
 })

@@ -1,7 +1,9 @@
+import { query as claudeQuery } from "@anthropic-ai/claude-agent-sdk"
+
 import {
   CLAUDE_MODEL,
   CLAUDE_TIMEOUT_MS,
-  runClaudeCli,
+  runClaudeAgent,
 } from "../lib/claude_agent.mjs"
 
 // This guards transport memory only. OpenCode owns the 200k-token compaction
@@ -187,7 +189,7 @@ function callWarnings(callOptions, safeConversation) {
     warnings.push({
       type: "unsupported",
       feature: "maxOutputTokens",
-      details: "Claude CLI does not expose an enforceable output-token limit",
+      details: "Claude Agent SDK does not expose an enforceable output-token limit",
     })
   }
   if (safeConversation?.contextMetadata?.truncated === true) {
@@ -203,7 +205,8 @@ function languageModel(modelID, providerName, defaults) {
   async function execute(callOptions, signal = callOptions.abortSignal, onMessage) {
     const runtime = runtimeOptions(callOptions, providerName, defaults)
     const prompt = serializeClaudePrompt(callOptions.prompt, runtime.safeConversation)
-    return runClaudeCli({
+    return runClaudeAgent({
+      query: defaults.query ?? claudeQuery,
       request: prompt.request,
       cwd: runtime.cwd,
       model: modelID,
@@ -211,7 +214,7 @@ function languageModel(modelID, providerName, defaults) {
       parentSignal: signal,
       timeoutMs: runtime.timeoutMs,
       onMessage: limitedMessageHandler(runtime.maxOutputBytes, onMessage),
-      spawnProcess: defaults.spawn,
+      parentEnv: defaults.parentEnv,
     })
   }
 

@@ -5,7 +5,10 @@ import {
   createClaudeCheckpointLifecycle,
   unwrapOpenCodeV2Context,
 } from "../lib/claude_checkpoint.mjs"
-import { buildSafeClaudeConversation } from "../lib/claude_context.mjs"
+import {
+  buildSafeClaudeConversation,
+  projectLegacyClaudeContext,
+} from "../lib/claude_context.mjs"
 import { createDirectModelHandoff } from "../lib/direct_handoff.mjs"
 import { createOpenCodeV2ClientFromLegacyTransport } from "../lib/opencode_transport.mjs"
 import { updateSessionMetadata } from "../lib/session_metadata.mjs"
@@ -23,7 +26,7 @@ function responseData(response) {
   return response
 }
 
-export default async function llmRouterHandoff({ client, directory, worktree }) {
+export default async function llmRouterHandoff({ client, directory }) {
   const v2Client = createOpenCodeV2ClientFromLegacyTransport({
     legacyClient: client,
     createV2Client: createOpencodeClient,
@@ -83,12 +86,29 @@ export default async function llmRouterHandoff({ client, directory, worktree }) 
     },
   })
 
-  async function readContext(sessionID) {
+  async function readLegacyContext(sessionID) {
+    const response = await client.session.messages({
+      path: { id: sessionID },
+      query: { directory },
+      throwOnError: true,
+    })
+    return projectLegacyClaudeContext(response)
+  }
+
+  async function readContext(sessionID, requiredMessageID) {
     const response = await v2Client.v2.session.context(
       { sessionID },
       { throwOnError: true },
     )
-    return unwrapOpenCodeV2Context(response)
+    const messages = unwrapOpenCodeV2Context(response)
+    if (
+      messages.length > 0
+      && (
+        requiredMessageID === undefined
+        || messages.some((message) => message?.id === requiredMessageID)
+      )
+    ) return messages
+    return readLegacyContext(sessionID)
   }
 
   async function readMetadata(sessionID) {
@@ -207,7 +227,7 @@ export default async function llmRouterHandoff({ client, directory, worktree }) 
     },
     "chat.params": async (input, output) => {
       if (input.model.providerID !== "claude-agent") return
-      const messages = await readContext(input.sessionID)
+      const messages = await readContext(input.sessionID, input.message.id)
       const checkpoint = await checkpoints.contextFor({
         sessionID: input.sessionID,
         currentMessageID: input.message.id,
@@ -215,7 +235,7 @@ export default async function llmRouterHandoff({ client, directory, worktree }) 
       })
       const conversation = buildSafeClaudeConversation(messages, input.message.id, { checkpoint })
       output.options.safeConversation = conversation
-      output.options.cwd = worktree || directory
+      output.options.cwd = directory
     },
   }
 }
