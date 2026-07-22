@@ -1,9 +1,7 @@
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client"
 
-import {
-  createDirectModelHandoff,
-  persistDirectModelSelection,
-} from "../lib/direct_handoff.mjs"
+import { buildSafeClaudeConversation } from "../lib/claude_context.mjs"
+import { createDirectModelHandoff } from "../lib/direct_handoff.mjs"
 import { createOpenCodeV2ClientFromLegacyTransport } from "../lib/opencode_transport.mjs"
 
 const ROUTER_PATH = __LLM_ROUTER_PATH_LITERAL__
@@ -50,17 +48,17 @@ export default async function llmRouterHandoff({ client, directory, worktree }) 
 
   const handoff = createDirectModelHandoff({
     classify,
-    persist: ({ input, target, previous }) => persistDirectModelSelection(
-      v2Client,
-      input.sessionID,
-      target,
-      previous,
-    ),
-    announce: async ({ route, target }) => {
+    client: v2Client,
+    announce: async ({ mode, reused, target }) => {
+      const label = mode === "auto"
+        ? "Auto"
+        : reused
+          ? "Manual reutilizado"
+          : "Manual fixado"
       await client.tui.showToast({
         body: {
           title: "llm-router",
-          message: `${route} -> ${target.providerID}/${target.modelID}`,
+          message: `${label} -> ${target.providerID}/${target.modelID}`,
           variant: "info",
           duration: 3000,
         },
@@ -73,6 +71,14 @@ export default async function llmRouterHandoff({ client, directory, worktree }) 
     ...handoff,
     "chat.params": async (input, output) => {
       if (input.model.providerID !== "claude-agent") return
+      const response = await v2Client.session.messages(
+        { sessionID: input.sessionID },
+        { throwOnError: true },
+      )
+      const messages = response && typeof response === "object" && "data" in response
+        ? response.data
+        : response
+      output.options.safeConversation = buildSafeClaudeConversation(messages, input.message.id)
       output.options.cwd = worktree || directory
     },
   }

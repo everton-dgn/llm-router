@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events"
 import { PassThrough } from "node:stream"
 import test from "node:test"
 
+import { buildSafeClaudeConversation } from "../opencode/lib/claude_context.mjs"
 import {
   CLAUDE_MAX_INPUT_BYTES,
   createClaudeAgent,
@@ -77,7 +78,7 @@ function successfulHarness(result = successResult()) {
 }
 
 function callOptions(prompt, cwd = process.cwd()) {
-  return {
+  const options = {
     prompt,
     providerOptions: {
       "claude-agent": {
@@ -89,6 +90,10 @@ function callOptions(prompt, cwd = process.cwd()) {
     tools: [{ type: "function", name: "external_tool", inputSchema: { type: "object" } }],
     abortSignal: new AbortController().signal,
   }
+  if (prompt === textPrompt) {
+    options.providerOptions["claude-agent"].safeConversation = visibleConversation
+  }
+  return options
 }
 
 const textPrompt = [
@@ -98,9 +103,23 @@ const textPrompt = [
   { role: "user", content: [{ type: "text", text: "continue" }] },
 ]
 
-test("discards system text and sends only the current user message", () => {
+const visibleConversation = [
+  { role: "user", content: "pedido original" },
+  { role: "assistant", content: "contexto anterior" },
+  { role: "user", content: "continue" },
+]
+
+test("uses only the current user message without plugin-approved context", () => {
   const serialized = serializeClaudePrompt(textPrompt)
   assert.deepEqual(serialized, { request: "continue" })
+})
+
+test("sends plugin-approved user and assistant history while discarding system text", () => {
+  const serialized = serializeClaudePrompt(textPrompt, visibleConversation)
+  assert.match(serialized.request, /^Continue the conversation in the JSON array below\./)
+  const transcript = JSON.parse(serialized.request.slice(serialized.request.indexOf("\n\n") + 2))
+  assert.deepEqual(transcript, visibleConversation)
+  assert.equal(serialized.request.includes("Stay read-only."), false)
 })
 
 test("ignores sensitive attachments and tool history before the current user message", () => {
@@ -115,6 +134,65 @@ test("ignores sensitive attachments and tool history before the current user mes
   assert.equal(serialized.request, "current request")
   assert.equal(serialized.request.includes("SECRET"), false)
   assert.equal("systemPrompt" in serialized, false)
+})
+
+test("builds approved context from original OpenCode parts before model conversion", () => {
+  const conversation = buildSafeClaudeConversation([
+    {
+      info: { id: "user-1", role: "user" },
+      parts: [
+        { type: "text", text: "compare este arquivo" },
+        { type: "text", text: "OLD_FILE_SECRET_d8f1", synthetic: true },
+        { type: "file", mime: "text/plain", url: "file:///private.txt" },
+      ],
+    },
+    {
+      info: { id: "assistant-1", role: "assistant" },
+      parts: [
+        { type: "reasoning", text: "OLD_REASONING_SECRET_f1d2" },
+        { type: "text", text: "resposta visível" },
+        { type: "tool", tool: "read", state: { output: "OLD_RESULT_SECRET_4dc3" } },
+      ],
+    },
+    {
+      info: { id: "summary-1", role: "assistant", summary: true },
+      parts: [{ type: "text", text: "OLD_SUMMARY_SECRET_7ac4" }],
+    },
+    {
+      info: { id: "user-2", role: "user" },
+      parts: [{ type: "text", text: "continue" }],
+    },
+  ], "user-2")
+
+  assert.deepEqual(conversation, [
+    { role: "user", content: "compare este arquivo" },
+    { role: "assistant", content: "resposta visível" },
+    { role: "user", content: "continue" },
+  ])
+  assert.equal(JSON.stringify(conversation).includes("SECRET"), false)
+})
+
+test("fails closed on attachments in the original current OpenCode message", () => {
+  assert.throws(
+    () => buildSafeClaudeConversation([
+      {
+        info: { id: "user-current", role: "user" },
+        parts: [
+          { type: "text", text: "analise o arquivo" },
+          { type: "text", text: "CURRENT_FILE_SECRET_90c1", synthetic: true },
+          { type: "file", mime: "text/plain", url: "file:///private.txt" },
+        ],
+      },
+    ], "user-current"),
+    /does not accept file attachments/,
+  )
+})
+
+test("keeps a single current user request unchanged", () => {
+  assert.deepEqual(
+    serializeClaudePrompt([{ role: "user", content: [{ type: "text", text: "pedido isolado" }] }]),
+    { request: "pedido isolado" },
+  )
 })
 
 test("fails closed on unsafe parts in the current user message", () => {
@@ -154,6 +232,20 @@ test("rejects oversized input before spawning Claude", async () => {
     /exceeds the 131072-byte input limit/,
   )
   assert.equal(spawnCalls, 0)
+})
+
+test("applies the input limit to the complete visible transcript", () => {
+  assert.throws(
+    () => serializeClaudePrompt(
+      [{ role: "user", content: [{ type: "text", text: "continue" }] }],
+      [
+        { role: "user", content: "x".repeat(CLAUDE_MAX_INPUT_BYTES - 40) },
+        { role: "assistant", content: "historical answer" },
+        { role: "user", content: "continue" },
+      ],
+    ),
+    /exceeds the 131072-byte input limit/,
+  )
 })
 
 test("terminates Claude when the final output exceeds maxOutputTokens", async () => {
@@ -223,7 +315,10 @@ test("implements LanguageModelV3 generation through the Claude CLI", async () =>
 
   const received = harness.calls[0]
   assert.equal(received.options.cwd, process.cwd())
-  assert.equal(received.child.stdinText, "continue")
+  assert.match(received.child.stdinText, /^Continue the conversation in the JSON array below\./)
+  assert.equal(received.child.stdinText.includes("pedido original"), true)
+  assert.equal(received.child.stdinText.includes("contexto anterior"), true)
+  assert.equal(received.child.stdinText.includes("continue"), true)
   assert.equal(received.args[received.args.indexOf("--tools") + 1], "")
   assert.equal(received.args.includes("external_tool"), false)
   assert.equal(received.args.join("\n").includes("Stay read-only."), false)

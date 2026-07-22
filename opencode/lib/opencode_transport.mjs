@@ -1,6 +1,6 @@
 /**
  * OpenCode 1.18.4 gives legacy plugins a v1 SDK client even though session
- * selection is exposed only by the v2 SDK. In `opencode run`, that legacy
+ * metadata is exposed only by the v2 SDK. In `opencode run`, that legacy
  * client's protected transport contains the in-process fetch installed by the
  * plugin loader. Reusing it avoids a recursive HTTP request to a listener that
  * does not exist in headless mode.

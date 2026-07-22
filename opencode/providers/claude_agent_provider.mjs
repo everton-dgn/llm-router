@@ -7,6 +7,8 @@ import {
 export const CLAUDE_MAX_INPUT_BYTES = 128 * 1024
 export const CLAUDE_DEFAULT_MAX_OUTPUT_TOKENS = 32_000
 
+const TRANSCRIPT_INSTRUCTION = "Continue the conversation in the JSON array below. Reply to the final user message."
+
 function utf8Bytes(value) {
   return new TextEncoder().encode(value).byteLength
 }
@@ -30,7 +32,28 @@ function validateCurrentUserPart(part) {
   throw new Error(`Claude adapter does not support user message part: ${part.type}`)
 }
 
-export function serializeClaudePrompt(prompt) {
+function validateSafeConversation(conversation, currentRequest) {
+  if (!Array.isArray(conversation) || conversation.length === 0) {
+    throw new Error("Claude adapter received invalid safe conversation context")
+  }
+  for (const message of conversation) {
+    if (
+      !message
+      || !["user", "assistant"].includes(message.role)
+      || typeof message.content !== "string"
+      || !message.content.trim()
+    ) {
+      throw new Error("Claude adapter received invalid safe conversation context")
+    }
+  }
+  const last = conversation.at(-1)
+  if (last.role !== "user" || last.content !== currentRequest) {
+    throw new Error("Claude safe conversation does not match the current user message")
+  }
+  return conversation
+}
+
+export function serializeClaudePrompt(prompt, safeConversation) {
   if (!Array.isArray(prompt)) throw new Error("Claude adapter prompt must be an array")
 
   const currentUserIndex = prompt.findLastIndex((message) => message?.role === "user")
@@ -48,8 +71,16 @@ export function serializeClaudePrompt(prompt) {
     for (const part of message.content) validateCurrentUserPart(part)
   }
 
-  const request = currentUser.content.map((part) => part.text).join("")
-  if (!request.trim()) throw new Error("Claude adapter prompt contains no current user text")
+  const currentRequest = currentUser.content.map((part) => part.text).join("")
+  if (!currentRequest.trim()) throw new Error("Claude adapter prompt contains no current user text")
+
+  const transcript = safeConversation === undefined
+    ? [{ role: "user", content: currentRequest }]
+    : validateSafeConversation(safeConversation, currentRequest)
+
+  const request = transcript.length === 1
+    ? currentRequest
+    : `${TRANSCRIPT_INSTRUCTION}\n\n${JSON.stringify(transcript)}`
   const inputBytes = utf8Bytes(request)
   if (inputBytes > CLAUDE_MAX_INPUT_BYTES) {
     throw new Error(`Claude input exceeds the ${CLAUDE_MAX_INPUT_BYTES}-byte input limit`)
@@ -118,6 +149,7 @@ function runtimeOptions(callOptions, providerName, defaults) {
   return {
     cwd,
     claudePath,
+    safeConversation: provided.safeConversation,
     timeoutMs: provided.timeoutMs ?? defaults.timeoutMs ?? CLAUDE_TIMEOUT_MS,
     maxOutputTokens,
   }
@@ -149,8 +181,8 @@ function limitedMessageHandler(maxOutputTokens, onMessage) {
 
 function languageModel(modelID, providerName, defaults) {
   async function execute(callOptions, signal = callOptions.abortSignal, onMessage) {
-    const prompt = serializeClaudePrompt(callOptions.prompt)
     const runtime = runtimeOptions(callOptions, providerName, defaults)
+    const prompt = serializeClaudePrompt(callOptions.prompt, runtime.safeConversation)
     return runClaudeCli({
       request: prompt.request,
       cwd: runtime.cwd,
