@@ -4,6 +4,102 @@ export const CLAUDE_SAFE_CONTEXT_MAX_BYTES = (2 * 1024 * 1024) - 4096
 
 const encoder = new TextEncoder()
 
+function unwrapLegacyMessages(response) {
+  const records = response?.data
+  if (!Array.isArray(records)) {
+    throw new Error("OpenCode legacy API returned invalid session messages")
+  }
+  return records
+}
+
+export function projectLegacyClaudeContext(response) {
+  const records = unwrapLegacyMessages(response)
+  const compactionParents = new Set(records.flatMap((record) => (
+    Array.isArray(record?.parts) && record.parts.some((part) => part?.type === "compaction")
+      ? [record?.info?.id]
+      : []
+  )))
+  const projected = []
+
+  for (const record of records) {
+    const info = record?.info
+    const parts = record?.parts
+    if (
+      !info
+      || typeof info !== "object"
+      || typeof info.id !== "string"
+      || !info.id
+      || !Array.isArray(parts)
+    ) {
+      throw new Error("OpenCode legacy API returned an invalid session message")
+    }
+
+    if (info.role === "user") {
+      for (const part of parts) {
+        if (part?.type !== "compaction") continue
+        if (typeof part.id !== "string" || !part.id) {
+          throw new Error("OpenCode legacy API returned an invalid compaction marker")
+        }
+        projected.push({
+          id: part.id,
+          type: "compaction",
+          time: info.time,
+        })
+      }
+      const text = parts
+        .filter((part) => (
+          part?.type === "text"
+          && part.synthetic !== true
+          && part.ignored !== true
+        ))
+        .map((part) => {
+          if (typeof part.text !== "string") {
+            throw new Error("OpenCode legacy API returned invalid user text")
+          }
+          return part.text
+        })
+        .join("")
+      const files = parts.filter((part) => part?.type === "file")
+      const agents = parts.filter((part) => part?.type === "agent")
+      if (text || files.length > 0 || agents.length > 0) {
+        projected.push({
+          id: info.id,
+          type: "user",
+          text,
+          files,
+          agents,
+          time: info.time,
+        })
+      }
+      continue
+    }
+
+    if (info.role !== "assistant" || compactionParents.has(info.parentID)) continue
+    const content = parts
+      .filter((part) => (
+        part?.type === "text"
+        && part.synthetic !== true
+        && part.ignored !== true
+      ))
+      .map((part) => {
+        if (typeof part.text !== "string") {
+          throw new Error("OpenCode legacy API returned invalid assistant text")
+        }
+        return { type: "text", text: part.text }
+      })
+    projected.push({
+      id: info.id,
+      type: "assistant",
+      content,
+      error: info.error,
+      time: info.time,
+    })
+  }
+
+  const activeTailStart = projected.findLastIndex((message) => message.type === "compaction")
+  return activeTailStart === -1 ? projected : projected.slice(activeTailStart)
+}
+
 function serializedMessageBytes(message) {
   return encoder.encode(JSON.stringify({ role: message.role, content: message.content })).byteLength
 }

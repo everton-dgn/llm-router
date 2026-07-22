@@ -125,7 +125,7 @@ jq -e '
   and .agent.claude.model == "claude-agent/claude-opus-4-8"
   and .agent.claude.permission == {"*":"deny"}
   and .provider["claude-agent"].npm == "__CLAUDE_AGENT_PROVIDER_URL__"
-  and .provider["claude-agent"].name == "Claude CLI"
+  and .provider["claude-agent"].name == "Claude Agent SDK"
   and .provider["claude-agent"].options.claudePath == "__CLAUDE_CODE_PATH__"
   and .provider["claude-agent"].models["claude-opus-4-8"].limit == {"context":200000,"output":32000}
   and .agent.codex.model == "openai/gpt-5.6-sol"
@@ -149,7 +149,8 @@ assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'createDirec
 assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'createOpenCodeV2ClientFromLegacyTransport({'
 assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'client: v2Client,'
 assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'v2Client.v2.session.context('
-assert_not_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'v2Client.session.messages('
+assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'client.session.messages({'
+assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'projectLegacyClaudeContext(response)'
 assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'CHECKPOINT_TIMEOUT_MS = 30_000'
 assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'unwrapOpenCodeV2Context(response)'
 assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" '"--summarize", "--json"'
@@ -157,7 +158,7 @@ assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'updateSessi
 assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" '"Auto"'
 assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" '"Manual fixado"'
 assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" '"Manual reutilizado"'
-assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'output.options.cwd = worktree || directory'
+assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'output.options.cwd = directory'
 if grep -E 'persistDirectModelSelection|switchModel' \
   "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" >/dev/null; then
   fail "handoff plugin still persists the composer selection"
@@ -181,16 +182,16 @@ assert_contains "$CHECKPOINT" 'response?.data?.data'
 assert_contains "$REPO_ROOT/opencode/providers/claude_agent_provider.mjs" 'specificationVersion: "v3"'
 assert_contains "$REPO_ROOT/opencode/providers/claude_agent_provider.mjs" 'CLAUDE_MAX_INPUT_BYTES = 2 * 1024 * 1024'
 assert_contains "$REPO_ROOT/opencode/providers/claude_agent_provider.mjs" 'maxOutputBytes'
-assert_contains "$REPO_ROOT/opencode/lib/claude_agent.mjs" 'from "node:child_process"'
-assert_contains "$REPO_ROOT/opencode/lib/claude_agent.mjs" '"--output-format",'
-assert_contains "$REPO_ROOT/opencode/lib/claude_agent.mjs" '"--tools",'
-assert_contains "$REPO_ROOT/opencode/lib/claude_agent.mjs" '"--safe-mode",'
-assert_contains "$REPO_ROOT/opencode/lib/claude_agent.mjs" '"--no-session-persistence",'
+assert_contains "$REPO_ROOT/opencode/providers/claude_agent_provider.mjs" 'from "@anthropic-ai/claude-agent-sdk"'
+assert_contains "$REPO_ROOT/opencode/lib/claude_agent.mjs" 'pathToClaudeCodeExecutable: claudePath'
+assert_contains "$REPO_ROOT/opencode/lib/claude_agent.mjs" 'permissionMode: "auto"'
+assert_contains "$REPO_ROOT/opencode/lib/claude_agent.mjs" 'preset: "claude_code"'
+assert_contains "$REPO_ROOT/opencode/lib/claude_agent.mjs" 'persistSession: false'
 assert_contains "$REPO_ROOT/opencode/tools/repo_query.ts" 'runRepositoryQuery(args, context.worktree)'
 assert_not_contains "$REPO_ROOT/README.md" 'somente a última mensagem do usuário'
 assert_not_contains "$REPO_ROOT/README.md" 'como um teto conservador de bytes UTF-8'
 assert_not_contains "$REPO_ROOT/README.md" 'Instala as dependências pinadas'
-jq -e '.dependencies == {"@opencode-ai/plugin":"1.18.4","@opencode-ai/sdk":"1.18.4"}' "$REPO_ROOT/opencode/package.json" >/dev/null || fail "bundle dependencies are not pinned"
+jq -e '.dependencies == {"@anthropic-ai/claude-agent-sdk":"0.3.216","@opencode-ai/plugin":"1.18.4","@opencode-ai/sdk":"1.18.4"}' "$REPO_ROOT/opencode/package.json" >/dev/null || fail "bundle dependencies are not pinned"
 jq -e '
   .verification.rules[]
   | select(.name == "llm-router-opencode-tests")
@@ -244,7 +245,7 @@ const routeCases = [
   ["minimax", "conte os arquivos. Não altere arquivos.", "minimax"],
   ["minimax", "traduza esta mensagem para português", "glm"],
   ["claude", "planeje uma arquitetura", "claude"],
-  ["claude", "corrija uma condição de corrida", "codex"],
+  ["claude", "corrija uma condição de corrida", "claude"],
   ["claude", "analise, mas não altere nenhum arquivo", "claude"],
   ["codex", "corrija uma condição de corrida", "codex"],
 ]
@@ -258,7 +259,7 @@ if (JSON.stringify(claude) !== JSON.stringify({
   agent: "claude",
   providerID: "claude-agent",
   modelID: "claude-opus-4-8",
-})) throw new Error("Claude target is not the local CLI provider")
+})) throw new Error("Claude target is not the local Agent SDK provider")
 
 const parsed = contract.parseClassifierResult(JSON.stringify({
   schema_version: 1,
@@ -395,7 +396,7 @@ jq -e '.dependencies["user-package"] == "7.0.0"' "$CONFIG_DIR/package.json" >/de
 jq -e '.scripts.keep == "true"' "$CONFIG_DIR/package.json" >/dev/null || fail "package merge removed user script"
 jq -e '.dependencies["@opencode-ai/plugin"] == "1.18.4"' "$CONFIG_DIR/package.json" >/dev/null || fail "plugin dependency was not pinned"
 jq -e '.dependencies["@opencode-ai/sdk"] == "1.18.4"' "$CONFIG_DIR/package.json" >/dev/null || fail "OpenCode SDK dependency was not pinned"
-jq -e '.dependencies["@anthropic-ai/claude-agent-sdk"] == null' "$CONFIG_DIR/package.json" >/dev/null || fail "retired Claude package dependency was preserved"
+jq -e '.dependencies["@anthropic-ai/claude-agent-sdk"] == "0.3.216"' "$CONFIG_DIR/package.json" >/dev/null || fail "Claude Agent SDK dependency was not pinned"
 
 BACKUP_CONFIG=$(find "$BACKUP_ROOT" -type f -name opencode.jsonc -print)
 BACKUP_ROUTE=$(find "$BACKUP_ROOT" -type f -name llm_route.ts -print)
@@ -487,4 +488,4 @@ jq -e --arg provider "$SPECIAL_PROVIDER_URL" --arg claude "$SPECIAL_CLAUDE" '
 ' "$SPECIAL_CONFIG/opencode.jsonc" >/dev/null \
   || fail "special paths were not preserved in opencode.jsonc"
 
-printf 'PASS: dual-router fixed-composer handoff, tool-free Claude CLI, safe install, retirement and idempotence\n'
+printf 'PASS: dual-router fixed-composer handoff, Claude Agent SDK tools, safe install, retirement and idempotence\n'

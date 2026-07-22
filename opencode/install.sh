@@ -224,7 +224,6 @@ if [[ -e "$PACKAGE_TARGET" ]]; then
         private: ($current.private // $required[0].private // true),
         dependencies: (($current.dependencies // {}) + ($required[0].dependencies // {}))
       }
-    | del(.dependencies["@anthropic-ai/claude-agent-sdk"])
   ' "$PACKAGE_TARGET" | tee "$RENDER_DIR/package.json" >/dev/null
 else
   cp "$RENDER_DIR/package.required.json" "$RENDER_DIR/package.json"

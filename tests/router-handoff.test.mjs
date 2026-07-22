@@ -68,13 +68,13 @@ test("declares deterministic capabilities for every route", () => {
       canUseExternalTools: true,
     },
     claude: {
-      canExecuteCommands: false,
+      canExecuteCommands: true,
       canHandleNonLiteralText: true,
-      canMutateProject: false,
-      canReadRepository: false,
+      canMutateProject: true,
+      canReadRepository: true,
       canUseAgentMentions: false,
       canUseAttachments: false,
-      canUseExternalTools: false,
+      canUseExternalTools: true,
     },
     codex: {
       canExecuteCommands: true,
@@ -197,17 +197,17 @@ test("auto reclassifies every message without changing session selection", async
   )
 })
 
-test("auto promotes a mutating request from Claude to Codex", async () => {
+test("auto keeps a mutating request on capable Claude", async () => {
   const store = memorySessionClient({ "session-1": { agent: "router-auto", metadata: {} } })
   const hooks = createDirectModelHandoff({ classify: classifier("claude"), client: store.client })
   const message = userMessage("corrija o arquivo de configuração")
 
   await hooks["chat.message"](message.input, message.output)
 
-  assert.equal(message.output.message.agent, "codex")
+  assert.equal(message.output.message.agent, "claude")
   assert.deepEqual(message.output.message.model, {
-    providerID: "openai",
-    modelID: "gpt-5.6-sol",
+    providerID: "claude-agent",
+    modelID: "claude-opus-4-8",
   })
 })
 
@@ -286,7 +286,7 @@ for (const request of [
   })
 }
 
-test("auto still promotes a real mutation mixed with an explanation", async () => {
+test("auto keeps a real mutation mixed with an explanation on Claude", async () => {
   const store = memorySessionClient({ "session-1": { agent: "router-auto", metadata: {} } })
   const hooks = createDirectModelHandoff({ classify: classifier("claude"), client: store.client })
   const message = userMessage(
@@ -295,33 +295,33 @@ test("auto still promotes a real mutation mixed with an explanation", async () =
 
   await hooks["chat.message"](message.input, message.output)
 
-  assert.equal(message.output.message.agent, "codex")
+  assert.equal(message.output.message.agent, "claude")
 })
 
 for (const request of [
   "explain the problem and fix the file",
   "explain or fix the file",
 ]) {
-  test(`auto promotes the real English mutation in: ${request}`, async () => {
+  test(`auto keeps the real English mutation on Claude in: ${request}`, async () => {
     const store = memorySessionClient({ "session-1": { agent: "router-auto", metadata: {} } })
     const hooks = createDirectModelHandoff({ classify: classifier("claude"), client: store.client })
     const message = userMessage(request)
 
     await hooks["chat.message"](message.input, message.output)
 
-    assert.equal(message.output.message.agent, "codex")
+    assert.equal(message.output.message.agent, "claude")
   })
 }
 
 for (const request of ["faz logo tudo", "cria o arquivo de configuração"]) {
-  test(`auto recognizes an informal PT-BR mutation in: ${request}`, async () => {
+  test(`auto keeps an informal PT-BR mutation on Claude in: ${request}`, async () => {
     const store = memorySessionClient({ "session-1": { agent: "router-auto", metadata: {} } })
     const hooks = createDirectModelHandoff({ classify: classifier("claude"), client: store.client })
     const message = userMessage(request)
 
     await hooks["chat.message"](message.input, message.output)
 
-    assert.equal(message.output.message.agent, "codex")
+    assert.equal(message.output.message.agent, "claude")
   })
 }
 
@@ -335,14 +335,14 @@ test("auto preserves informal PT-BR mutations when all are negated", async () =>
   assert.equal(message.output.message.agent, "claude")
 })
 
-test("auto promotes explicit repository inspection from Claude to Codex", async () => {
+test("auto keeps explicit repository inspection on capable Claude", async () => {
   const store = memorySessionClient({ "session-1": { agent: "router-auto", metadata: {} } })
   const hooks = createDirectModelHandoff({ classify: classifier("claude"), client: store.client })
   const message = userMessage("inspecione o repositório e informe a versão do React")
 
   await hooks["chat.message"](message.input, message.output)
 
-  assert.equal(message.output.message.agent, "codex")
+  assert.equal(message.output.message.agent, "claude")
 })
 
 for (const request of [
@@ -352,25 +352,25 @@ for (const request of [
   "procura no projeto a função principal",
   "verifica o package.json",
 ]) {
-  test(`auto recognizes informal repository inspection in: ${request}`, async () => {
+  test(`auto keeps informal repository inspection on Claude in: ${request}`, async () => {
     const store = memorySessionClient({ "session-1": { agent: "router-auto", metadata: {} } })
     const hooks = createDirectModelHandoff({ classify: classifier("claude"), client: store.client })
     const message = userMessage(request)
 
     await hooks["chat.message"](message.input, message.output)
 
-    assert.equal(message.output.message.agent, "codex")
+    assert.equal(message.output.message.agent, "claude")
   })
 }
 
-test("auto promotes explicit web research from Claude to Codex", async () => {
+test("auto keeps explicit web research on capable Claude", async () => {
   const store = memorySessionClient({ "session-1": { agent: "router-auto", metadata: {} } })
   const hooks = createDirectModelHandoff({ classify: classifier("claude"), client: store.client })
   const message = userMessage("pesquise na web a previsão do tempo atual")
 
   await hooks["chat.message"](message.input, message.output)
 
-  assert.equal(message.output.message.agent, "codex")
+  assert.equal(message.output.message.agent, "claude")
 })
 
 test("auto recognizes informal web research", async () => {
@@ -380,28 +380,28 @@ test("auto recognizes informal web research", async () => {
 
   await hooks["chat.message"](message.input, message.output)
 
-  assert.equal(message.output.message.agent, "codex")
+  assert.equal(message.output.message.agent, "claude")
 })
 
-test("auto promotes explicit command execution from Claude to Codex", async () => {
+test("auto keeps explicit command execution on capable Claude", async () => {
   const store = memorySessionClient({ "session-1": { agent: "router-auto", metadata: {} } })
   const hooks = createDirectModelHandoff({ classify: classifier("claude"), client: store.client })
   const message = userMessage("rode os testes deste projeto")
 
   await hooks["chat.message"](message.input, message.output)
 
-  assert.equal(message.output.message.agent, "codex")
+  assert.equal(message.output.message.agent, "claude")
 })
 
 for (const request of ["ls", "pwd", "rode ls"]) {
-  test(`auto recognizes a standalone command in: ${request}`, async () => {
+  test(`auto keeps a standalone command on Claude in: ${request}`, async () => {
     const store = memorySessionClient({ "session-1": { agent: "router-auto", metadata: {} } })
     const hooks = createDirectModelHandoff({ classify: classifier("claude"), client: store.client })
     const message = userMessage(request)
 
     await hooks["chat.message"](message.input, message.output)
 
-    assert.equal(message.output.message.agent, "codex")
+    assert.equal(message.output.message.agent, "claude")
   })
 }
 
@@ -703,18 +703,18 @@ test("manual persists the capable target selected for its first request", async 
 
   await hooks["chat.message"](message.input, message.output)
 
-  assert.equal(message.output.message.agent, "codex")
+  assert.equal(message.output.message.agent, "claude")
   assert.deepEqual(store.sessions["session-1"].metadata[MANUAL_TARGET_METADATA_KEY], {
     sessionID: "session-1",
     target: {
-      agent: "codex",
-      providerID: "openai",
-      modelID: "gpt-5.6-sol",
+      agent: "claude",
+      providerID: "claude-agent",
+      modelID: "claude-opus-4-8",
     },
   })
 })
 
-test("manual rejects an incompatible request without changing its fixed target", async () => {
+test("manual keeps a mutating request on its fixed Claude target", async () => {
   const metadata = {
     owner: "user",
     [MANUAL_TARGET_METADATA_KEY]: {
@@ -736,15 +736,15 @@ test("manual rejects an incompatible request without changing its fixed target",
     },
   })
   const message = userMessage("corrija o arquivo", "router-manual")
-  const originalMessage = structuredClone(message.output.message)
   const originalMetadata = structuredClone(metadata)
 
-  await assert.rejects(
-    hooks["chat.message"](message.input, message.output),
-    /new conversation.*router-auto/i,
-  )
+  await hooks["chat.message"](message.input, message.output)
 
-  assert.deepEqual(message.output.message, originalMessage)
+  assert.equal(message.output.message.agent, "claude")
+  assert.deepEqual(message.output.message.model, {
+    providerID: "claude-agent",
+    modelID: "claude-opus-4-8",
+  })
   assert.deepEqual(store.sessions["session-1"].metadata, originalMetadata)
   assert.deepEqual(store.calls.map(([method]) => method), ["get"])
 })
@@ -782,7 +782,7 @@ test("manual rejects non-literal work for a fixed MiniMax target", async () => {
   assert.deepEqual(store.calls.map(([method]) => method), ["get"])
 })
 
-test("manual restores its sentinel before rejecting a resumed incompatible request", async () => {
+test("manual restores its sentinel before reusing Claude for a mutating request", async () => {
   const metadata = {
     [MANUAL_TARGET_METADATA_KEY]: {
       sessionID: "session-1",
@@ -803,20 +803,15 @@ test("manual restores its sentinel before rejecting a resumed incompatible reque
     },
   })
   const message = userMessage("corrija o arquivo", "router-auto")
-  const originalMessage = structuredClone(message.output.message)
-
-  await assert.rejects(
-    hooks["chat.message"](message.input, message.output),
-    /new conversation.*router-auto/i,
-  )
+  await hooks["chat.message"](message.input, message.output)
 
   assert.equal(store.sessions["session-1"].agent, "router-manual")
   assert.deepEqual(store.sessions["session-1"].metadata, metadata)
-  assert.deepEqual(message.output.message, originalMessage)
+  assert.equal(message.output.message.agent, "claude")
   assert.deepEqual(store.calls.map(([method]) => method), ["get", "switch-agent"])
 })
 
-test("manual rejects repository inspection for a fixed Claude target", async () => {
+test("manual allows repository inspection for a fixed Claude target", async () => {
   const metadata = {
     [MANUAL_TARGET_METADATA_KEY]: {
       sessionID: "session-1",
@@ -838,17 +833,15 @@ test("manual rejects repository inspection for a fixed Claude target", async () 
   })
   const message = userMessage("inspecione o repositório", "router-manual")
 
-  await assert.rejects(
-    hooks["chat.message"](message.input, message.output),
-    /new conversation.*router-auto/i,
-  )
+  await hooks["chat.message"](message.input, message.output)
 
+  assert.equal(message.output.message.agent, "claude")
   assert.deepEqual(store.sessions["session-1"].metadata, metadata)
   assert.deepEqual(store.calls.map(([method]) => method), ["get"])
 })
 
 for (const request of ["leia README.md", "abra src/app.ts", "git status"]) {
-  test(`manual rejects unavailable Claude access in: ${request}`, async () => {
+  test(`manual allows Claude workspace access in: ${request}`, async () => {
     const metadata = {
       [MANUAL_TARGET_METADATA_KEY]: {
         sessionID: "session-1",
@@ -870,16 +863,14 @@ for (const request of ["leia README.md", "abra src/app.ts", "git status"]) {
     })
     const message = userMessage(request, "router-manual")
 
-    await assert.rejects(
-      hooks["chat.message"](message.input, message.output),
-      /new conversation.*router-auto/i,
-    )
+    await hooks["chat.message"](message.input, message.output)
 
+    assert.equal(message.output.message.agent, "claude")
     assert.deepEqual(store.sessions["session-1"].metadata, metadata)
   })
 }
 
-test("manual rejects command execution for a fixed Claude target", async () => {
+test("manual allows command execution for a fixed Claude target", async () => {
   const metadata = {
     [MANUAL_TARGET_METADATA_KEY]: {
       sessionID: "session-1",
@@ -901,11 +892,9 @@ test("manual rejects command execution for a fixed Claude target", async () => {
   })
   const message = userMessage("roda os testes", "router-manual")
 
-  await assert.rejects(
-    hooks["chat.message"](message.input, message.output),
-    /new conversation.*router-auto/i,
-  )
+  await hooks["chat.message"](message.input, message.output)
 
+  assert.equal(message.output.message.agent, "claude")
   assert.deepEqual(store.sessions["session-1"].metadata, metadata)
   assert.deepEqual(store.calls.map(([method]) => method), ["get"])
 })
