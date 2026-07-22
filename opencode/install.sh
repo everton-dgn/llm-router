@@ -104,7 +104,6 @@ ROUTER_PATH="$(cd "$(dirname "$ROUTER_PATH")" && pwd)/$(basename "$ROUTER_PATH")
 CLAUDE_PATH="$(cd "$(dirname "$CLAUDE_PATH")" && pwd)/$(basename "$CLAUDE_PATH")"
 [[ -x "$CLAUDE_PATH" ]] || fail "Claude Code executable not found: $CLAUDE_PATH"
 
-CLAUDE_HELP=$("$CLAUDE_PATH" --help 2>&1) || fail "Claude Code --help failed: $CLAUDE_PATH"
 CLAUDE_REQUIRED_FLAGS=(
   --print
   --input-format
@@ -122,6 +121,40 @@ CLAUDE_REQUIRED_FLAGS=(
   --no-session-persistence
   --system-prompt
 )
+
+claude_help_has_required_flags() {
+  local help_text=$1
+  local required_flag
+  for required_flag in "${CLAUDE_REQUIRED_FLAGS[@]}"; do
+    if ! grep -E \
+      "^[[:space:]]+([^[:space:]]+,[[:space:]]+)?${required_flag}([[:space:]]|$)" \
+      <<< "$help_text" >/dev/null; then
+      return 1
+    fi
+  done
+}
+
+capture_claude_help_in_tty() {
+  local script_path
+  local command
+  script_path=$(command -v script || true)
+  [[ -n "$script_path" ]] || return 1
+
+  if "$script_path" --version 2>/dev/null | grep -qi 'util-linux'; then
+    printf -v command '%q --help' "$CLAUDE_PATH"
+    "$script_path" -q -e -c "$command" /dev/null 2>&1
+  else
+    "$script_path" -q /dev/null "$CLAUDE_PATH" --help 2>&1
+  fi
+}
+
+CLAUDE_HELP=$("$CLAUDE_PATH" --help 2>&1) || fail "Claude Code --help failed: $CLAUDE_PATH"
+if ! claude_help_has_required_flags "$CLAUDE_HELP"; then
+  if TTY_CLAUDE_HELP=$(capture_claude_help_in_tty) \
+    && claude_help_has_required_flags "$TTY_CLAUDE_HELP"; then
+    CLAUDE_HELP=$TTY_CLAUDE_HELP
+  fi
+fi
 for required_flag in "${CLAUDE_REQUIRED_FLAGS[@]}"; do
   if ! grep -E \
     "^[[:space:]]+([^[:space:]]+,[[:space:]]+)?${required_flag}([[:space:]]|$)" \
@@ -145,11 +178,13 @@ mkdir -p "$RENDER_DIR/tools" "$RENDER_DIR/lib" "$RENDER_DIR/plugins" "$RENDER_DI
 cp "$SCRIPT_DIR/package.json" "$RENDER_DIR/package.required.json"
 cp "$SCRIPT_DIR/lib/claude_agent.mjs" "$RENDER_DIR/lib/claude_agent.mjs"
 cp "$SCRIPT_DIR/lib/claude_context.mjs" "$RENDER_DIR/lib/claude_context.mjs"
+cp "$SCRIPT_DIR/lib/claude_checkpoint.mjs" "$RENDER_DIR/lib/claude_checkpoint.mjs"
 cp "$SCRIPT_DIR/lib/direct_handoff.mjs" "$RENDER_DIR/lib/direct_handoff.mjs"
 cp "$SCRIPT_DIR/lib/opencode_transport.mjs" "$RENDER_DIR/lib/opencode_transport.mjs"
 cp "$SCRIPT_DIR/lib/repo_query.mjs" "$RENDER_DIR/lib/repo_query.mjs"
 cp "$SCRIPT_DIR/lib/route_contract.mjs" "$RENDER_DIR/lib/route_contract.mjs"
 cp "$SCRIPT_DIR/lib/routing_policy.mjs" "$RENDER_DIR/lib/routing_policy.mjs"
+cp "$SCRIPT_DIR/lib/session_metadata.mjs" "$RENDER_DIR/lib/session_metadata.mjs"
 cp "$SCRIPT_DIR/tools/repo_query.ts" "$RENDER_DIR/tools/repo_query.ts"
 cp "$SCRIPT_DIR/plugins/llm_router_handoff.ts" "$RENDER_DIR/plugins/llm_router_handoff.ts"
 cp "$SCRIPT_DIR/providers/claude_agent_provider.mjs" "$RENDER_DIR/providers/claude_agent_provider.mjs"
@@ -297,11 +332,13 @@ SOURCES=(
   "$RENDER_DIR/package.json"
   "$RENDER_DIR/lib/claude_agent.mjs"
   "$RENDER_DIR/lib/claude_context.mjs"
+  "$RENDER_DIR/lib/claude_checkpoint.mjs"
   "$RENDER_DIR/lib/direct_handoff.mjs"
   "$RENDER_DIR/lib/opencode_transport.mjs"
   "$RENDER_DIR/lib/repo_query.mjs"
   "$RENDER_DIR/lib/route_contract.mjs"
   "$RENDER_DIR/lib/routing_policy.mjs"
+  "$RENDER_DIR/lib/session_metadata.mjs"
   "$RENDER_DIR/tools/repo_query.ts"
   "$RENDER_DIR/plugins/llm_router_handoff.ts"
   "$RENDER_DIR/providers/claude_agent_provider.mjs"
@@ -311,11 +348,13 @@ TARGETS=(
   "$CONFIG_DIR/package.json"
   "$CONFIG_DIR/lib/claude_agent.mjs"
   "$CONFIG_DIR/lib/claude_context.mjs"
+  "$CONFIG_DIR/lib/claude_checkpoint.mjs"
   "$CONFIG_DIR/lib/direct_handoff.mjs"
   "$CONFIG_DIR/lib/opencode_transport.mjs"
   "$CONFIG_DIR/lib/repo_query.mjs"
   "$CONFIG_DIR/lib/route_contract.mjs"
   "$CONFIG_DIR/lib/routing_policy.mjs"
+  "$CONFIG_DIR/lib/session_metadata.mjs"
   "$CONFIG_DIR/tools/repo_query.ts"
   "$CONFIG_DIR/plugins/llm_router_handoff.ts"
   "$CONFIG_DIR/providers/claude_agent_provider.mjs"

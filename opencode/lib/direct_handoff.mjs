@@ -1,5 +1,10 @@
 import { parseClassifierResult } from "./route_contract.mjs"
-import { enforceMinimumRoute, routeTarget } from "./routing_policy.mjs"
+import {
+  enforceMinimumRoute,
+  routeSupportsRequest,
+  routeTarget,
+} from "./routing_policy.mjs"
+import { updateSessionMetadata } from "./session_metadata.mjs"
 
 const managedAgents = new Set(["router-auto", "router-manual"])
 
@@ -12,7 +17,7 @@ function exactUserRequest(parts) {
     .join("")
 }
 
-function classifyRequest(classify, request) {
+function classifyRequest(classify, request, requirements) {
   return Promise.resolve(classify(request)).then((result) => {
     const raw = typeof result === "string" ? result : result?.stdout
     if (typeof raw !== "string") {
@@ -20,9 +25,24 @@ function classifyRequest(classify, request) {
     }
 
     const classified = parseClassifierResult(raw.trim())
-    const route = enforceMinimumRoute(classified.route, request)
+    const route = enforceMinimumRoute(classified.route, request, requirements)
     return { classified, route, target: routeTarget(route) }
   })
+}
+
+function selectRequest(classify, request, requirements) {
+  if (
+    request.length === 0
+    && (requirements.hasAgentMentions || requirements.hasAttachments)
+  ) {
+    const route = "codex"
+    return Promise.resolve({
+      classified: undefined,
+      route,
+      target: routeTarget(route),
+    })
+  }
+  return classifyRequest(classify, request, requirements)
 }
 
 function requireSessionReader(client) {
@@ -111,11 +131,51 @@ async function keepManualRouterSelected(client, sessionID, current) {
   )
 }
 
-async function manualSelection({ classify, client, current, metadata, request, sessionID }) {
+async function persistManualTarget(client, sessionID, target) {
   const sessionClient = requireManualSessionClient(client)
+  await updateSessionMetadata({
+    sessionID,
+    readMetadata: async (currentSessionID) => {
+      const current = responseData(await sessionClient.get(
+        { sessionID: currentSessionID },
+        { throwOnError: true },
+      ))
+      return sessionMetadata(current)
+    },
+    writeMetadata: async (currentSessionID, metadata) => {
+      await sessionClient.update(
+        { sessionID: currentSessionID, metadata },
+        { throwOnError: true },
+      )
+    },
+    update: (currentMetadata) => ({
+      ...currentMetadata,
+      [MANUAL_TARGET_METADATA_KEY]: {
+        sessionID,
+        target,
+      },
+    }),
+  })
+}
+
+async function manualSelection({
+  classify,
+  client,
+  current,
+  metadata,
+  request,
+  requirements,
+  sessionID,
+}) {
+  requireManualSessionClient(client)
   const stored = storedManualTarget(metadata, sessionID)
   if (stored) {
     await keepManualRouterSelected(client, sessionID, current)
+    if (!routeSupportsRequest(stored.agent, request, requirements)) {
+      throw new Error(
+        `Manual router target ${stored.agent} lacks the capabilities required for this request. Start a new conversation with router-auto or with a capable fixed model.`,
+      )
+    }
     return {
       classified: undefined,
       reused: true,
@@ -124,18 +184,9 @@ async function manualSelection({ classify, client, current, metadata, request, s
     }
   }
 
-  const selected = await classifyRequest(classify, request)
-  await sessionClient.update({
-    sessionID,
-    metadata: {
-      ...metadata,
-      [MANUAL_TARGET_METADATA_KEY]: {
-        sessionID,
-        target: selected.target,
-      },
-    },
-  }, { throwOnError: true })
+  const selected = await selectRequest(classify, request, requirements)
   await keepManualRouterSelected(client, sessionID, current)
+  await persistManualTarget(client, sessionID, selected.target)
   return { ...selected, reused: false }
 }
 
@@ -153,11 +204,23 @@ export function createDirectModelHandoff({
       if (!managedAgents.has(agent)) return
 
       const request = exactUserRequest(output.parts)
-      if (request.length === 0) return
+      const requirements = {
+        hasAgentMentions: output.parts.some((part) => part.type === "agent"),
+        hasAttachments: output.parts.some((part) => part.type === "file"),
+      }
+      if (
+        request.length === 0
+        && !requirements.hasAgentMentions
+        && !requirements.hasAttachments
+      ) return
 
       const state = await sessionState(client, input.sessionID)
       const stickyTarget = storedManualTarget(state.metadata, input.sessionID)
-      const mode = agent === "router-manual" || stickyTarget ? "manual" : "auto"
+      const mode = agent === "router-manual"
+        || state.current.agent === "router-manual"
+        || stickyTarget
+        ? "manual"
+        : "auto"
       const selection = mode === "manual"
         ? await manualSelection({
             classify,
@@ -165,9 +228,10 @@ export function createDirectModelHandoff({
             current: state.current,
             metadata: state.metadata,
             request,
+            requirements,
             sessionID: input.sessionID,
           })
-        : { ...await classifyRequest(classify, request), reused: false }
+        : { ...await selectRequest(classify, request, requirements), reused: false }
 
       output.message.agent = selection.target.agent
       output.message.model = {

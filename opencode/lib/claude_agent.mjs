@@ -6,17 +6,76 @@ export const CLAUDE_MODEL = "claude-opus-4-8"
 export const CLAUDE_TIMEOUT_MS = 15 * 60 * 1000
 export const CLAUDE_SYSTEM_PROMPT = [
   "Complete the current user request using only the text supplied on stdin for this invocation.",
-  "You have no tools and no access to files, commands, browsers, MCP servers, skills, plugins, agents, session history, or external context.",
+  "You have no implicit Claude Code session state. Treat only the sanitized transcript supplied on stdin as conversation context.",
+  "You have no tools and no access to files, commands, browsers, MCP servers, skills, plugins, agents, or external context.",
   "Do not claim to have inspected the workspace. Preserve the requested language and output format. Return only the answer for the user.",
 ].join("\n\n")
 
 const STDERR_LIMIT_BYTES = 64 * 1024
 const FORCE_KILL_DELAY_MS = 1_000
 
+const ALLOWED_ENVIRONMENT_NAMES = new Set([
+  "ALL_PROXY",
+  "APPDATA",
+  "COLORTERM",
+  "COMSPEC",
+  "FORCE_COLOR",
+  "HOME",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "LANG",
+  "LANGUAGE",
+  "LOCALAPPDATA",
+  "LOGNAME",
+  "NODE_EXTRA_CA_CERTS",
+  "NO_COLOR",
+  "NO_PROXY",
+  "PATH",
+  "PATHEXT",
+  "SHELL",
+  "SSL_CERT_DIR",
+  "SSL_CERT_FILE",
+  "SYSTEMROOT",
+  "TEMP",
+  "TERM",
+  "TERM_PROGRAM",
+  "TERM_PROGRAM_VERSION",
+  "TMP",
+  "TMPDIR",
+  "TZ",
+  "USER",
+  "USERPROFILE",
+  "WINDIR",
+  "XDG_CACHE_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_RUNTIME_DIR",
+  "XDG_STATE_HOME",
+])
+
+function isAllowedEnvironmentName(name) {
+  const normalized = name.toUpperCase()
+  return ALLOWED_ENVIRONMENT_NAMES.has(normalized)
+    || normalized.startsWith("ANTHROPIC_")
+    || normalized.startsWith("CLAUDE_")
+    || normalized.startsWith("LC_")
+}
+
+function buildClaudeEnvironment(parentEnv) {
+  const env = {}
+  for (const [name, value] of Object.entries(parentEnv)) {
+    if (!isAllowedEnvironmentName(name) || typeof value !== "string") continue
+    if (value.trimStart().startsWith("()")) continue
+    env[name] = value
+  }
+  return env
+}
+
 export function buildClaudeCliInvocation({
   cwd,
   model = CLAUDE_MODEL,
   claudePath,
+  parentEnv = process.env,
 }) {
   if (typeof cwd !== "string" || !cwd.trim()) {
     throw new Error("Claude working directory must be a non-empty string")
@@ -26,6 +85,9 @@ export function buildClaudeCliInvocation({
   }
   if (typeof model !== "string" || !model.trim()) {
     throw new Error("Claude model must be a non-empty string")
+  }
+  if (!parentEnv || typeof parentEnv !== "object" || Array.isArray(parentEnv)) {
+    throw new Error("Claude parent environment must be an object")
   }
   return {
     command: claudePath,
@@ -55,6 +117,7 @@ export function buildClaudeCliInvocation({
     ],
     options: {
       cwd,
+      env: buildClaudeEnvironment(parentEnv),
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
@@ -205,6 +268,7 @@ export async function runClaudeCli({
   claudePath,
   parentSignal,
   timeoutMs = CLAUDE_TIMEOUT_MS,
+  forceKillDelayMs = FORCE_KILL_DELAY_MS,
   onMessage,
   spawnProcess = spawn,
 }) {
@@ -213,6 +277,9 @@ export async function runClaudeCli({
   }
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw new Error("Claude timeout must be a positive number")
+  }
+  if (!Number.isFinite(forceKillDelayMs) || forceKillDelayMs <= 0) {
+    throw new Error("Claude force-kill delay must be a positive number")
   }
   if (typeof spawnProcess !== "function") {
     throw new Error("Claude process factory must be a function")
@@ -259,7 +326,7 @@ export async function runClaudeCli({
           child.kill("SIGKILL")
         } catch {}
       }
-    }, FORCE_KILL_DELAY_MS)
+    }, forceKillDelayMs)
     forceKillTimer.unref?.()
   }
   const interrupt = (source, error) => {

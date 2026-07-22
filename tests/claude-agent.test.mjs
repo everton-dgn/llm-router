@@ -52,7 +52,10 @@ function spawnHarness(start, { closeOnKill = true } = {}) {
     const emit = (message) => child.stdout.write(`${JSON.stringify(message)}\n`)
     child.kill = (signal) => {
       child.kills.push(signal)
-      if (closeOnKill) close(null, signal)
+      const shouldClose = typeof closeOnKill === "function"
+        ? closeOnKill(signal)
+        : closeOnKill
+      if (shouldClose) close(null, signal)
       return true
     }
 
@@ -100,6 +103,74 @@ test("builds a tool-free Claude CLI invocation with a constant system prompt", (
   assert.equal(invocation.args[systemIndex + 1], CLAUDE_SYSTEM_PROMPT)
   assert.match(CLAUDE_SYSTEM_PROMPT, /You have no tools/)
   assert.match(CLAUDE_SYSTEM_PROMPT, /no access to files/)
+  assert.match(CLAUDE_SYSTEM_PROMPT, /no implicit Claude Code session state/)
+  assert.match(CLAUDE_SYSTEM_PROMPT, /sanitized transcript supplied on stdin/)
+  assert.doesNotMatch(CLAUDE_SYSTEM_PROMPT, /no access to .*session history/)
+})
+
+test("passes only required runtime, Claude authentication, proxy, and TLS variables", () => {
+  const parentEnv = {
+    HOME: "/safe/home",
+    PATH: "/safe/bin",
+    TMPDIR: "/safe/tmp",
+    LANG: "pt_BR.UTF-8",
+    LC_ALL: "pt_BR.UTF-8",
+    TERM: "xterm-256color",
+    XDG_CONFIG_HOME: "/safe/config",
+    ANTHROPIC_API_KEY: "fake-anthropic-token",
+    CLAUDE_CODE_OAUTH_TOKEN: "fake-claude-token",
+    HTTPS_PROXY: "http://proxy.invalid:8080",
+    NO_PROXY: "localhost,127.0.0.1",
+    SSL_CERT_FILE: "/safe/ca.pem",
+    NODE_EXTRA_CA_CERTS: "/safe/node-ca.pem",
+    ZAI_API_KEY: "must-not-reach-claude",
+    MINIMAX_API_KEY: "must-not-reach-claude",
+    UNRELATED_SECRET: "must-not-reach-claude",
+  }
+
+  const invocation = buildClaudeCliInvocation({
+    cwd: process.cwd(),
+    claudePath: process.execPath,
+    parentEnv,
+  })
+
+  assert.deepEqual(invocation.options.env, {
+    HOME: parentEnv.HOME,
+    PATH: parentEnv.PATH,
+    TMPDIR: parentEnv.TMPDIR,
+    LANG: parentEnv.LANG,
+    LC_ALL: parentEnv.LC_ALL,
+    TERM: parentEnv.TERM,
+    XDG_CONFIG_HOME: parentEnv.XDG_CONFIG_HOME,
+    ANTHROPIC_API_KEY: parentEnv.ANTHROPIC_API_KEY,
+    CLAUDE_CODE_OAUTH_TOKEN: parentEnv.CLAUDE_CODE_OAUTH_TOKEN,
+    HTTPS_PROXY: parentEnv.HTTPS_PROXY,
+    NO_PROXY: parentEnv.NO_PROXY,
+    SSL_CERT_FILE: parentEnv.SSL_CERT_FILE,
+    NODE_EXTRA_CA_CERTS: parentEnv.NODE_EXTRA_CA_CERTS,
+  })
+  assert.equal("ZAI_API_KEY" in invocation.options.env, false)
+  assert.equal("MINIMAX_API_KEY" in invocation.options.env, false)
+  assert.equal("UNRELATED_SECRET" in invocation.options.env, false)
+})
+
+test("filters exported shell functions even when their names are allowed", () => {
+  const invocation = buildClaudeCliInvocation({
+    cwd: process.cwd(),
+    claudePath: process.execPath,
+    parentEnv: {
+      HOME: "/safe/home",
+      PATH: "/safe/bin",
+      CLAUDE_CODE_OAUTH_TOKEN: "  () { echo exposed; }",
+      ANTHROPIC_CUSTOM_AUTH: "() { echo exposed; }",
+      "BASH_FUNC_helper%%": "() { echo exposed; }",
+    },
+  })
+
+  assert.deepEqual(invocation.options.env, {
+    HOME: "/safe/home",
+    PATH: "/safe/bin",
+  })
 })
 
 test("rejects invalid CLI invocation parameters", () => {
@@ -251,6 +322,31 @@ test("propagates parent abort and terminates the CLI", async () => {
   parent.abort()
   await assert.rejects(pending, /aborted by the OpenCode session/)
   assert.deepEqual(harness.children[0].kills, ["SIGTERM"])
+})
+
+test("escalates parent cancellation to SIGKILL when the child ignores SIGTERM", async () => {
+  let markStarted
+  const started = new Promise((resolve) => { markStarted = resolve })
+  const harness = spawnHarness(
+    () => { markStarted() },
+    { closeOnKill: (signal) => signal === "SIGKILL" },
+  )
+  const parent = new AbortController()
+  const pending = runClaudeCli({
+    request: "request",
+    cwd: process.cwd(),
+    claudePath: process.execPath,
+    parentSignal: parent.signal,
+    timeoutMs: 1_000,
+    forceKillDelayMs: 10,
+    spawnProcess: harness.spawnProcess,
+  })
+
+  await started
+  parent.abort()
+  await assert.rejects(pending, /aborted by the OpenCode session/)
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  assert.deepEqual(harness.children[0].kills, ["SIGTERM", "SIGKILL"])
 })
 
 test("enforces the timeout even when the child ignores termination", async () => {

@@ -7,6 +7,9 @@ REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 INSTALLER="$REPO_ROOT/opencode/install.sh"
 POLICY="$REPO_ROOT/opencode/lib/routing_policy.mjs"
 CONTRACT="$REPO_ROOT/opencode/lib/route_contract.mjs"
+CHECKPOINT="$REPO_ROOT/opencode/lib/claude_checkpoint.mjs"
+SESSION_METADATA="$REPO_ROOT/opencode/lib/session_metadata.mjs"
+VERIFICATION_CONFIG="$REPO_ROOT/config.json"
 TRASH_PATH=$(command -v trash || true)
 NODE_PATH=$(command -v node || true)
 [[ -n "$TRASH_PATH" ]] || { printf 'FAIL: trash is required\n' >&2; exit 1; }
@@ -30,6 +33,14 @@ assert_contains() {
   grep -F "$expected" "$file" >/dev/null || fail "$file does not contain: $expected"
 }
 
+assert_not_contains() {
+  local file=$1
+  local unexpected=$2
+  if grep -F "$unexpected" "$file" >/dev/null; then
+    fail "$file still contains: $unexpected"
+  fi
+}
+
 write_compatible_claude() {
   local target=$1
   printf '%s\n' \
@@ -51,6 +62,38 @@ write_compatible_claude() {
     '    "  --no-chrome" \' \
     '    "  --no-session-persistence" \' \
     '    "  --system-prompt <prompt>"' \
+    '  exit 0' \
+    'fi' \
+    'exit 0' | tee "$target" >/dev/null
+  chmod +x "$target"
+}
+
+write_tty_only_claude() {
+  local target=$1
+  printf '%s\n' \
+    '#!/bin/sh' \
+    'if [ "${1:-}" = "--help" ]; then' \
+    '  if [ -t 1 ]; then' \
+    '    printf "%s\n" "Usage: claude [options]"' \
+    '    printf "%s\n" \' \
+    '      "  -p, --print" \' \
+    '      "  --input-format <format>" \' \
+    '      "  --output-format <format>" \' \
+    '      "  --verbose" \' \
+    '      "  --include-partial-messages" \' \
+    '      "  --model <model>" \' \
+    '      "  --permission-mode <mode>" \' \
+    '      "  --safe-mode" \' \
+    '      "  --tools <tools...>" \' \
+    '      "  --strict-mcp-config" \' \
+    '      "  --mcp-config <configs...>" \' \
+    '      "  --disable-slash-commands" \' \
+    '      "  --no-chrome" \' \
+    '      "  --no-session-persistence" \' \
+    '      "  --system-prompt <prompt>"' \
+    '  else' \
+    '    printf "%s\n" "Usage: claude [options]" "  --agents <json>"' \
+    '  fi' \
     '  exit 0' \
     'fi' \
     'exit 0' | tee "$target" >/dev/null
@@ -105,8 +148,12 @@ assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'client.tui.
 assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'createDirectModelHandoff({'
 assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'createOpenCodeV2ClientFromLegacyTransport({'
 assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'client: v2Client,'
-assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'v2Client.session.messages('
-assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'buildSafeClaudeConversation(messages, input.message.id)'
+assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'v2Client.v2.session.context('
+assert_not_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'v2Client.session.messages('
+assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'CHECKPOINT_TIMEOUT_MS = 30_000'
+assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'unwrapOpenCodeV2Context(response)'
+assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" '"--summarize", "--json"'
+assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'updateSessionMetadata({'
 assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" '"Auto"'
 assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" '"Manual fixado"'
 assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" '"Manual reutilizado"'
@@ -120,18 +167,41 @@ assert_contains "$REPO_ROOT/opencode/lib/opencode_transport.mjs" 'fetch: config.
 assert_contains "$REPO_ROOT/opencode/lib/direct_handoff.mjs" 'output.message.agent = selection.target.agent'
 assert_contains "$REPO_ROOT/opencode/lib/direct_handoff.mjs" 'output.message.model = {'
 assert_contains "$REPO_ROOT/opencode/lib/direct_handoff.mjs" 'MANUAL_TARGET_METADATA_KEY'
+assert_contains "$REPO_ROOT/opencode/lib/direct_handoff.mjs" 'updateSessionMetadata({'
 assert_contains "$REPO_ROOT/opencode/lib/direct_handoff.mjs" '{ sessionID, agent: "router-manual" }'
-assert_contains "$REPO_ROOT/opencode/lib/claude_context.mjs" 'part.synthetic !== true'
-assert_contains "$REPO_ROOT/opencode/lib/claude_context.mjs" 'message.info.summary === true'
+assert_contains "$REPO_ROOT/opencode/lib/claude_context.mjs" 'message?.type === "user"'
+assert_contains "$REPO_ROOT/opencode/lib/claude_context.mjs" 'message?.type !== "assistant"'
+assert_contains "$REPO_ROOT/opencode/lib/claude_context.mjs" 'message.error !== undefined'
+[[ -f "$CHECKPOINT" ]] || fail "safe Claude checkpoint module is missing"
+[[ -f "$SESSION_METADATA" ]] || fail "serialized session metadata module is missing"
+assert_contains "$SESSION_METADATA" 'updatesBySession'
+assert_contains "$CHECKPOINT" 'CLAUDE_CHECKPOINT_METADATA_KEY'
+assert_contains "$CHECKPOINT" 'createClaudeCheckpointLifecycle'
+assert_contains "$CHECKPOINT" 'response?.data?.data'
 assert_contains "$REPO_ROOT/opencode/providers/claude_agent_provider.mjs" 'specificationVersion: "v3"'
-assert_contains "$REPO_ROOT/opencode/providers/claude_agent_provider.mjs" 'CLAUDE_MAX_INPUT_BYTES = 128 * 1024'
+assert_contains "$REPO_ROOT/opencode/providers/claude_agent_provider.mjs" 'CLAUDE_MAX_INPUT_BYTES = 2 * 1024 * 1024'
+assert_contains "$REPO_ROOT/opencode/providers/claude_agent_provider.mjs" 'maxOutputBytes'
 assert_contains "$REPO_ROOT/opencode/lib/claude_agent.mjs" 'from "node:child_process"'
 assert_contains "$REPO_ROOT/opencode/lib/claude_agent.mjs" '"--output-format",'
 assert_contains "$REPO_ROOT/opencode/lib/claude_agent.mjs" '"--tools",'
 assert_contains "$REPO_ROOT/opencode/lib/claude_agent.mjs" '"--safe-mode",'
 assert_contains "$REPO_ROOT/opencode/lib/claude_agent.mjs" '"--no-session-persistence",'
 assert_contains "$REPO_ROOT/opencode/tools/repo_query.ts" 'runRepositoryQuery(args, context.worktree)'
+assert_not_contains "$REPO_ROOT/README.md" 'somente a última mensagem do usuário'
+assert_not_contains "$REPO_ROOT/README.md" 'como um teto conservador de bytes UTF-8'
+assert_not_contains "$REPO_ROOT/README.md" 'Instala as dependências pinadas'
 jq -e '.dependencies == {"@opencode-ai/plugin":"1.18.4","@opencode-ai/sdk":"1.18.4"}' "$REPO_ROOT/opencode/package.json" >/dev/null || fail "bundle dependencies are not pinned"
+jq -e '
+  .verification.rules[]
+  | select(.name == "llm-router-opencode-tests")
+  | .gates[]
+  | select(.type == "command" and .argv[0:2] == ["node", "--test"])
+  | (.argv | index("tests/router-handoff.test.mjs")) != null
+    and (.argv | index("tests/claude-agent.test.mjs")) != null
+    and (.argv | index("tests/claude-agent-provider.test.mjs")) != null
+    and (.argv | index("tests/repo-query.test.mjs")) != null
+    and (.argv | index("tests/router-prompt-guard.test.mjs")) == null
+' "$VERIFICATION_CONFIG" >/dev/null || fail "OpenCode verification gate does not run the current Node test suite"
 
 "$NODE_PATH" --input-type=module - "$REPO_ROOT/opencode/lib/opencode_transport.mjs" <<'NODE'
 import { pathToFileURL } from "node:url"
@@ -174,6 +244,8 @@ const routeCases = [
   ["minimax", "conte os arquivos. Não altere arquivos.", "minimax"],
   ["minimax", "traduza esta mensagem para português", "glm"],
   ["claude", "planeje uma arquitetura", "claude"],
+  ["claude", "corrija uma condição de corrida", "codex"],
+  ["claude", "analise, mas não altere nenhum arquivo", "claude"],
   ["codex", "corrija uma condição de corrida", "codex"],
 ]
 for (const [route, request, expected] of routeCases) {
@@ -215,6 +287,21 @@ CONFIG_DIR="$FIXTURE/config"
 BACKUP_ROOT="$FIXTURE/backups"
 CLAUDE_PATH="$FIXTURE/claude"
 write_compatible_claude "$CLAUDE_PATH"
+
+TTY_ONLY_CLAUDE="$FIXTURE/tty-only-claude"
+write_tty_only_claude "$TTY_ONLY_CLAUDE"
+if "$TTY_ONLY_CLAUDE" --help | grep -F -- '--safe-mode' >/dev/null; then
+  fail "TTY-only Claude fixture exposed the complete help through a pipe"
+fi
+bash "$INSTALLER" \
+  --dry-run \
+  --config-dir "$FIXTURE/tty-help-config" \
+  --backup-root "$FIXTURE/tty-help-backups" \
+  --router-path "$REPO_ROOT/route" \
+  --claude-path "$TTY_ONLY_CLAUDE" >/dev/null \
+  || fail "installer rejected Claude flags that are visible only in a TTY"
+[[ ! -e "$FIXTURE/tty-help-config" ]] || fail "TTY help dry-run created target config"
+[[ ! -e "$FIXTURE/tty-help-backups" ]] || fail "TTY help dry-run created backups"
 
 INCOMPATIBLE_CLAUDE="$FIXTURE/incompatible-claude"
 printf '%s\n' \
@@ -278,6 +365,8 @@ FIRST_OUTPUT=$(bash "$INSTALLER" \
 assert_contains "$CONFIG_DIR/plugins/llm_router_handoff.ts" "const ROUTER_PATH = \"$REPO_ROOT/route\""
 cmp -s "$REPO_ROOT/opencode/lib/direct_handoff.mjs" "$CONFIG_DIR/lib/direct_handoff.mjs" || fail "installed handoff helper differs"
 cmp -s "$REPO_ROOT/opencode/lib/claude_context.mjs" "$CONFIG_DIR/lib/claude_context.mjs" || fail "installed Claude context helper differs"
+cmp -s "$REPO_ROOT/opencode/lib/claude_checkpoint.mjs" "$CONFIG_DIR/lib/claude_checkpoint.mjs" || fail "installed Claude checkpoint helper differs"
+cmp -s "$REPO_ROOT/opencode/lib/session_metadata.mjs" "$CONFIG_DIR/lib/session_metadata.mjs" || fail "installed session metadata helper differs"
 cmp -s "$REPO_ROOT/opencode/lib/opencode_transport.mjs" "$CONFIG_DIR/lib/opencode_transport.mjs" || fail "installed OpenCode transport helper differs"
 cmp -s "$REPO_ROOT/opencode/lib/claude_agent.mjs" "$CONFIG_DIR/lib/claude_agent.mjs" || fail "installed Claude helper differs"
 cmp -s "$REPO_ROOT/opencode/providers/claude_agent_provider.mjs" "$CONFIG_DIR/providers/claude_agent_provider.mjs" || fail "installed Claude provider differs"
