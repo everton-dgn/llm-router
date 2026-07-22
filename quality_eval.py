@@ -244,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
             selection,
         )
         call_count = manifest["physical_call_count"]
-        if call_count > max_calls:
+        if call_count > max_calls and not args.validate_only:
             raise EvaluationError(
                 f"benchmark exigiria {call_count} chamadas, acima de --max-calls={max_calls}"
             )

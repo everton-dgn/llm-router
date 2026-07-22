@@ -2623,6 +2623,42 @@ class BenchmarkV2Tests(unittest.TestCase):
         self.assertIn(str(blind_path), stdout.getvalue())
         self.assertNotIn(str(mapping_path), stdout.getvalue())
 
+    def test_validate_only_checks_a_plan_larger_than_execution_limit(self) -> None:
+        output_path = self.temp_root / "validate-only.json"
+        dataset = validate_dataset({"version": 2, "cases": [make_v2_case()]})
+        stdout = io.StringIO()
+        with (
+            patch("quality_eval.load_config", return_value=self.config),
+            patch("quality_eval.load_dataset", return_value=dataset),
+            patch("quality_eval.validate_routes", return_value=["alpha"]),
+            patch(
+                "quality_eval.build_execution_manifest",
+                return_value={"physical_call_count": 468, "slot_count": 144},
+            ),
+            patch(
+                "quality_eval.prepare_execution_config",
+                return_value=(self.config, []),
+            ),
+            patch("quality_eval.preflight", return_value={}),
+            patch("quality_eval.run_benchmark") as execute_benchmark,
+            redirect_stdout(stdout),
+        ):
+            exit_code = main(
+                [
+                    "--config",
+                    "config.json",
+                    "--cases",
+                    "cases.json",
+                    "--output",
+                    str(output_path),
+                    "--validate-only",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("468 chamadas físicas planejadas", stdout.getvalue())
+        execute_benchmark.assert_not_called()
+
     def test_rubric_hash_changes_when_frozen_rubric_changes(self) -> None:
         first_case = make_v2_case(
             evaluation_mode="human", assertions=[], human_rubric=make_human_rubric()
