@@ -144,6 +144,7 @@ RENDER_DIR=$(mktemp -d "${TMPDIR:-/tmp}/llm-router-opencode.XXXXXX")
 mkdir -p "$RENDER_DIR/tools" "$RENDER_DIR/lib" "$RENDER_DIR/plugins" "$RENDER_DIR/providers"
 cp "$SCRIPT_DIR/package.json" "$RENDER_DIR/package.required.json"
 cp "$SCRIPT_DIR/lib/claude_agent.mjs" "$RENDER_DIR/lib/claude_agent.mjs"
+cp "$SCRIPT_DIR/lib/claude_context.mjs" "$RENDER_DIR/lib/claude_context.mjs"
 cp "$SCRIPT_DIR/lib/direct_handoff.mjs" "$RENDER_DIR/lib/direct_handoff.mjs"
 cp "$SCRIPT_DIR/lib/opencode_transport.mjs" "$RENDER_DIR/lib/opencode_transport.mjs"
 cp "$SCRIPT_DIR/lib/repo_query.mjs" "$RENDER_DIR/lib/repo_query.mjs"
@@ -295,6 +296,7 @@ retire_file() {
 SOURCES=(
   "$RENDER_DIR/package.json"
   "$RENDER_DIR/lib/claude_agent.mjs"
+  "$RENDER_DIR/lib/claude_context.mjs"
   "$RENDER_DIR/lib/direct_handoff.mjs"
   "$RENDER_DIR/lib/opencode_transport.mjs"
   "$RENDER_DIR/lib/repo_query.mjs"
@@ -308,6 +310,7 @@ SOURCES=(
 TARGETS=(
   "$CONFIG_DIR/package.json"
   "$CONFIG_DIR/lib/claude_agent.mjs"
+  "$CONFIG_DIR/lib/claude_context.mjs"
   "$CONFIG_DIR/lib/direct_handoff.mjs"
   "$CONFIG_DIR/lib/opencode_transport.mjs"
   "$CONFIG_DIR/lib/repo_query.mjs"

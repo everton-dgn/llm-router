@@ -68,13 +68,17 @@ CONFIG_TEMPLATE="$REPO_ROOT/opencode/opencode.jsonc"
 jq empty "$CONFIG_TEMPLATE"
 jq -e '
   .model == "ollama/hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M"
-  and .default_agent == "router"
-  and .agent.router.model == .model
-  and .agent.router.permission == {"*":"deny"}
-  and .agent.minimax.mode == "all"
-  and .agent.glm.mode == "all"
-  and .agent.claude.mode == "all"
-  and .agent.codex.mode == "all"
+  and .default_agent == "router-auto"
+  and .agent["router-auto"].mode == "primary"
+  and .agent["router-auto"].model == .model
+  and .agent["router-auto"].permission == {"*":"deny"}
+  and .agent["router-manual"].mode == "primary"
+  and .agent["router-manual"].model == .model
+  and .agent["router-manual"].permission == {"*":"deny"}
+  and .agent.minimax.mode == "subagent"
+  and .agent.glm.mode == "subagent"
+  and .agent.claude.mode == "subagent"
+  and .agent.codex.mode == "subagent"
   and .agent.claude.model == "claude-agent/claude-opus-4-8"
   and .agent.claude.permission == {"*":"deny"}
   and .provider["claude-agent"].npm == "__CLAUDE_AGENT_PROVIDER_URL__"
@@ -82,7 +86,7 @@ jq -e '
   and .provider["claude-agent"].options.claudePath == "__CLAUDE_CODE_PATH__"
   and .provider["claude-agent"].models["claude-opus-4-8"].limit == {"context":200000,"output":32000}
   and .agent.codex.model == "openai/gpt-5.6-sol"
-  and (.agent | keys | sort) == ["claude", "codex", "glm", "minimax", "router"]
+  and (.agent | keys | sort) == ["claude", "codex", "glm", "minimax", "router-auto", "router-manual"]
 ' "$CONFIG_TEMPLATE" >/dev/null || fail "direct handoff config is invalid"
 
 for removed in \
@@ -98,18 +102,27 @@ done
 
 assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" '"--classify", "--json", "--", request'
 assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'client.tui.showToast'
+assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'createDirectModelHandoff({'
 assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'createOpenCodeV2ClientFromLegacyTransport({'
-assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'persistDirectModelSelection('
+assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'client: v2Client,'
+assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'v2Client.session.messages('
+assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'buildSafeClaudeConversation(messages, input.message.id)'
+assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" '"Auto"'
+assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" '"Manual fixado"'
+assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" '"Manual reutilizado"'
 assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'output.options.cwd = worktree || directory'
+if grep -E 'persistDirectModelSelection|switchModel' \
+  "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" >/dev/null; then
+  fail "handoff plugin still persists the composer selection"
+fi
 assert_contains "$REPO_ROOT/opencode/lib/opencode_transport.mjs" 'const transport = legacyClient?._client'
 assert_contains "$REPO_ROOT/opencode/lib/opencode_transport.mjs" 'fetch: config.fetch'
-if grep -F 'serverUrl' "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" >/dev/null; then
-  fail "handoff plugin still creates an independent HTTP transport"
-fi
-assert_contains "$REPO_ROOT/opencode/lib/direct_handoff.mjs" 'output.message.agent = target.agent'
+assert_contains "$REPO_ROOT/opencode/lib/direct_handoff.mjs" 'output.message.agent = selection.target.agent'
 assert_contains "$REPO_ROOT/opencode/lib/direct_handoff.mjs" 'output.message.model = {'
-assert_contains "$REPO_ROOT/opencode/lib/direct_handoff.mjs" 'client.v2.session.switchAgent('
-assert_contains "$REPO_ROOT/opencode/lib/direct_handoff.mjs" 'client.v2.session.switchModel('
+assert_contains "$REPO_ROOT/opencode/lib/direct_handoff.mjs" 'MANUAL_TARGET_METADATA_KEY'
+assert_contains "$REPO_ROOT/opencode/lib/direct_handoff.mjs" '{ sessionID, agent: "router-manual" }'
+assert_contains "$REPO_ROOT/opencode/lib/claude_context.mjs" 'part.synthetic !== true'
+assert_contains "$REPO_ROOT/opencode/lib/claude_context.mjs" 'message.info.summary === true'
 assert_contains "$REPO_ROOT/opencode/providers/claude_agent_provider.mjs" 'specificationVersion: "v3"'
 assert_contains "$REPO_ROOT/opencode/providers/claude_agent_provider.mjs" 'CLAUDE_MAX_INPUT_BYTES = 128 * 1024'
 assert_contains "$REPO_ROOT/opencode/lib/claude_agent.mjs" 'from "node:child_process"'
@@ -117,9 +130,37 @@ assert_contains "$REPO_ROOT/opencode/lib/claude_agent.mjs" '"--output-format",'
 assert_contains "$REPO_ROOT/opencode/lib/claude_agent.mjs" '"--tools",'
 assert_contains "$REPO_ROOT/opencode/lib/claude_agent.mjs" '"--safe-mode",'
 assert_contains "$REPO_ROOT/opencode/lib/claude_agent.mjs" '"--no-session-persistence",'
-assert_contains "$REPO_ROOT/opencode/lib/direct_handoff.mjs" 'new AggregateError('
 assert_contains "$REPO_ROOT/opencode/tools/repo_query.ts" 'runRepositoryQuery(args, context.worktree)'
 jq -e '.dependencies == {"@opencode-ai/plugin":"1.18.4","@opencode-ai/sdk":"1.18.4"}' "$REPO_ROOT/opencode/package.json" >/dev/null || fail "bundle dependencies are not pinned"
+
+"$NODE_PATH" --input-type=module - "$REPO_ROOT/opencode/lib/opencode_transport.mjs" <<'NODE'
+import { pathToFileURL } from "node:url"
+
+const { createOpenCodeV2ClientFromLegacyTransport } = await import(pathToFileURL(process.argv[2]))
+const inProcessFetch = () => {}
+const expectedClient = { session: {} }
+let received
+const actualClient = createOpenCodeV2ClientFromLegacyTransport({
+  legacyClient: {
+    _client: {
+      getConfig: () => ({
+        baseUrl: "http://opencode.internal",
+        headers: { authorization: "test" },
+        fetch: inProcessFetch,
+      }),
+    },
+  },
+  createV2Client: (config) => {
+    received = config
+    return expectedClient
+  },
+  directory: "/workspace",
+})
+if (actualClient !== expectedClient) throw new Error("shim did not return the v2 client")
+if (received.baseUrl !== "http://opencode.internal") throw new Error("shim lost baseUrl")
+if (received.fetch !== inProcessFetch) throw new Error("shim lost in-process fetch")
+if (received.directory !== "/workspace") throw new Error("shim lost directory")
+NODE
 
 "$NODE_PATH" --input-type=module - "$POLICY" "$CONTRACT" <<'NODE'
 import { pathToFileURL } from "node:url"
@@ -200,7 +241,7 @@ fi
 
 mkdir -p "$CONFIG_DIR/tools" "$CONFIG_DIR/plugins" "$CONFIG_DIR/lib" "$CONFIG_DIR/providers"
 printf '%s\n' '{"previous":true}' | tee "$CONFIG_DIR/opencode.jsonc" >/dev/null
-printf '%s\n' '{"private":true,"dependencies":{"user-package":"7.0.0","@anthropic-ai/claude-agent-sdk":"0.3.100","@opencode-ai/plugin":"0.1.0"},"scripts":{"keep":"true"}}' | tee "$CONFIG_DIR/package.json" >/dev/null
+printf '%s\n' '{"private":true,"dependencies":{"user-package":"7.0.0","@anthropic-ai/claude-agent-sdk":"0.3.100","@opencode-ai/plugin":"0.1.0","@opencode-ai/sdk":"0.1.0"},"scripts":{"keep":"true"}}' | tee "$CONFIG_DIR/package.json" >/dev/null
 printf '%s\n' 'stale helper' | tee "$CONFIG_DIR/lib/claude_agent.mjs" >/dev/null
 for legacy in \
   "$CONFIG_DIR/tools/llm_route.ts" \
@@ -236,6 +277,7 @@ FIRST_OUTPUT=$(bash "$INSTALLER" \
 
 assert_contains "$CONFIG_DIR/plugins/llm_router_handoff.ts" "const ROUTER_PATH = \"$REPO_ROOT/route\""
 cmp -s "$REPO_ROOT/opencode/lib/direct_handoff.mjs" "$CONFIG_DIR/lib/direct_handoff.mjs" || fail "installed handoff helper differs"
+cmp -s "$REPO_ROOT/opencode/lib/claude_context.mjs" "$CONFIG_DIR/lib/claude_context.mjs" || fail "installed Claude context helper differs"
 cmp -s "$REPO_ROOT/opencode/lib/opencode_transport.mjs" "$CONFIG_DIR/lib/opencode_transport.mjs" || fail "installed OpenCode transport helper differs"
 cmp -s "$REPO_ROOT/opencode/lib/claude_agent.mjs" "$CONFIG_DIR/lib/claude_agent.mjs" || fail "installed Claude helper differs"
 cmp -s "$REPO_ROOT/opencode/providers/claude_agent_provider.mjs" "$CONFIG_DIR/providers/claude_agent_provider.mjs" || fail "installed Claude provider differs"
@@ -243,6 +285,9 @@ jq -e --arg provider "file://$CONFIG_DIR/providers/claude_agent_provider.mjs" --
   .provider["claude-agent"].npm == $provider
   and .provider["claude-agent"].options.claudePath == $claude
   and .provider["claude-agent"].models["claude-opus-4-8"].limit == {"context":200000,"output":32000}
+  and .default_agent == "router-auto"
+  and .agent["router-auto"].mode == "primary"
+  and .agent["router-manual"].mode == "primary"
   and .agent.claude.model == "claude-agent/claude-opus-4-8"
 ' "$CONFIG_DIR/opencode.jsonc" >/dev/null || fail "installed Claude provider config is invalid"
 for legacy in \
@@ -353,4 +398,4 @@ jq -e --arg provider "$SPECIAL_PROVIDER_URL" --arg claude "$SPECIAL_CLAUDE" '
 ' "$SPECIAL_CONFIG/opencode.jsonc" >/dev/null \
   || fail "special paths were not preserved in opencode.jsonc"
 
-printf 'PASS: direct handoff, tool-free Claude CLI provider, safe install, backup, retirement and idempotence\n'
+printf 'PASS: dual-router fixed-composer handoff, tool-free Claude CLI, safe install, retirement and idempotence\n'
