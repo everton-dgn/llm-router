@@ -106,6 +106,41 @@ test('creates a missing release only with explicit opt-in', () => {
   assert.equal(calls.some(args => args[0] === 'release'), true)
 })
 
+test('reads release notes from the verified commit instead of the checkout', () => {
+  const calls = []
+  const result = syncReleaseNotes(
+    [...verifiedArgs, '--tag', 'v0.2.0'],
+    {
+      execFileSync: (command, args) => {
+        calls.push([command, args])
+        if (
+          command === 'git' &&
+          args[0] === 'show' &&
+          args[1] === `${expectedCommit}:CHANGELOG.md`
+        ) {
+          return changelog
+        }
+        if (command === 'git') {
+          return `${expectedCommit}\trefs/tags/v0.2.0^{}`
+        }
+        if (args[0] === 'api' && args.length === 2) {
+          return JSON.stringify({ id: 42 })
+        }
+        return ''
+      }
+    }
+  )
+  assert.deepEqual(result, { action: 'updated', tag: 'v0.2.0' })
+  assert.equal(
+    calls.some(([command, args]) =>
+      command === 'git' &&
+      args[0] === 'show' &&
+      args[1] === `${expectedCommit}:CHANGELOG.md`
+    ),
+    true
+  )
+})
+
 test('updates the release when another run creates it first', () => {
   const calls = []
   let getAttempts = 0

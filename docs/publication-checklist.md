@@ -1,16 +1,25 @@
 # Public repository checklist
 
-The repository must remain private until every pre-publication item below is
-complete. Changing repository visibility requires a separate, explicit
-approval from the owner.
+This repository is public. Use this checklist when changing repository
+settings, release automation, contribution paths, or public project metadata.
 
-## Before changing visibility
+## Repository controls
 
-- Merge the release-readiness branch through the normal pull request workflow.
-- Record the required `main` checks: `Commit messages` and every CI test matrix
-  check. The current private repository plan does not expose branch protection,
-  so these rules must be enabled in the publication maintenance window.
-- Confirm that the latest `main` commit has a successful CI run.
+- Keep the default branch on `main`.
+- Keep the active `main` ruleset that blocks deletion and non-fast-forward
+  updates and requires pull requests.
+- Allow only normal merge commits. Do not enable squash or rebase merges.
+- Keep required CI and commit-message checks aligned with the current workflow
+  job names.
+- Keep GitHub Actions on read-only default permissions.
+- Enable the repository setting that lets GitHub Actions create and approve
+  pull requests. GitHub exposes creation and approval as one setting, although
+  the automatic release workflow never calls an approval API.
+- Pin third-party GitHub Actions to immutable commit SHAs.
+- Review ruleset bypass actors after any collaborator or team change.
+
+## Public project surface
+
 - Review the repository description, topics, default branch, issue templates,
   pull request template, license, contribution guide, Code of Conduct, support
   policy, and security policy.
@@ -18,47 +27,53 @@ approval from the owner.
   local configuration, or user data.
 - Confirm that package and action dependencies are pinned by the lockfiles or
   immutable action commit SHAs.
-
-## Visibility change and security channel
-
-Perform these steps in one maintenance window:
-
-1. Obtain explicit approval to make `everton-dgn/llm-router` public.
-2. Change the repository visibility to public.
-3. Enable GitHub private vulnerability reporting in the repository security
-   settings, or run:
-
-   ```bash
-   gh api \
-     --method PUT \
-     repos/everton-dgn/llm-router/private-vulnerability-reporting
-   ```
-
-4. Verify the setting:
-
-   ```bash
-   gh api repos/everton-dgn/llm-router/private-vulnerability-reporting
-   ```
-
-5. Open the private report form and confirm that it is available:
-   `https://github.com/everton-dgn/llm-router/security/advisories/new`.
-6. Enable branch protection or a repository ruleset for `main`, requiring the
-   commit-message check and every CI matrix check.
-7. Require GitHub Actions to use immutable commit SHAs.
-8. Verify that the issue chooser routes security reports to the private form.
-
-If private vulnerability reporting cannot be enabled and verified, change the
-repository back to private and fix the security channel before announcing it.
-
-## After publication
-
 - Verify the GitHub community profile and every link in `README.md`.
-- Confirm that Dependabot can read the GitHub Actions configuration,
-  `pnpm-lock.yaml`, and `opencode/pnpm-lock.yaml`.
-- Create the first stable tag only after the exact source commit has a
-  successful CI run on `main`.
-- Confirm that the tag workflow creates release notes from the matching
-  `CHANGELOG.md` section.
 - Test installation in a new clone, including the automatic Lefthook setup.
-- Announce the project only after the security form, CI badge, issue forms, and
-  installation path have been checked from an external account.
+
+## Security reporting
+
+Private vulnerability reporting must remain enabled. Verify it in the
+repository security settings or with:
+
+```bash
+gh api repos/everton-dgn/llm-router/private-vulnerability-reporting
+```
+
+Open the private report form and confirm that it is available:
+`https://github.com/everton-dgn/llm-router/security/advisories/new`.
+
+The issue chooser must route vulnerability reports to the private form. Do not
+ask reporters to disclose vulnerabilities in public issues.
+
+## Automatic releases
+
+Before changing `.github/workflows/auto-release.yml` or its release scripts:
+
+- Read [RELEASE.md](RELEASE.md).
+- Preserve the empty top-level `permissions` map.
+- Grant `actions: read`, `contents: write`, and `pull-requests: write` only to
+  the release job.
+- Accept only a successful `CI` run caused by a same-repository push to `main`.
+- Preserve the shared non-cancelling concurrency group.
+- Preserve exact source-run, pull-request identity, merge topology, payload,
+  tag, and source-CI validation.
+- Use only `merge_method=merge`.
+- Keep the annotated tag on the validated normal merge commit.
+- Fail closed before tagging or publishing when an existing branch, pull
+  request, merge commit, tag, or CI result does not match the expected state.
+
+Fork pull requests do not receive the privileged release token and cannot
+start the release job. After a maintainer merges a contribution, the resulting
+same-repository `main` push must pass CI before it can enter the release flow.
+
+Verify recovery behavior after changes: an interrupted run must reuse only
+matching state, stale pre-merge work must be closed and removed, and a retry
+after merge must recover the validated merge commit before creating or
+repairing its tag and GitHub Release.
+
+## Dependency maintenance
+
+- Keep Dependabot limited to GitHub Actions updates.
+- Confirm that Dependabot can read every workflow in `.github/workflows/`.
+- Review action updates for permission changes and keep immutable SHA pins.
+- Run the deterministic CI gate before merging dependency updates.

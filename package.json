@@ -26,9 +26,7 @@
     "test:python": "uv run --no-project --no-python-downloads python -m unittest tests/test_stage_verifier.py tests/test_quality_eval.py",
     "release:preflight": "node scripts/release-preflight.mjs",
     "release:next": "pnpm release:preflight && node scripts/set-release-version.mjs --mode auto --print",
-    "release:check": "pnpm test:all",
-    "release:push": "node scripts/push-current-release-tag.mjs",
-    "release:auto": "node scripts/run-auto-release.mjs"
+    "release:check": "pnpm test:all"
   },
   "dependencies": {
     "jsonc-parser": "3.3.1"

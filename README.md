@@ -226,7 +226,7 @@ the agent-specific debug commands documented in
 | [Development](docs/development.md) | Local validation and contribution workflow |
 | [Troubleshooting](docs/troubleshooting.md) | Diagnostics and safe recovery |
 | [Release](docs/RELEASE.md) | Changelog, SemVer, tags, and GitHub Releases |
-| [Public repository checklist](docs/publication-checklist.md) | Visibility and security publication gates |
+| [Public repository checklist](docs/publication-checklist.md) | Repository controls, security reporting, and publication maintenance |
 | [Benchmark](BENCHMARK.md) | Offline methodology, results, and limitations |
 
 ## Development

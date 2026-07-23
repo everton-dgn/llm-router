@@ -2,10 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-  assertDirectInvocationIsReadOnly,
   collectCommitMessages,
   deriveAutomaticVersion,
-  runSetReleaseVersion
+  runReleaseVersionPreview
 } from './set-release-version.mjs'
 
 test('derives the first release from repository history', () => {
@@ -62,7 +61,7 @@ test('reports local and remote candidate tags as conflicts', () => {
   }
   assert.throws(
     () =>
-      runSetReleaseVersion(['--mode', 'auto', '--print'], {
+      runReleaseVersionPreview(['--mode', 'auto', '--print'], {
         ...dependencies,
         hasLocalTag: () => true,
         hasRemoteTag: () => false
@@ -71,7 +70,7 @@ test('reports local and remote candidate tags as conflicts', () => {
   )
   assert.throws(
     () =>
-      runSetReleaseVersion(['--mode', 'auto', '--print'], {
+      runReleaseVersionPreview(['--mode', 'auto', '--print'], {
         ...dependencies,
         hasLocalTag: () => false,
         hasRemoteTag: () => true
@@ -81,11 +80,8 @@ test('reports local and remote candidate tags as conflicts', () => {
 })
 
 test('allows only read-only automatic version discovery from the CLI', () => {
-  assert.doesNotThrow(() =>
-    assertDirectInvocationIsReadOnly(['--mode', 'auto', '--print'])
-  )
   assert.throws(
-    () => assertDirectInvocationIsReadOnly(['--mode', 'minor']),
-    /Direct version mutation is unsupported/
+    () => runReleaseVersionPreview(['--mode', 'minor']),
+    /--mode auto --print/
   )
 })
