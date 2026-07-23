@@ -1,0 +1,49 @@
+{
+  "$schema": "./llm-router.policy.schema.json",
+  "schemaVersion": 1,
+  "defaultProfile": "native",
+  "agents": {
+    "router": { "profile": "native" },
+    "router-auto": { "profile": "native" },
+    "router-adaptive": { "profile": "native" },
+    "router-manual": { "profile": "native" },
+    "minimax": { "profile": "native" },
+    "glm": { "profile": "native" },
+    "claude": { "profile": "native" },
+    "codex": { "profile": "native" }
+  },
+  "models": {
+    "minimax-coding-plan/MiniMax-M3": { "profile": "native" },
+    "zai-coding-plan/glm-5.2": { "profile": "native" },
+    "claude-agent/claude-opus-4-8": { "profile": "native" },
+    "openai/gpt-5.6-sol": { "profile": "native" }
+  },
+  "profiles": {
+    "native": {
+      "permissions": [],
+      "limits": {}
+    },
+    "restricted": {
+      "permissions": [
+        { "permission": "*", "pattern": "*", "action": "ask" },
+        { "permission": "read", "pattern": "*", "action": "allow" },
+        { "permission": "grep", "pattern": "*", "action": "allow" },
+        { "permission": "glob", "pattern": "*", "action": "allow" },
+        { "permission": "list", "pattern": "*", "action": "allow" },
+        { "permission": "external_directory", "pattern": "*", "action": "deny" },
+        { "permission": "doom_loop", "pattern": "*", "action": "deny" }
+      ],
+      "limits": {
+        "max_steps": 40,
+        "max_tool_calls": 80,
+        "max_child_depth": 1
+      }
+    },
+    "full": {
+      "permissions": [
+        { "permission": "*", "pattern": "*", "action": "allow" }
+      ],
+      "limits": {}
+    }
+  }
+}

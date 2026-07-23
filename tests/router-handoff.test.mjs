@@ -5,6 +5,7 @@ import {
   createDirectModelHandoff,
   MANUAL_TARGET_METADATA_KEY,
 } from "../opencode/lib/direct_handoff.mjs"
+import { ROUTING_STATE_METADATA_KEY } from "../opencode/lib/adaptive_routing.mjs"
 import { CLAUDE_CHECKPOINT_METADATA_KEY } from "../opencode/lib/claude_checkpoint.mjs"
 import { createOpenCodeV2ClientFromLegacyTransport } from "../opencode/lib/opencode_transport.mjs"
 import { routeCapabilities } from "../opencode/lib/routing_policy.mjs"
@@ -30,6 +31,25 @@ function userMessage(text, agent = "router-auto", sessionID = "session-1") {
       },
       parts: [{ type: "text", text }],
     },
+  }
+}
+
+function routingState({
+  sessionID = "session-1",
+  mode,
+  currentRoute,
+  turnsOnCurrent = 1,
+  cooldownTurnsRemaining = 0,
+  ...extra
+}) {
+  return {
+    schemaVersion: 1,
+    sessionID,
+    mode,
+    currentRoute,
+    turnsOnCurrent,
+    cooldownTurnsRemaining,
+    ...extra,
   }
 }
 
@@ -72,8 +92,8 @@ test("declares deterministic capabilities for every route", () => {
       canHandleNonLiteralText: true,
       canMutateProject: true,
       canReadRepository: true,
-      canUseAgentMentions: false,
-      canUseAttachments: false,
+      canUseAgentMentions: true,
+      canUseAttachments: true,
       canUseExternalTools: true,
     },
     codex: {
@@ -163,7 +183,7 @@ for (const [route, agent, providerID, modelID] of destinations) {
   })
 }
 
-test("auto reclassifies every message without changing session selection", async () => {
+test("auto reclassifies every message and persists its latest route", async () => {
   const requests = []
   const announcements = []
   const routes = ["glm", "claude"]
@@ -187,7 +207,14 @@ test("auto reclassifies every message without changing session selection", async
   assert.equal(second.input.agent, "router-auto")
   assert.equal(first.output.message.agent, "glm")
   assert.equal(second.output.message.agent, "claude")
-  assert.deepEqual(store.calls.map(([method]) => method), ["get", "get"])
+  assert.deepEqual(
+    store.calls.map(([method]) => method),
+    ["get", "get", "update", "get", "get", "update"],
+  )
+  assert.deepEqual(
+    store.sessions["session-1"].metadata[ROUTING_STATE_METADATA_KEY],
+    routingState({ mode: "auto", currentRoute: "claude" }),
+  )
   assert.deepEqual(
     announcements.map(({ mode, reused, route }) => ({ mode, reused, route })),
     [
@@ -417,7 +444,7 @@ test("auto ignores fully negated command, repository, and web capabilities", asy
   assert.equal(message.output.message.agent, "claude")
 })
 
-test("auto promotes a Claude attachment without adding it to the classifier prompt", async () => {
+test("auto keeps a Claude attachment without adding it to the classifier prompt", async () => {
   const received = []
   const store = memorySessionClient({ "session-1": { agent: "router-auto", metadata: {} } })
   const hooks = createDirectModelHandoff({
@@ -438,7 +465,7 @@ test("auto promotes a Claude attachment without adding it to the classifier prom
   await hooks["chat.message"](message.input, message.output)
 
   assert.deepEqual(received, ["analise o anexo"])
-  assert.equal(message.output.message.agent, "codex")
+  assert.equal(message.output.message.agent, "claude")
 })
 
 test("auto routes a file-only message without invoking the classifier", async () => {
@@ -459,10 +486,10 @@ test("auto routes a file-only message without invoking the classifier", async ()
 
   await hooks["chat.message"](message.input, message.output)
 
-  assert.equal(message.output.message.agent, "codex")
+  assert.equal(message.output.message.agent, "claude")
 })
 
-test("auto promotes an agent mention without adding it to the classifier prompt", async () => {
+test("auto keeps a Claude agent mention without adding it to the classifier prompt", async () => {
   const received = []
   const store = memorySessionClient({ "session-1": { agent: "router-auto", metadata: {} } })
   const hooks = createDirectModelHandoff({
@@ -478,7 +505,7 @@ test("auto promotes an agent mention without adding it to the classifier prompt"
   await hooks["chat.message"](message.input, message.output)
 
   assert.deepEqual(received, ["revise esta proposta"])
-  assert.equal(message.output.message.agent, "codex")
+  assert.equal(message.output.message.agent, "claude")
 })
 
 test("auto routes an agent-only message without invoking the classifier", async () => {
@@ -494,7 +521,7 @@ test("auto routes an agent-only message without invoking the classifier", async 
 
   await hooks["chat.message"](message.input, message.output)
 
-  assert.equal(message.output.message.agent, "codex")
+  assert.equal(message.output.message.agent, "claude")
 })
 
 test("auto preserves explanatory mentions of repository and web operations", async () => {
@@ -641,18 +668,238 @@ test("serializes manual target and Claude checkpoint metadata updates per sessio
       sessionID: "session-1",
       status: "pending",
     },
-    [MANUAL_TARGET_METADATA_KEY]: {
-      sessionID: "session-1",
-      target: {
-        agent: "glm",
-        providerID: "zai-coding-plan",
-        modelID: "glm-5.2",
-      },
-    },
+    [ROUTING_STATE_METADATA_KEY]: routingState({
+      mode: "pinned",
+      currentRoute: "glm",
+    }),
   })
 })
 
-test("manual persists the first target and reuses it for the session", async () => {
+test("adaptive persists its canonical mode and switches immediately on an upgrade", async () => {
+  const routes = ["glm", "codex"]
+  const store = memorySessionClient({
+    "session-1": { agent: "router-adaptive", metadata: { owner: "user" } },
+  })
+  const hooks = createDirectModelHandoff({
+    client: store.client,
+    classify: async () => classifier(routes.shift())(),
+  })
+  const first = userMessage("implemente a correção", "router-adaptive")
+  const followUp = userMessage("e isso?", "router-adaptive")
+
+  await hooks["chat.message"](first.input, first.output)
+  await hooks["chat.message"](followUp.input, followUp.output)
+
+  assert.equal(first.output.message.agent, "glm")
+  assert.equal(followUp.output.message.agent, "codex")
+  assert.deepEqual(store.sessions["session-1"].metadata.owner, "user")
+  assert.deepEqual(store.sessions["session-1"].metadata[ROUTING_STATE_METADATA_KEY], {
+    schemaVersion: 1,
+    sessionID: "session-1",
+    mode: "adaptive",
+    currentRoute: "codex",
+    turnsOnCurrent: 1,
+    cooldownTurnsRemaining: 1,
+  })
+})
+
+test("adaptive retains short follow-ups and requires two confirmed downgrades", async () => {
+  const routes = ["codex", "glm", "glm", "glm"]
+  const store = memorySessionClient({
+    "session-1": { agent: "router-adaptive", metadata: {} },
+  })
+  const hooks = createDirectModelHandoff({
+    client: store.client,
+    classify: async () => classifier(routes.shift())(),
+  })
+  const messages = [
+    userMessage("implemente a arquitetura completa", "router-adaptive"),
+    userMessage("e agora?", "router-adaptive"),
+    userMessage("descreva com detalhes a documentação final desta mudança", "router-adaptive"),
+    userMessage("prepare também uma explicação completa para a equipe", "router-adaptive"),
+  ]
+
+  for (const message of messages) {
+    await hooks["chat.message"](message.input, message.output)
+  }
+
+  assert.deepEqual(messages.map((message) => message.output.message.agent), [
+    "codex",
+    "codex",
+    "codex",
+    "glm",
+  ])
+  assert.equal(
+    store.sessions["session-1"].metadata[ROUTING_STATE_METADATA_KEY].currentRoute,
+    "glm",
+  )
+})
+
+test("adaptive clears a pending downgrade when the recommendation matches the current route", async () => {
+  const routes = ["codex", "glm", "codex", "glm", "glm"]
+  const store = memorySessionClient({
+    "session-1": { agent: "router-adaptive", metadata: {} },
+  })
+  const hooks = createDirectModelHandoff({
+    client: store.client,
+    classify: async () => classifier(routes.shift())(),
+  })
+  const requests = [
+    "implemente a arquitetura completa",
+    "descreva detalhadamente a documentação desta arquitetura",
+    "continue implementando todos os arquivos necessários",
+    "prepare uma explicação detalhada para toda a equipe",
+    "escreva também a documentação completa desta mudança",
+  ]
+  const selected = []
+
+  for (const request of requests) {
+    const message = userMessage(request, "router-adaptive")
+    await hooks["chat.message"](message.input, message.output)
+    selected.push(message.output.message.agent)
+  }
+
+  assert.deepEqual(selected, ["codex", "codex", "codex", "codex", "glm"])
+})
+
+test("adaptive thresholds can be overridden without changing the default policy", async () => {
+  const routes = ["codex", "glm", "glm", "glm"]
+  const store = memorySessionClient({
+    "session-1": { agent: "router-adaptive", metadata: {} },
+  })
+  const hooks = createDirectModelHandoff({
+    client: store.client,
+    classify: async () => classifier(routes.shift())(),
+    adaptivePolicy: {
+      minimumTurnsBeforeSwitch: 3,
+      downgradeConfirmations: 2,
+      switchCooldownTurns: 2,
+    },
+  })
+  const selected = []
+
+  for (const request of [
+    "implemente a arquitetura completa",
+    "descreva detalhadamente toda a documentação",
+    "prepare uma explicação detalhada para a equipe",
+    "escreva a documentação completa desta mudança",
+  ]) {
+    const message = userMessage(request, "router-adaptive")
+    await hooks["chat.message"](message.input, message.output)
+    selected.push(message.output.message.agent)
+  }
+
+  assert.deepEqual(selected, ["codex", "codex", "codex", "glm"])
+})
+
+test("logical router migrates a legacy manual target to pinned mode without capability checks", async () => {
+  const store = memorySessionClient({
+    "session-1": {
+      agent: "router",
+      metadata: {
+        [MANUAL_TARGET_METADATA_KEY]: {
+          sessionID: "session-1",
+          target: {
+            agent: "minimax",
+            providerID: "minimax-coding-plan",
+            modelID: "MiniMax-M3",
+          },
+        },
+      },
+    },
+  })
+  const hooks = createDirectModelHandoff({
+    client: store.client,
+    classify: () => {
+      throw new Error("a legacy pinned target must not classify again")
+    },
+  })
+  const message = userMessage("compare detalhadamente as alternativas", "router")
+
+  await hooks["chat.message"](message.input, message.output)
+
+  assert.equal(message.output.message.agent, "minimax")
+  assert.deepEqual(store.sessions["session-1"].metadata[ROUTING_STATE_METADATA_KEY], {
+    schemaVersion: 1,
+    sessionID: "session-1",
+    mode: "pinned",
+    currentRoute: "minimax",
+    turnsOnCurrent: 1,
+    cooldownTurnsRemaining: 0,
+  })
+})
+
+test("logical router reads adaptive mode from its owned session state", async () => {
+  const store = memorySessionClient({
+    "session-1": {
+      agent: "router",
+      metadata: {
+        [ROUTING_STATE_METADATA_KEY]: routingState({
+          mode: "adaptive",
+          currentRoute: "codex",
+          turnsOnCurrent: 2,
+        }),
+      },
+    },
+  })
+  const hooks = createDirectModelHandoff({
+    client: store.client,
+    classify: classifier("glm"),
+  })
+  const message = userMessage(
+    "prepare uma explicação detalhada para toda a equipe",
+    "router",
+  )
+
+  await hooks["chat.message"](message.input, message.output)
+
+  assert.equal(message.output.message.agent, "codex")
+  assert.deepEqual(
+    store.sessions["session-1"].metadata[ROUTING_STATE_METADATA_KEY],
+    routingState({
+      mode: "adaptive",
+      currentRoute: "codex",
+      turnsOnCurrent: 3,
+      pendingDowngrade: { route: "glm", confirmations: 1 },
+    }),
+  )
+})
+
+test("logical router ignores adaptive state inherited from another session", async () => {
+  const store = memorySessionClient({
+    "session-2": {
+      agent: "router",
+      metadata: {
+        [ROUTING_STATE_METADATA_KEY]: routingState({
+          sessionID: "session-1",
+          mode: "adaptive",
+          currentRoute: "codex",
+          turnsOnCurrent: 4,
+        }),
+      },
+    },
+  })
+  const hooks = createDirectModelHandoff({
+    client: store.client,
+    classify: classifier("glm"),
+  })
+  const message = userMessage("novo pedido", "router", "session-2")
+
+  await hooks["chat.message"](message.input, message.output)
+
+  assert.equal(message.output.message.agent, "glm")
+  assert.deepEqual(
+    store.sessions["session-2"].metadata[ROUTING_STATE_METADATA_KEY],
+    routingState({
+      sessionID: "session-2",
+      mode: "adaptive",
+      currentRoute: "glm",
+      cooldownTurnsRemaining: 1,
+    }),
+  )
+})
+
+test("pinned persists the first target and reuses it for the session", async () => {
   const store = memorySessionClient({ "session-1": { agent: "router-manual", metadata: {} } })
   const requests = []
   const announcements = []
@@ -675,25 +922,24 @@ test("manual persists the first target and reuses it for the session", async () 
   assert.equal(second.input.agent, "router-manual")
   assert.equal(first.output.message.agent, "claude")
   assert.equal(second.output.message.agent, "claude")
-  assert.deepEqual(store.calls.map(([method]) => method), ["get", "get", "update", "get"])
-  assert.deepEqual(store.sessions["session-1"].metadata[MANUAL_TARGET_METADATA_KEY], {
-    sessionID: "session-1",
-    target: {
-      agent: "claude",
-      providerID: "claude-agent",
-      modelID: "claude-opus-4-8",
-    },
-  })
+  assert.deepEqual(
+    store.calls.map(([method]) => method),
+    ["get", "get", "update", "get", "get", "update"],
+  )
+  assert.deepEqual(
+    store.sessions["session-1"].metadata[ROUTING_STATE_METADATA_KEY],
+    routingState({ mode: "pinned", currentRoute: "claude", turnsOnCurrent: 2 }),
+  )
   assert.deepEqual(
     announcements.map(({ mode, reused, route }) => ({ mode, reused, route })),
     [
-      { mode: "manual", reused: false, route: "claude" },
-      { mode: "manual", reused: true, route: "claude" },
+      { mode: "pinned", reused: false, route: "claude" },
+      { mode: "pinned", reused: true, route: "claude" },
     ],
   )
 })
 
-test("manual persists the capable target selected for its first request", async () => {
+test("pinned persists the capable target selected for its first request", async () => {
   const store = memorySessionClient({ "session-1": { agent: "router-manual", metadata: {} } })
   const hooks = createDirectModelHandoff({
     client: store.client,
@@ -704,17 +950,13 @@ test("manual persists the capable target selected for its first request", async 
   await hooks["chat.message"](message.input, message.output)
 
   assert.equal(message.output.message.agent, "claude")
-  assert.deepEqual(store.sessions["session-1"].metadata[MANUAL_TARGET_METADATA_KEY], {
-    sessionID: "session-1",
-    target: {
-      agent: "claude",
-      providerID: "claude-agent",
-      modelID: "claude-opus-4-8",
-    },
-  })
+  assert.deepEqual(
+    store.sessions["session-1"].metadata[ROUTING_STATE_METADATA_KEY],
+    routingState({ mode: "pinned", currentRoute: "claude" }),
+  )
 })
 
-test("manual keeps a mutating request on its fixed Claude target", async () => {
+test("pinned keeps a mutating request on its fixed legacy Claude target", async () => {
   const metadata = {
     owner: "user",
     [MANUAL_TARGET_METADATA_KEY]: {
@@ -736,8 +978,6 @@ test("manual keeps a mutating request on its fixed Claude target", async () => {
     },
   })
   const message = userMessage("corrija o arquivo", "router-manual")
-  const originalMetadata = structuredClone(metadata)
-
   await hooks["chat.message"](message.input, message.output)
 
   assert.equal(message.output.message.agent, "claude")
@@ -745,11 +985,17 @@ test("manual keeps a mutating request on its fixed Claude target", async () => {
     providerID: "claude-agent",
     modelID: "claude-opus-4-8",
   })
-  assert.deepEqual(store.sessions["session-1"].metadata, originalMetadata)
-  assert.deepEqual(store.calls.map(([method]) => method), ["get"])
+  assert.deepEqual(store.sessions["session-1"].metadata, {
+    ...metadata,
+    [ROUTING_STATE_METADATA_KEY]: routingState({
+      mode: "pinned",
+      currentRoute: "claude",
+    }),
+  })
+  assert.deepEqual(store.calls.map(([method]) => method), ["get", "get", "update"])
 })
 
-test("manual rejects non-literal work for a fixed MiniMax target", async () => {
+test("pinned keeps non-literal work on a fixed MiniMax target", async () => {
   const metadata = {
     [MANUAL_TARGET_METADATA_KEY]: {
       sessionID: "session-1",
@@ -770,19 +1016,20 @@ test("manual rejects non-literal work for a fixed MiniMax target", async () => {
     },
   })
   const message = userMessage("traduza esta mensagem", "router-manual")
-  const originalMessage = structuredClone(message.output.message)
+  await hooks["chat.message"](message.input, message.output)
 
-  await assert.rejects(
-    hooks["chat.message"](message.input, message.output),
-    /new conversation.*router-auto/i,
-  )
-
-  assert.deepEqual(message.output.message, originalMessage)
-  assert.deepEqual(store.sessions["session-1"].metadata, metadata)
-  assert.deepEqual(store.calls.map(([method]) => method), ["get"])
+  assert.equal(message.output.message.agent, "minimax")
+  assert.deepEqual(store.sessions["session-1"].metadata, {
+    ...metadata,
+    [ROUTING_STATE_METADATA_KEY]: routingState({
+      mode: "pinned",
+      currentRoute: "minimax",
+    }),
+  })
+  assert.deepEqual(store.calls.map(([method]) => method), ["get", "get", "update"])
 })
 
-test("manual restores its sentinel before reusing Claude for a mutating request", async () => {
+test("router-auto alias overrides an inherited legacy pinned target", async () => {
   const metadata = {
     [MANUAL_TARGET_METADATA_KEY]: {
       sessionID: "session-1",
@@ -798,17 +1045,18 @@ test("manual restores its sentinel before reusing Claude for a mutating request"
   })
   const hooks = createDirectModelHandoff({
     client: store.client,
-    classify: () => {
-      throw new Error("a fixed manual target must not classify again")
-    },
+    classify: classifier("codex"),
   })
   const message = userMessage("corrija o arquivo", "router-auto")
   await hooks["chat.message"](message.input, message.output)
 
-  assert.equal(store.sessions["session-1"].agent, "router-manual")
-  assert.deepEqual(store.sessions["session-1"].metadata, metadata)
-  assert.equal(message.output.message.agent, "claude")
-  assert.deepEqual(store.calls.map(([method]) => method), ["get", "switch-agent"])
+  assert.equal(store.sessions["session-1"].agent, "router-auto")
+  assert.equal(message.output.message.agent, "codex")
+  assert.deepEqual(store.sessions["session-1"].metadata, {
+    ...metadata,
+    [ROUTING_STATE_METADATA_KEY]: routingState({ mode: "auto", currentRoute: "codex" }),
+  })
+  assert.deepEqual(store.calls.map(([method]) => method), ["get", "get", "update"])
 })
 
 test("manual allows repository inspection for a fixed Claude target", async () => {
@@ -836,8 +1084,14 @@ test("manual allows repository inspection for a fixed Claude target", async () =
   await hooks["chat.message"](message.input, message.output)
 
   assert.equal(message.output.message.agent, "claude")
-  assert.deepEqual(store.sessions["session-1"].metadata, metadata)
-  assert.deepEqual(store.calls.map(([method]) => method), ["get"])
+  assert.deepEqual(store.sessions["session-1"].metadata, {
+    ...metadata,
+    [ROUTING_STATE_METADATA_KEY]: routingState({
+      mode: "pinned",
+      currentRoute: "claude",
+    }),
+  })
+  assert.deepEqual(store.calls.map(([method]) => method), ["get", "get", "update"])
 })
 
 for (const request of ["leia README.md", "abra src/app.ts", "git status"]) {
@@ -866,7 +1120,13 @@ for (const request of ["leia README.md", "abra src/app.ts", "git status"]) {
     await hooks["chat.message"](message.input, message.output)
 
     assert.equal(message.output.message.agent, "claude")
-    assert.deepEqual(store.sessions["session-1"].metadata, metadata)
+    assert.deepEqual(store.sessions["session-1"].metadata, {
+      ...metadata,
+      [ROUTING_STATE_METADATA_KEY]: routingState({
+        mode: "pinned",
+        currentRoute: "claude",
+      }),
+    })
   })
 }
 
@@ -895,11 +1155,17 @@ test("manual allows command execution for a fixed Claude target", async () => {
   await hooks["chat.message"](message.input, message.output)
 
   assert.equal(message.output.message.agent, "claude")
-  assert.deepEqual(store.sessions["session-1"].metadata, metadata)
-  assert.deepEqual(store.calls.map(([method]) => method), ["get"])
+  assert.deepEqual(store.sessions["session-1"].metadata, {
+    ...metadata,
+    [ROUTING_STATE_METADATA_KEY]: routingState({
+      mode: "pinned",
+      currentRoute: "claude",
+    }),
+  })
+  assert.deepEqual(store.calls.map(([method]) => method), ["get", "get", "update"])
 })
 
-test("manual selects Codex for a file-only first request without classifying private data", async () => {
+test("pinned selects Claude for a file-only first request without classifying private data", async () => {
   const store = memorySessionClient({
     "session-1": { agent: "router-manual", metadata: {} },
   })
@@ -919,18 +1185,14 @@ test("manual selects Codex for a file-only first request without classifying pri
 
   await hooks["chat.message"](message.input, message.output)
 
-  assert.equal(message.output.message.agent, "codex")
-  assert.deepEqual(store.sessions["session-1"].metadata[MANUAL_TARGET_METADATA_KEY], {
-    sessionID: "session-1",
-    target: {
-      agent: "codex",
-      providerID: "openai",
-      modelID: "gpt-5.6-sol",
-    },
-  })
+  assert.equal(message.output.message.agent, "claude")
+  assert.deepEqual(
+    store.sessions["session-1"].metadata[ROUTING_STATE_METADATA_KEY],
+    routingState({ mode: "pinned", currentRoute: "claude" }),
+  )
 })
 
-test("manual rejects a file-only request for a fixed Claude target", async () => {
+test("pinned keeps a file-only request on a fixed Claude target", async () => {
   const metadata = {
     [MANUAL_TARGET_METADATA_KEY]: {
       sessionID: "session-1",
@@ -953,15 +1215,19 @@ test("manual rejects a file-only request for a fixed Claude target", async () =>
   const message = userMessage("", "router-manual")
   message.output.parts.push({ type: "file", filename: "private-report.txt" })
 
-  await assert.rejects(
-    hooks["chat.message"](message.input, message.output),
-    /new conversation.*router-auto/i,
-  )
+  await hooks["chat.message"](message.input, message.output)
 
-  assert.deepEqual(store.sessions["session-1"].metadata, metadata)
+  assert.equal(message.output.message.agent, "claude")
+  assert.deepEqual(store.sessions["session-1"].metadata, {
+    ...metadata,
+    [ROUTING_STATE_METADATA_KEY]: routingState({
+      mode: "pinned",
+      currentRoute: "claude",
+    }),
+  })
 })
 
-test("manual rejects an agent mention for a fixed Claude target", async () => {
+test("pinned keeps an agent mention on a fixed Claude target", async () => {
   const metadata = {
     [MANUAL_TARGET_METADATA_KEY]: {
       sessionID: "session-1",
@@ -984,12 +1250,16 @@ test("manual rejects an agent mention for a fixed Claude target", async () => {
   const message = userMessage("revise a proposta", "router-manual")
   message.output.parts.push({ type: "agent", name: "private-reviewer" })
 
-  await assert.rejects(
-    hooks["chat.message"](message.input, message.output),
-    /new conversation.*router-auto/i,
-  )
+  await hooks["chat.message"](message.input, message.output)
 
-  assert.deepEqual(store.sessions["session-1"].metadata, metadata)
+  assert.equal(message.output.message.agent, "claude")
+  assert.deepEqual(store.sessions["session-1"].metadata, {
+    ...metadata,
+    [ROUTING_STATE_METADATA_KEY]: routingState({
+      mode: "pinned",
+      currentRoute: "claude",
+    }),
+  })
 })
 
 for (const [agent, providerID, modelID] of [
@@ -1018,12 +1288,18 @@ for (const [agent, providerID, modelID] of [
 
     assert.equal(message.output.message.agent, agent)
     assert.deepEqual(message.output.message.model, { providerID, modelID })
-    assert.deepEqual(store.sessions["session-1"].metadata, metadata)
-    assert.deepEqual(store.calls.map(([method]) => method), ["get"])
+    assert.deepEqual(store.sessions["session-1"].metadata, {
+      ...metadata,
+      [ROUTING_STATE_METADATA_KEY]: routingState({
+        mode: "pinned",
+        currentRoute: agent,
+      }),
+    })
+    assert.deepEqual(store.calls.map(([method]) => method), ["get", "get", "update"])
   })
 }
 
-test("manual rejects non-literal analysis for a fixed MiniMax target", async () => {
+test("pinned keeps non-literal analysis on a fixed MiniMax target", async () => {
   const metadata = {
     [MANUAL_TARGET_METADATA_KEY]: {
       sessionID: "session-1",
@@ -1045,13 +1321,17 @@ test("manual rejects non-literal analysis for a fixed MiniMax target", async () 
   })
   const message = userMessage("compare as duas abordagens", "router-manual")
 
-  await assert.rejects(
-    hooks["chat.message"](message.input, message.output),
-    /new conversation.*router-auto/i,
-  )
+  await hooks["chat.message"](message.input, message.output)
 
-  assert.deepEqual(store.sessions["session-1"].metadata, metadata)
-  assert.deepEqual(store.calls.map(([method]) => method), ["get"])
+  assert.equal(message.output.message.agent, "minimax")
+  assert.deepEqual(store.sessions["session-1"].metadata, {
+    ...metadata,
+    [ROUTING_STATE_METADATA_KEY]: routingState({
+      mode: "pinned",
+      currentRoute: "minimax",
+    }),
+  })
+  assert.deepEqual(store.calls.map(([method]) => method), ["get", "get", "update"])
 })
 
 test("manual classifies a new session independently", async () => {
@@ -1076,7 +1356,7 @@ test("manual classifies a new session independently", async () => {
   assert.equal(second.output.message.agent, "codex")
 })
 
-test("manual target stays fixed when a resumed client presents router-auto", async () => {
+test("router-auto explicitly selects auto mode over legacy manual metadata", async () => {
   const store = memorySessionClient({
     "session-1": {
       agent: "router-auto",
@@ -1094,22 +1374,19 @@ test("manual target stays fixed when a resumed client presents router-auto", asy
   })
   const hooks = createDirectModelHandoff({
     client: store.client,
-    classify: () => {
-      throw new Error("sticky manual routing must not classify again")
-    },
+    classify: classifier("codex"),
   })
   const message = userMessage("planeje uma arquitetura", "router-auto")
 
   await hooks["chat.message"](message.input, message.output)
 
-  assert.equal(message.output.message.agent, "glm")
-  assert.equal(store.sessions["session-1"].agent, "router-manual")
-  assert.deepEqual(store.calls.map(([method]) => method), ["get", "switch-agent"])
-  assert.deepEqual(store.calls[1], [
-    "switch-agent",
-    { sessionID: "session-1", agent: "router-manual" },
-    { throwOnError: true },
-  ])
+  assert.equal(message.output.message.agent, "codex")
+  assert.equal(store.sessions["session-1"].agent, "router-auto")
+  assert.deepEqual(store.calls.map(([method]) => method), ["get", "get", "update"])
+  assert.deepEqual(
+    store.sessions["session-1"].metadata[ROUTING_STATE_METADATA_KEY],
+    routingState({ mode: "auto", currentRoute: "codex" }),
+  )
 })
 
 test("manual target inherited by a fork is classified for the new session", async () => {
@@ -1141,8 +1418,12 @@ test("manual target inherited by a fork is classified for the new session", asyn
   assert.equal(classifications, 1)
   assert.equal(message.output.message.agent, "codex")
   assert.equal(
-    store.sessions["session-2"].metadata[MANUAL_TARGET_METADATA_KEY].sessionID,
+    store.sessions["session-2"].metadata[ROUTING_STATE_METADATA_KEY].sessionID,
     "session-2",
+  )
+  assert.equal(
+    store.sessions["session-2"].metadata[ROUTING_STATE_METADATA_KEY].currentRoute,
+    "codex",
   )
 })
 
@@ -1167,14 +1448,10 @@ test("manual merges its namespaced target with existing session metadata", async
   assert.deepEqual(store.sessions["session-1"].metadata, {
     "other.plugin.key": { enabled: true },
     owner: "user",
-    [MANUAL_TARGET_METADATA_KEY]: {
-      sessionID: "session-1",
-      target: {
-        agent: "glm",
-        providerID: "zai-coding-plan",
-        modelID: "glm-5.2",
-      },
-    },
+    [ROUTING_STATE_METADATA_KEY]: routingState({
+      mode: "pinned",
+      currentRoute: "glm",
+    }),
   })
   assert.deepEqual(store.calls[2], [
     "update",
@@ -1255,14 +1532,10 @@ test("manual metadata failure leaves a retryable router-manual session", async (
 
   assert.equal(classifications, 2)
   assert.equal(retry.output.message.agent, "glm")
-  assert.deepEqual(store.sessions["session-1"].metadata[MANUAL_TARGET_METADATA_KEY], {
-    sessionID: "session-1",
-    target: {
-      agent: "glm",
-      providerID: "zai-coding-plan",
-      modelID: "glm-5.2",
-    },
-  })
+  assert.deepEqual(
+    store.sessions["session-1"].metadata[ROUTING_STATE_METADATA_KEY],
+    routingState({ mode: "auto", currentRoute: "glm" }),
+  )
   assert.deepEqual(
     store.calls.map(([method]) => method),
     ["get", "switch-agent", "get", "update", "get", "get", "update"],

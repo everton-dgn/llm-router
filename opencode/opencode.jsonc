@@ -2,7 +2,7 @@
   "$schema": "https://opencode.ai/config.json",
   "autoupdate": false,
   "model": "ollama/hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M",
-  "default_agent": "router-auto",
+  "default_agent": "router",
   "disabled_providers": ["github-copilot", "opencode-go"],
   "provider": {
     "ollama": {
@@ -52,12 +52,76 @@
           }
         }
       }
+    },
+    "router-control": {
+      "npm": "__ROUTER_CONTROL_PROVIDER_URL__",
+      "name": "llm-router local control",
+      "models": {
+        "control": {
+          "name": "Router control"
+        }
+      }
+    }
+  },
+  "command": {
+    "router-auto": {
+      "template": "Apply router mode auto.",
+      "description": "Classify every message",
+      "agent": "router-control",
+      "model": "router-control/control"
+    },
+    "router-adaptive": {
+      "template": "Apply router mode adaptive.",
+      "description": "Change models only when the benefit is stable",
+      "agent": "router-control",
+      "model": "router-control/control"
+    },
+    "router-pinned": {
+      "template": "Apply router mode pinned.",
+      "description": "Keep the first selected model for this conversation",
+      "agent": "router-control",
+      "model": "router-control/control"
+    },
+    "router-native": {
+      "template": "Apply router execution profile native.",
+      "description": "Use each provider's native permissions",
+      "agent": "router-control",
+      "model": "router-control/control"
+    },
+    "router-restricted": {
+      "template": "Apply router execution profile restricted.",
+      "description": "Use policy limits and ask or deny rules",
+      "agent": "router-control",
+      "model": "router-control/control"
+    },
+    "router-full": {
+      "template": "Apply router execution profile full.",
+      "description": "Allow all tools for this conversation",
+      "agent": "router-control",
+      "model": "router-control/control"
+    },
+    "router-status": {
+      "template": "Show the active router mode and execution profile.",
+      "description": "Show router state without calling an LLM",
+      "agent": "router-control",
+      "model": "router-control/control"
     }
   },
   "agent": {
-    "router-auto": {
-      "description": "Automatic local model selector. Each message is classified before a worker executes it.",
+    "router": {
+      "description": "Stable llm-router entry point. Routing mode and execution profile live in session metadata.",
       "mode": "primary",
+      "model": "ollama/hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M",
+      "steps": 1,
+      "prompt": "If this prompt reaches the model, report that the llm-router handoff plugin is unavailable. Do not execute the user's task.",
+      "permission": {
+        "*": "deny"
+      }
+    },
+    "router-auto": {
+      "description": "Compatibility alias for auto routing.",
+      "mode": "subagent",
+      "hidden": true,
       "model": "ollama/hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M",
       "steps": 1,
       "prompt": "If this prompt reaches the model, report that the llm-router handoff plugin is unavailable. Do not execute the user's task.",
@@ -66,8 +130,9 @@
       }
     },
     "router-manual": {
-      "description": "Fixed routing mode. The first classified worker is stored in session metadata and reused.",
-      "mode": "primary",
+      "description": "Compatibility alias for pinned routing.",
+      "mode": "subagent",
+      "hidden": true,
       "model": "ollama/hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M",
       "steps": 1,
       "prompt": "If this prompt reaches the model, report that the llm-router handoff plugin is unavailable. Do not execute the user's task.",
@@ -75,60 +140,47 @@
         "*": "deny"
       }
     },
+    "router-adaptive": {
+      "description": "Compatibility alias for adaptive routing.",
+      "mode": "subagent",
+      "hidden": true,
+      "model": "ollama/hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M",
+      "steps": 1,
+      "prompt": "If this prompt reaches the model, report that the llm-router handoff plugin is unavailable. Do not execute the user's task.",
+      "permission": {
+        "*": "deny"
+      }
+    },
+    "router-control": {
+      "description": "Deterministic local command responder for llm-router settings.",
+      "mode": "subagent",
+      "hidden": true,
+      "model": "router-control/control",
+      "steps": 1,
+      "permission": {
+        "*": "deny"
+      }
+    },
     "minimax": {
-      "description": "MiniMax M3 for literal, low-risk, read-only requests.",
+      "description": "MiniMax M3 worker with native OpenCode tools.",
       "mode": "subagent",
       "model": "minimax-coding-plan/MiniMax-M3",
-      "steps": 8,
-      "prompt": "Handle the user's current request directly. Stay read-only, preserve the exact requested format, and use repo_query when repository evidence is needed. Do not delegate or route again.",
-      "permission": {
-        "*": "deny",
-        "repo_query": "allow"
-      }
+      "steps": 32,
+      "prompt": "Handle the user's current request directly and completely. Inspect relevant sources, use the available OpenCode tools as needed, keep changes scoped, and validate work in proportion to risk. Do not route again."
     },
     "glm": {
       "description": "GLM 5.2 for simple and intermediate work.",
       "mode": "subagent",
       "model": "zai-coding-plan/glm-5.2",
       "steps": 24,
-      "prompt": "Handle the user's current request directly and completely. Inspect relevant sources before changing code, keep edits scoped, and run focused validation. Do not delegate or route again.",
-      "permission": {
-        "*": "allow",
-        "task": "deny",
-        "external_directory": "deny",
-        "bash": {
-          "*": "ask",
-          "rm *": "deny",
-          "rmdir *": "deny",
-          "unlink *": "deny",
-          "git commit*": "deny",
-          "git push*": "deny",
-          "git merge*": "deny",
-          "git rebase*": "deny",
-          "git reset*": "deny",
-          "git clean*": "deny",
-          "git branch -d*": "deny",
-          "git branch -D*": "deny",
-          "docker *": "deny",
-          "kubectl *": "deny",
-          "vercel *": "deny",
-          "brew install*": "deny",
-          "npm install -g*": "deny",
-          "npm install --global*": "deny",
-          "pnpm add -g*": "deny",
-          "pnpm add --global*": "deny"
-        }
-      }
+      "prompt": "Handle the user's current request directly and completely. Inspect relevant sources before changing code, use the available OpenCode tools as needed, keep edits scoped, and run focused validation. Do not route again."
     },
     "claude": {
       "description": "Claude Opus 4.8 through the local Claude Agent SDK with its native coding tools.",
       "mode": "subagent",
       "model": "claude-agent/claude-opus-4-8",
       "steps": 24,
-      "prompt": "Handle the user's current request directly and completely. Use Claude Code tools as needed, inspect relevant sources before changing code, keep edits scoped, and run focused validation. Do not route to another model or wait for another coordinator.",
-      "permission": {
-        "*": "deny"
-      }
+      "prompt": "Handle the user's current request directly and completely. Use Claude Code tools as needed, inspect relevant sources before changing code, keep edits scoped, and run focused validation. Do not route to another model or wait for another coordinator."
     },
     "codex": {
       "description": "GPT-5.6 Sol xhigh for difficult engineering, review and security work.",
@@ -136,34 +188,7 @@
       "model": "openai/gpt-5.6-sol",
       "reasoningEffort": "xhigh",
       "steps": 32,
-      "prompt": "Handle the user's current request directly and completely. Inspect definitions, consumers, tests and configuration before acting. Keep changes scoped and validate in proportion to risk. For review requests, stay read-only and report only evidence-backed findings. Do not delegate or route again.",
-      "permission": {
-        "*": "allow",
-        "task": "deny",
-        "external_directory": "deny",
-        "bash": {
-          "*": "ask",
-          "rm *": "deny",
-          "rmdir *": "deny",
-          "unlink *": "deny",
-          "git commit*": "deny",
-          "git push*": "deny",
-          "git merge*": "deny",
-          "git rebase*": "deny",
-          "git reset*": "deny",
-          "git clean*": "deny",
-          "git branch -d*": "deny",
-          "git branch -D*": "deny",
-          "docker *": "deny",
-          "kubectl *": "deny",
-          "vercel *": "deny",
-          "brew install*": "deny",
-          "npm install -g*": "deny",
-          "npm install --global*": "deny",
-          "pnpm add -g*": "deny",
-          "pnpm add --global*": "deny"
-        }
-      }
+      "prompt": "Handle the user's current request directly and completely. Inspect definitions, consumers, tests and configuration before acting. Use the available OpenCode tools as needed, keep changes scoped, and validate in proportion to risk. For review requests, stay read-only and report only evidence-backed findings. Do not route again."
     }
   }
 }

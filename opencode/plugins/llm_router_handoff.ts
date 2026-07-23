@@ -1,4 +1,6 @@
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client"
+import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 
 import {
   CLAUDE_CHECKPOINT_METADATA_KEY,
@@ -9,13 +11,25 @@ import {
   buildSafeClaudeConversation,
   projectLegacyClaudeContext,
 } from "../lib/claude_context.mjs"
+import { isManagedRouterAgent } from "../lib/adaptive_routing.mjs"
 import { createDirectModelHandoff } from "../lib/direct_handoff.mjs"
+import {
+  loadExecutionPolicy,
+  resolveExecutionPolicy,
+} from "../lib/execution_policy.mjs"
 import { createOpenCodeV2ClientFromLegacyTransport } from "../lib/opencode_transport.mjs"
+import { createRouterControlRuntime } from "../lib/router_control.mjs"
 import { updateSessionMetadata } from "../lib/session_metadata.mjs"
 
 const ROUTER_PATH = __LLM_ROUTER_PATH_LITERAL__
 const ROUTER_TIMEOUT_MS = 120_000
 const CHECKPOINT_TIMEOUT_MS = 30_000
+const POLICY_DEFAULTS_PATH = fileURLToPath(
+  new URL("../llm-router.policy.defaults.json", import.meta.url),
+)
+const POLICY_GLOBAL_PATH = fileURLToPath(
+  new URL("../llm-router.policy.json", import.meta.url),
+)
 
 function responseData(response) {
   if (
@@ -31,6 +45,34 @@ export default async function llmRouterHandoff({ client, directory }) {
     legacyClient: client,
     createV2Client: createOpencodeClient,
     directory,
+  })
+
+  async function showRouterToast({ mode, profile, target, control = false }) {
+    const destination = target
+      ? `${target.providerID}/${target.modelID}`
+      : "configuration updated"
+    await client.tui.showToast({
+      body: {
+        title: "llm-router",
+        message: `${mode} -> ${destination} · ${profile}`,
+        variant: "info",
+        duration: control ? 2500 : 3500,
+      },
+      query: { directory },
+    })
+  }
+
+  const control = createRouterControlRuntime({
+    directory,
+    sessionClient: v2Client.session,
+    v2SessionClient: v2Client.v2.session,
+    loadPolicy: () => loadExecutionPolicy({
+      defaultsPath: POLICY_DEFAULTS_PATH,
+      globalPath: POLICY_GLOBAL_PATH,
+      projectPath: join(directory, ".opencode", "llm-router.policy.json"),
+    }),
+    resolvePolicy: resolveExecutionPolicy,
+    notify: showRouterToast,
   })
 
   async function classify(request) {
@@ -68,22 +110,7 @@ export default async function llmRouterHandoff({ client, directory }) {
   const handoff = createDirectModelHandoff({
     classify,
     client: v2Client,
-    announce: async ({ mode, reused, target }) => {
-      const label = mode === "auto"
-        ? "Auto"
-        : reused
-          ? "Manual reutilizado"
-          : "Manual fixado"
-      await client.tui.showToast({
-        body: {
-          title: "llm-router",
-          message: `${label} -> ${target.providerID}/${target.modelID}`,
-          variant: "info",
-          duration: 3000,
-        },
-        query: { directory },
-      })
-    },
+    announce: async () => {},
   })
 
   async function readLegacyContext(sessionID) {
@@ -209,8 +236,50 @@ export default async function llmRouterHandoff({ client, directory }) {
   })
 
   return {
-    ...handoff,
+    dispose: async () => {
+      await control.dispose()
+    },
+    "command.execute.before": control.commandBefore,
+    "tool.execute.before": control.toolBefore,
+    "chat.message": async (input, output) => {
+      const selectedAgent = input.agent ?? output.message?.agent
+      if (!isManagedRouterAgent(selectedAgent)) return
+      const routingAgent = await control.routingAgent(input.sessionID, selectedAgent)
+      await handoff["chat.message"]({ ...input, agent: routingAgent }, output)
+      if (!output.message?.model || !output.message?.agent) return
+      if (
+        output.message.model.providerID === "claude-agent"
+        && output.parts.some((part) => part.type === "agent")
+      ) {
+        output.parts = await control.resolveAgentMentions({
+          sessionID: input.sessionID,
+          parts: output.parts,
+        })
+      }
+      const messageID = input.messageID ?? output.message.id
+      const effective = await control.applyTurn({
+        sessionID: input.sessionID,
+        messageID,
+        agent: output.message.agent,
+        providerID: output.message.model.providerID,
+        modelID: output.message.model.modelID,
+      })
+      const described = await control.describe(input.sessionID, routingAgent)
+      try {
+        await showRouterToast({
+          mode: described.mode,
+          profile: effective.policy.profile,
+          target: {
+            providerID: output.message.model.providerID,
+            modelID: output.message.model.modelID,
+          },
+        })
+      } catch {
+        // Visual feedback must never block the selected worker.
+      }
+    },
     event: async (input) => {
+      await control.event(input.event)
       if (input.event?.type !== "session.compacted") return
       const sessionID = input.event.properties?.sessionID ?? input.event.data?.sessionID
       if (typeof sessionID !== "string" || !sessionID) return
@@ -226,6 +295,7 @@ export default async function llmRouterHandoff({ client, directory }) {
       await checkpoints.beforeCompaction({ sessionID: input.sessionID })
     },
     "chat.params": async (input, output) => {
+      await control.chatParams(input, output)
       if (input.model.providerID !== "claude-agent") return
       const messages = await readContext(input.sessionID, input.message.id)
       const checkpoint = await checkpoints.contextFor({

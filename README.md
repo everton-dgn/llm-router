@@ -1,6 +1,21 @@
 # llm-router
 
-Roteador local de mensagens do OpenCode entre MiniMax M3, GLM 5.2, Claude Opus 4.8 e GPT-5.6 Sol. O composer permanece em um dos dois agentes primários: `router-auto`, que classifica cada pedido com o modelo pequeno no Ollama, ou `router-manual`, que classifica o primeiro pedido e fixa esse worker na metadata da sessão. O plugin troca o `agent` e o `model` somente na mensagem executada.
+Roteador local de mensagens do OpenCode entre MiniMax M3, GLM 5.2, Claude Opus 4.8 e GPT-5.6 Sol. O composer permanece no agente principal `router`; o plugin escolhe o worker da mensagem e mostra o destino efetivo na interface.
+
+O produto separa duas decisões:
+
+- modo de roteamento: `auto`, `adaptive` ou `pinned`;
+- perfil de execução: `native`, `restricted` ou `full`.
+
+O modo decide quando trocar de modelo. O perfil decide ferramentas e limites. Todas as nove combinações são válidas.
+
+## Documentação
+
+- [Início rápido](docs/quick-start.md)
+- [Modos de roteamento, contexto e fork](docs/routing-modes.md)
+- [Perfis, permissões e configuração](docs/execution-policies.md)
+- [Claude via Agent SDK, anexos e subtasks](docs/claude.md)
+- [Diagnóstico e segurança](docs/troubleshooting.md)
 
 ## Arquitetura
 
@@ -9,53 +24,48 @@ Roteador local de mensagens do OpenCode entre MiniMax M3, GLM 5.2, Claude Opus 4
 | `route` | Classifica pedidos e produz checkpoints locais sanitizados na compactação |
 | `config.json` | Define as intenções, os destinos e as opções dos dois trabalhos locais |
 | `opencode/plugins/llm_router_handoff.ts` | Executa o handoff e integra contexto e compactação do OpenCode |
-| `opencode/lib/direct_handoff.mjs` | Resolve os modos automático e manual e troca `message.agent` e `message.model` |
+| `opencode/lib/direct_handoff.mjs` | Resolve o modo da sessão e troca `message.agent` e `message.model` |
+| `opencode/lib/adaptive_routing.mjs` | Mantém estado, histerese e compatibilidade dos modos de roteamento |
+| `opencode/lib/execution_policy.mjs` | Carrega, valida, mescla e resolve perfis de execução |
+| `opencode/lib/router_control.mjs` | Persiste comandos, aplica permissões e fiscaliza limites |
 | `opencode/lib/opencode_transport.mjs` | Reutiliza o transporte in-process do OpenCode 1.18.4 para criar o cliente v2 |
 | `opencode/lib/claude_context.mjs` | Projeta, sanitiza e limita o contexto v2 enviado ao Claude |
 | `opencode/lib/claude_checkpoint.mjs` | Gera, vincula e valida o checkpoint seguro de memória de longo prazo |
-| `opencode/lib/routing_policy.mjs` | Mapeia rotas, declara capacidades e aplica o piso determinístico |
+| `opencode/lib/routing_policy.mjs` | Mapeia as quatro rotas para seus destinos |
 | `opencode/providers/claude_agent_provider.mjs` | Expõe o Claude Agent SDK como provider `LanguageModelV3` local |
+| `opencode/providers/router_control_provider.mjs` | Responde aos comandos do router localmente, com uso zero de tokens |
 | `opencode/lib/claude_agent.mjs` | Configura `query()`, ferramentas, ambiente, cancelamento e deadline do Claude |
-| `opencode/opencode.jsonc` | Configura o Ollama, providers nativos e o adapter local do Claude |
-| `opencode/tools/repo_query.ts` | Oferece consultas read-only fixas para MiniMax |
+| `opencode/llm-router.policy.defaults.json` | Define perfis e assignments distribuídos |
+| `opencode/llm-router.policy.schema.json` | Valida configurações globais e de projeto |
+| `opencode/opencode.jsonc` | Configura o router, os workers, os comandos e os providers |
+| `opencode/tools/repo_query.ts` | Oferece consultas auxiliares read-only a qualquer worker |
 
-Fluxo automático:
+Fluxo de uma mensagem:
 
 ```text
-pedido do usuário
-  -> router-auto / hook chat.message
+pedido do usuário no router
+  -> hook chat.message
+  -> lê modo e perfil da sessão
   -> route --classify --json
   -> Ollama: Plano-Orchestrator-4B
-  -> piso determinístico de capacidade
+  -> auto, adaptive ou pinned decide o destino efetivo
   -> troca agent/model na mesma mensagem
   -> MiniMax, GLM, Claude Agent SDK ou Codex executa
   -> resposta na sessão atual
 ```
 
-Fluxo manual:
-
-```text
-pedido do usuário
-  -> router-manual / hook chat.message
-  -> primeiro worker classificado passa pelo piso de capacidade
-  -> destino final é salvo na metadata da sessão
-  -> mensagens seguintes reutilizam o mesmo worker
-  -> MiniMax, GLM, Claude Agent SDK ou Codex executa
-  -> resposta na sessão atual
-```
-
-O classificador encerra depois de devolver a rota. Ele não gera plano, não chama ferramentas do projeto, não cria sessão filha do OpenCode e não espera a resposta do worker. Também não existe um turno posterior de coordenador para resumir o resultado. O modo manual não chama o classificador depois que o destino foi fixado. Quando a rota é Claude, o OpenCode chama diretamente o provider local, que usa `query()` do Agent SDK e devolve o resultado à mesma mensagem.
+O classificador encerra depois de devolver a rota. Ele não gera plano, não chama ferramentas do projeto, não cria sessão filha do OpenCode e não espera a resposta do worker. Também não existe um turno posterior de coordenador para resumir o resultado. No modo `pinned`, o destino já fixado é reutilizado. Quando a rota é Claude, o OpenCode chama diretamente o provider local, que usa `query()` do Agent SDK e devolve o resultado à mesma mensagem.
 
 O mesmo modelo local executa um segundo trabalho independente antes de uma compactação: resume somente a transcrição já sanitizada e grava um checkpoint versionado. Esse trabalho ocorre uma vez por compactação, não acompanha o worker e não roda a cada mensagem. Em caso de falha ou saída inválida, o sistema mantém apenas a cauda ativa e gera um aviso visível.
 
-O plugin mostra um aviso de três segundos na interface, por exemplo:
+O plugin mostra o modo, o worker e o perfil efetivos na interface. Exemplo:
 
 ```text
 llm-router
-Auto -> claude-agent/claude-opus-4-8
+Adaptive -> claude-agent/claude-opus-4-8 | Native
 ```
 
-No modo manual, o aviso distingue `Manual fixado` de `Manual reutilizado`. Se a seleção falhar, a mensagem permanece no router primário e a execução é interrompida. Claude, GLM e Codex podem manter o destino quando o pedido passa a exigir leitura, edição, comandos ou web. Um turno incompatível com o transporte do destino, como um anexo que o provider não aceita, termina com erro sem trocar silenciosamente de modelo. O modelo local configurado nos dois routers serve como sentinela: se o plugin não carregar, ele informa a falha de configuração e não executa o pedido.
+Se a seleção falhar, a mensagem permanece no router e a execução é interrompida. Um turno incompatível com o transporte do destino termina com erro explícito. O modelo local configurado no router serve como sentinela: se o plugin não carregar, ele informa a falha de configuração e não executa o pedido.
 
 ## Classificador local
 
@@ -96,18 +106,25 @@ Consulte todos os argumentos com:
 | `complex_creative_product_or_architecture` | `claude` | `claude-agent/claude-opus-4-8` | Arquitetura, produto, estratégia e criação complexa |
 | `review_security_hard_engineering_or_technical_writing` | `codex` | `openai/gpt-5.6-sol` | Engenharia difícil, revisão, segurança e texto técnico |
 
-MiniMax recebe somente operações literais read-only. Se o classificador devolver MiniMax para um pedido com mutação afirmativa ou para tradução, resumo, reescrita, documentação ou brainstorm, a política eleva a rota para GLM antes do handoff. Claude pode ler o repositório, editar arquivos, executar comandos e pesquisar na web, então permanece na rota classificada para essas capacidades.
+As rotas expressam preferência de custo e capacidade. Elas não retiram ferramentas do modelo. O perfil de execução aplica permissões de forma independente:
 
-As permissões ficam nos agentes nativos:
+- `native` não acrescenta restrições do llm-router;
+- `restricted` aplica regras e limites configuráveis;
+- `full` adiciona `allow` explícito para todas as ferramentas.
 
-- MiniMax usa somente `repo_query` para consultar o repositório.
-- Claude usa as ferramentas internas do Claude Code pelo Agent SDK. O provider executa com `permissionMode: "auto"` e o conjunto padrão de ferramentas. Esse modo usa o classificador de permissões do próprio Claude Code e não passa pelas permissões de tools do OpenCode.
-- GLM e Codex podem editar dentro das permissões do OpenCode, mas não podem chamar `task` nem rotear outra vez.
-- Para GLM e Codex, commit, push, merge, rebase, reset, limpeza de Git, deploy, instalação global e comandos destrutivos ficam bloqueados. No Claude, a decisão de executar cada operação sujeita a permissão pertence ao modo `auto` do Claude Code.
+O bundle usa `native` como padrão. Consulte a [matriz modo x perfil](docs/execution-policies.md#matriz-modo-x-perfil) e os [exemplos de política](docs/execution-policies.md#exemplo-global-tudo-nativo-claude-restrito).
 
-Os nomes dos workers existem porque o OpenCode associa permissões e prompt a um agente. Eles ficam como executores `subagent` e não aparecem como routers primários. `router-auto` e `router-manual` são os únicos agentes primários. O plugin altera apenas `output.message.agent` e `output.message.model`, sem persistir uma troca visual de agente ou modelo. Por isso o composer continua no router escolhido.
+Os workers existem porque o OpenCode associa modelo e prompt a um agente. Eles ficam como executores `subagent`; `router` permanece como agente principal do composer. O plugin altera `output.message.agent` e `output.message.model` apenas para executar a mensagem.
 
-O modo manual lê e mescla a chave `llm-router.manual.target` na metadata da sessão. O registro contém o `sessionID` proprietário e o destino canônico com `agent`, `providerID` e `modelID`. Assim, uma sessão retomada continua no mesmo worker, enquanto um fork ignora a cópia herdada e classifica o primeiro pedido novamente. O modo automático consulta essa chave local para respeitar uma sessão Manual já fixada; sem um registro próprio, classifica cada mensagem novamente. Se um destino fixo não tiver capacidade para o novo pedido, ele permanece gravado e nenhuma reclassificação ocorre nessa conversa.
+O estado usa a chave `llm-router.routing.state` na metadata da sessão. Ela contém o `sessionID` proprietário, o modo, a rota atual, os turnos e o cooldown. Retomar a sessão preserva a decisão. Um fork recebe outro `sessionID`, mantém o histórico clonado e faz uma decisão de roteamento independente.
+
+Comportamento dos modos:
+
+- `auto` aplica a classificação de cada mensagem;
+- `adaptive` sobe de rota imediatamente e exige confirmação para reduzir;
+- `pinned` mantém o primeiro worker da sessão.
+
+Os parâmetros padrão do `adaptive` são `minimumTurnsBeforeSwitch=2`, `downgradeConfirmations=2` e `switchCooldownTurns=1`. Consulte [modos de roteamento](docs/routing-modes.md).
 
 No OpenCode 1.18.4, o cliente legado entregue ao plugin não expõe todas as operações necessárias. O helper de compatibilidade reutiliza o `fetch` in-process para criar o cliente v2 usado em `session.get`, `session.update`, `session.switchAgent` e `session.context`. Ele não chama modelos e não abre outro listener HTTP. A dependência de `_client.getConfig()` fica isolada até o OpenCode entregar um cliente v2 público ao plugin.
 
@@ -124,15 +141,21 @@ claude auth status
 
 O adapter não lê, copia nem persiste tokens. A autenticação continua sob responsabilidade do executável `claude`, do mesmo modo que numa execução direta do Claude Code. O processo interno do SDK recebe uma lista permitida de variáveis de runtime, proxy, TLS e autenticação `ANTHROPIC_` ou `CLAUDE_`. Variáveis dos providers GLM e MiniMax e funções exportadas pelo shell ficam fora desse ambiente.
 
-O SDK roda com as ferramentas padrão do Claude Code e `permissionMode: "auto"`. Nesse modo, o classificador de permissões interno do Claude Code pode aprovar ou negar operações que exigem decisão; ele não consulta o permissionamento de tools do OpenCode. `safe-mode`, fontes de configuração vazias, MCP estrito e Chrome desabilitado impedem que plugins, hooks, skills ou servidores MCP locais alterem o contrato. Leitura, edição, Bash e as demais ferramentas internas continuam disponíveis. A sessão do SDK não é persistida porque o OpenCode permanece como fonte da conversa. O provider consome mensagens tipadas, transmite deltas de texto e usa a mensagem `result` final para uso de tokens e motivo de término. Timeout e cancelamento abortam e fecham a consulta do SDK.
+O SDK roda com as ferramentas padrão do Claude Code. No perfil `native`, usa `permissionMode: "auto"` sem regras adicionais do llm-router. Nos demais perfis, o plugin traduz `allow`, `ask` e `deny` para `permissionProfile` e `canUseTool`. Uma consulta `ask` sem callback, cancelada, expirada ou com erro termina em negação.
 
-Antes de chamar o SDK, o plugin consulta `v2.session.context` e usa somente a projeção ativa do OpenCode. A lista permitida aceita texto de `user` sem anexos e texto de `assistant` sem erro. Mensagens posteriores ao ID atual ficam fora. `system`, `synthetic`, `shell`, checkpoint nativo, raciocínio, anexos, chamadas e resultados de ferramentas nunca entram. Um anexo na mensagem atual interrompe a rota Claude com erro explícito.
+`safe-mode`, fontes de configuração vazias, MCP estrito e Chrome desabilitado impedem que plugins, hooks, skills ou servidores MCP locais alterem o contrato. Leitura, edição, Bash e as demais ferramentas internas continuam disponíveis conforme o perfil efetivo. A sessão do SDK não é persistida porque o OpenCode permanece como fonte da conversa. Timeout e cancelamento abortam e fecham a consulta.
+
+Antes de chamar o SDK, o plugin consulta `v2.session.context` e usa somente a projeção ativa do OpenCode. Texto visível de `user` e `assistant`, anexos suportados e resultados concluídos de `task` ou `agent` podem entrar. Mensagens posteriores ao ID atual, texto sintético, raciocínio e histórico arbitrário de tools ficam fora.
+
+Claude aceita `text/plain`, `application/pdf`, GIF, JPEG, PNG e WebP. O adapter valida MIME, base64, protocolo e orçamento antes de chamar o SDK. Menções `@agent` são executadas em sessões filhas do OpenCode e substituídas pelo resultado concluído antes da chamada ao Claude. Consulte [anexos, menções e subtasks](docs/claude.md#anexos).
 
 O contexto ativo é limitado antes da serialização. A mensagem atual sempre permanece; a cauda anterior é escolhida de trás para frente dentro do orçamento, com aviso do provider quando mensagens antigas forem descartadas. O guardião de transporte aceita até 2 MiB e reserva 4 KiB para a instrução e o envelope JSON. Esses bytes não são apresentados como estimativa de tokens. Se a mensagem atual sozinha exceder o orçamento, a chamada falha explicitamente.
 
 Antes de cada compactação, `route --summarize --json` recebe pela entrada padrão apenas a transcrição permitida. O resultado precisa seguir um esquema fechado, respeitar um tamanho máximo e ser vinculado posteriormente a exatamente um novo `compaction.id`. O checkpoint fica em `llm-router.claude.checkpoint` na metadata da sessão. Em compactações seguintes, o checkpoint validado anterior entra como recapitulação factual junto com a nova cauda. `summary` e `recent` produzidos pelo OpenCode nunca são reutilizados. Em caso de falha de geração, vínculo ambíguo ou metadata inválida, o sistema usa somente a cauda ativa e mostra o motivo na interface.
 
-O Agent SDK não oferece uma opção equivalente a `maxOutputTokens`. Quando o OpenCode envia esse campo, o provider devolve um aviso `unsupported` e preserva o uso e o `stop_reason` informados pelo SDK. A proteção progressiva independente usa `maxOutputBytes`, com padrão de 4 MiB. Quando a saída excede esse limite de bytes, o provider encerra a consulta com erro explícito.
+O Agent SDK não oferece uma opção equivalente a `maxOutputTokens`. Quando o OpenCode envia esse campo, o provider devolve um aviso `unsupported` e preserva o uso e o `stop_reason` informados pelo SDK. A proteção de transporte usa `maxOutputBytes`, com padrão de 4 MiB. Quando a saída excede esse limite, o provider encerra a consulta com erro explícito.
+
+No perfil `restricted`, `max_steps` também é enviado ao Agent SDK como `maxTurns`, além da contagem feita pelo hook. `max_tool_calls` cobre ferramentas internas do Claude pelo callback, e `max_child_depth` cobre `Task`, `Agent` e menções explícitas do OpenCode.
 
 Depois da instalação, confira o destino sem imprimir credenciais:
 
@@ -188,7 +211,8 @@ O instalador:
 4. Fixa no `package.json` as versões do plugin, do SDK do OpenCode e do Claude Agent SDK.
 5. Copia cada arquivo alterado para `/tmp/claude-backups/AAAAMMDD_HHMMSS/`.
 6. Envia tools, plugins e bibliotecas do orquestrador antigo para a lixeira.
-7. Mantém reinstalações idênticas sem novo backup.
+7. Instala defaults e schema da política, preservando `llm-router.policy.json` criado pelo usuário.
+8. Mantém reinstalações idênticas sem novo backup.
 
 O instalador não executa gerenciador de pacotes. Instale as dependências da configuração com `pnpm install --no-optional` para usar o executável indicado por `--claude-path` sem baixar o binário opcional do Agent SDK.
 
@@ -203,14 +227,14 @@ Por padrão, o destino é `$XDG_CONFIG_HOME/opencode` quando essa variável exis
 | `zai-coding-plan` | GLM 5.2 | `ZAI_API_KEY` |
 | `claude-agent` | Claude Opus 4.8 | Login mantido pelo executável oficial do Claude Code |
 | `openai` | GPT-5.6 Sol | Login do OpenCode |
+| `router-control` | Controle determinístico | Sem autenticação e sem chamada de LLM |
 
 `github-copilot` e `opencode-go` ficam em `disabled_providers`.
 
 Evite publicar a saída de `opencode debug config`, pois ela pode expandir valores de ambiente. Para conferir cada agente sem revelar tokens, use:
 
 ```bash
-opencode debug agent router-auto
-opencode debug agent router-manual
+opencode debug agent router
 opencode debug agent minimax
 opencode debug agent glm
 opencode debug agent claude
@@ -225,9 +249,19 @@ Inicie o OpenCode no projeto em que deseja trabalhar:
 opencode .
 ```
 
-Use `router-auto` para classificar cada pedido. Uma mensagem como "planeje a migração sem downtime" tende a ir para Claude. Uma implementação difícil tende a ir para Codex. Cada pedido produz uma classificação e uma execução, sem ciclo de plano, execução e review conduzido por outro modelo.
+O padrão usa `router` com modo `adaptive` e perfil `native`. Consulte ou mude o estado com:
 
-Use `router-manual` para classificar a primeira mensagem e manter o destino resultante nas mensagens seguintes da sessão. O plugin salva esse worker na metadata e o reutiliza sem chamar novamente o classificador. Claude permanece fixo mesmo quando a conversa passa a exigir leitura, edição, comandos ou web. Para obter outro destino fixo, use outra sessão. Em ambos os modos o composer permanece no router primário; `minimax`, `glm`, `claude` e `codex` executam somente o turno encaminhado.
+```text
+/router-status
+/router-auto
+/router-adaptive
+/router-pinned
+/router-native
+/router-restricted
+/router-full
+```
+
+Os comandos de modo preservam o perfil. Os comandos de perfil preservam o modo. Veja exemplos completos no [início rápido](docs/quick-start.md#comandos-da-sessão).
 
 ## Benchmark offline
 
@@ -263,9 +297,9 @@ O classificador foi escolhido em benchmark local com 192 prompts rotulados:
 bash tests/smoke.sh
 bash tests/routing-eval.sh
 bash tests/opencode-bundle.sh
-node --test tests/router-handoff.test.mjs tests/claude-agent.test.mjs tests/claude-agent-provider.test.mjs tests/repo-query.test.mjs
+node --test tests/router-handoff.test.mjs tests/execution-policy.test.mjs tests/router-control.test.mjs tests/claude-agent.test.mjs tests/claude-agent-provider.test.mjs tests/repo-query.test.mjs
 uv run --no-project --no-python-downloads python -m unittest tests/test_stage_verifier.py
 uv run --no-project --no-python-downloads python -m unittest tests/test_quality_eval.py
 ```
 
-`tests/router-handoff.test.mjs` cobre os quatro destinos, Auto, fixação Manual, capacidades, negações, falhas parciais e recuperação. `tests/claude-agent.test.mjs` cobre opções do Agent SDK, ferramentas, ambiente permitido, cancelamento e deadline. `tests/claude-agent-provider.test.mjs` cobre o contrato `LanguageModelV3`, contexto v2, privacidade, orçamento, checkpoints consecutivos, fallback, stream, uso e limites honestos. `tests/smoke.sh` cobre os contratos do classificador e do sumarizador local. `tests/opencode-bundle.sh` cobre os dois routers, instalação do módulo de checkpoint, dependências, compatibilidade do executável local, paths especiais, backup, aposentadoria do fluxo antigo e idempotência.
+`tests/router-handoff.test.mjs` cobre os quatro destinos e os modos `auto`, `adaptive` e `pinned`. `tests/execution-policy.test.mjs` cobre precedência, assignments, perfis, limites e a regra de que projetos só restringem. `tests/router-control.test.mjs` cobre comandos locais, permissões, limites e menções em sessões filhas. `tests/claude-agent.test.mjs` cobre opções do SDK, ferramentas, permissões, ambiente, cancelamento e deadline. `tests/claude-agent-provider.test.mjs` cobre `LanguageModelV3`, contexto v2, anexos, checkpoints, stream, uso e limites. `tests/smoke.sh` cobre o classificador e o sumarizador local. `tests/opencode-bundle.sh` cobre instalação, upgrade, backup e idempotência.

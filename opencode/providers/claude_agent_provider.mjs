@@ -3,26 +3,27 @@ import { query as claudeQuery } from "@anthropic-ai/claude-agent-sdk"
 import {
   CLAUDE_MODEL,
   CLAUDE_TIMEOUT_MS,
+  createClaudeMessageStream,
   runClaudeAgent,
 } from "../lib/claude_agent.mjs"
+import {
+  boundedClaudeJSONBytes,
+  claudeContentBlocksFromProviderFile,
+  normalizeClaudeConversationContent,
+  visibleClaudeConversationText,
+} from "../lib/claude_context.mjs"
 
 // This guards transport memory only. OpenCode owns the 200k-token compaction
 // threshold, so the byte ceiling must not truncate ordinary context first.
 export const CLAUDE_MAX_INPUT_BYTES = 2 * 1024 * 1024
 export const CLAUDE_DEFAULT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 
-const TRANSCRIPT_INSTRUCTION = "Continue the conversation in the JSON array below. Reply to the final user message."
-
-function utf8Bytes(value) {
-  return new TextEncoder().encode(value).byteLength
-}
-
-function validateCurrentUserPart(part) {
+function currentUserContentParts(part) {
   if (!part || typeof part !== "object" || typeof part.type !== "string") {
     throw new Error("Claude adapter received an unknown user message part")
   }
   if (part.type === "file") {
-    throw new Error("Claude adapter does not accept file attachments")
+    return claudeContentBlocksFromProviderFile(part, { maxBytes: CLAUDE_MAX_INPUT_BYTES })
   }
   if (["tool-call", "tool-result", "tool-approval-response"].includes(part.type)) {
     throw new Error(`Claude adapter does not accept ${part.type} history`)
@@ -31,30 +32,63 @@ function validateCurrentUserPart(part) {
     if (typeof part.text !== "string") {
       throw new Error("Claude adapter received invalid user text")
     }
-    return
+    return part.text ? [{ type: "text", text: part.text }] : []
   }
   throw new Error(`Claude adapter does not support user message part: ${part.type}`)
 }
 
-function validateSafeConversation(conversation, currentRequest) {
+function inputTooLarge() {
+  throw new Error(`Claude input exceeds the ${CLAUDE_MAX_INPUT_BYTES}-byte input limit`)
+}
+
+function validateSafeConversation(conversation, currentContent) {
   if (!Array.isArray(conversation) || conversation.length === 0) {
     throw new Error("Claude adapter received invalid safe conversation context")
   }
+  const normalized = []
+  let measuredBytes = 2
   for (const message of conversation) {
     if (
       !message
       || !["user", "assistant"].includes(message.role)
-      || typeof message.content !== "string"
-      || !message.content.trim()
     ) {
       throw new Error("Claude adapter received invalid safe conversation context")
     }
+    const content = normalizeClaudeConversationContent(message.content, {
+      maxBytes: CLAUDE_MAX_INPUT_BYTES,
+    })
+    if (message.role === "assistant" && content.some((part) => part.type !== "text")) {
+      throw new Error("Claude adapter received non-text assistant history")
+    }
+    const normalizedMessage = {
+      role: message.role,
+      content,
+    }
+    const sdkMessage = {
+      type: "user",
+      message: normalizedMessage,
+      parent_tool_use_id: null,
+      ...(message.role === "user" ? { origin: { kind: "human" } } : {}),
+      shouldQuery: false,
+    }
+    const messageBytes = boundedClaudeJSONBytes(sdkMessage, CLAUDE_MAX_INPUT_BYTES)
+    if (messageBytes > CLAUDE_MAX_INPUT_BYTES) inputTooLarge()
+    measuredBytes += (normalized.length > 0 ? 1 : 0) + messageBytes
+    if (measuredBytes > CLAUDE_MAX_INPUT_BYTES) inputTooLarge()
+    normalized.push(normalizedMessage)
   }
-  const last = conversation.at(-1)
-  if (last.role !== "user" || last.content !== currentRequest) {
+  const last = normalized.at(-1)
+  const currentText = visibleClaudeConversationText(currentContent)
+  const safeText = last ? visibleClaudeConversationText(last.content) : ""
+  if (
+    last?.role !== "user"
+    || safeText !== currentText
+    || (!currentText && JSON.stringify(last.content) !== JSON.stringify(currentContent))
+  ) {
     throw new Error("Claude safe conversation does not match the current user message")
   }
-  return conversation
+  normalized[normalized.length - 1] = { role: "user", content: currentContent }
+  return normalized
 }
 
 export function serializeClaudePrompt(prompt, safeConversation) {
@@ -66,32 +100,44 @@ export function serializeClaudePrompt(prompt, safeConversation) {
   }
   const currentUser = prompt[currentUserIndex]
 
-  for (const [index, message] of prompt.entries()) {
-    if (!message || typeof message !== "object") continue
-    if (index !== currentUserIndex) continue
-    if (!Array.isArray(message.content)) {
-      throw new Error("Claude adapter received an invalid current user message")
-    }
-    for (const part of message.content) validateCurrentUserPart(part)
+  if (!Array.isArray(currentUser.content)) {
+    throw new Error("Claude adapter received an invalid current user message")
   }
 
-  const currentRequest = currentUser.content.map((part) => part.text).join("")
-  if (!currentRequest.trim()) throw new Error("Claude adapter prompt contains no current user text")
+  const currentContent = []
+  let currentContentBytes = 2
+  for (const part of currentUser.content) {
+    for (const block of currentUserContentParts(part)) {
+      const blockBytes = boundedClaudeJSONBytes(block, CLAUDE_MAX_INPUT_BYTES)
+      currentContentBytes += (currentContent.length > 0 ? 1 : 0) + blockBytes
+      if (blockBytes > CLAUDE_MAX_INPUT_BYTES || currentContentBytes > CLAUDE_MAX_INPUT_BYTES) {
+        inputTooLarge()
+      }
+      currentContent.push(block)
+    }
+  }
+  if (currentContent.length === 0) {
+    throw new Error("Claude adapter prompt contains no current user content")
+  }
 
   const transcript = safeConversation === undefined
-    ? [{ role: "user", content: currentRequest }]
-    : validateSafeConversation(safeConversation, currentRequest)
+    ? [{ role: "user", content: currentContent }]
+    : validateSafeConversation(safeConversation, currentContent)
 
-  const request = transcript.length === 1
-    ? currentRequest
-    : `${TRANSCRIPT_INSTRUCTION}\n\n${JSON.stringify(transcript)}`
-  const inputBytes = utf8Bytes(request)
+  const sdkMessages = transcript.map((message, index) => ({
+    type: "user",
+    message,
+    parent_tool_use_id: null,
+    ...(message.role === "user" ? { origin: { kind: "human" } } : {}),
+    ...(index < transcript.length - 1 ? { shouldQuery: false } : {}),
+  }))
+  const inputBytes = boundedClaudeJSONBytes(sdkMessages, CLAUDE_MAX_INPUT_BYTES)
   if (inputBytes > CLAUDE_MAX_INPUT_BYTES) {
-    throw new Error(`Claude input exceeds the ${CLAUDE_MAX_INPUT_BYTES}-byte input limit`)
+    inputTooLarge()
   }
 
   return {
-    request,
+    request: createClaudeMessageStream(sdkMessages),
   }
 }
 
@@ -150,12 +196,20 @@ function runtimeOptions(callOptions, providerName, defaults) {
   if (!Number.isInteger(maxOutputBytes) || maxOutputBytes <= 0) {
     throw new Error("Claude adapter maxOutputBytes must be a positive integer")
   }
+  const maxTurns = provided.maxTurns ?? defaults.maxTurns
+  if (maxTurns !== undefined && (!Number.isInteger(maxTurns) || maxTurns <= 0)) {
+    throw new Error("Claude adapter maxTurns must be a positive integer")
+  }
   return {
     cwd,
     claudePath,
+    permissionCallback: provided.permissionCallback ?? defaults.permissionCallback,
+    permissionProfile: provided.permissionProfile ?? defaults.permissionProfile,
+    permissionTimeoutMs: provided.permissionTimeoutMs ?? defaults.permissionTimeoutMs,
     safeConversation: provided.safeConversation,
     timeoutMs: provided.timeoutMs ?? defaults.timeoutMs ?? CLAUDE_TIMEOUT_MS,
     maxOutputBytes,
+    maxTurns,
   }
 }
 
@@ -166,19 +220,9 @@ function limitedMessageHandler(maxOutputBytes, onMessage) {
   )
 
   return async (message) => {
-    if (message?.type === "stream_event" && message.parent_tool_use_id === null) {
-      const event = message.event
-      if (event?.type === "content_block_start" && event.content_block?.type === "text") {
-        streamedBytes += utf8Bytes(event.content_block.text ?? "")
-      }
-      if (event?.type === "content_block_delta" && event.delta?.type === "text_delta") {
-        streamedBytes += utf8Bytes(event.delta.text ?? "")
-      }
-      if (streamedBytes > maxOutputBytes) throw exceeded()
-    }
-    if (message?.type === "result" && message.subtype === "success") {
-      if (utf8Bytes(message.result ?? "") > maxOutputBytes) throw exceeded()
-    }
+    const remaining = Math.max(0, maxOutputBytes - streamedBytes)
+    streamedBytes += boundedClaudeJSONBytes(message, remaining)
+    if (streamedBytes > maxOutputBytes) throw exceeded()
     await onMessage?.(message)
   }
 }
@@ -215,6 +259,10 @@ function languageModel(modelID, providerName, defaults) {
       timeoutMs: runtime.timeoutMs,
       onMessage: limitedMessageHandler(runtime.maxOutputBytes, onMessage),
       parentEnv: defaults.parentEnv,
+      permissionCallback: runtime.permissionCallback,
+      permissionProfile: runtime.permissionProfile,
+      permissionTimeoutMs: runtime.permissionTimeoutMs,
+      maxTurns: runtime.maxTurns,
     })
   }
 

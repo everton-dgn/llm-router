@@ -179,20 +179,30 @@ cp "$SCRIPT_DIR/package.json" "$RENDER_DIR/package.required.json"
 cp "$SCRIPT_DIR/lib/claude_agent.mjs" "$RENDER_DIR/lib/claude_agent.mjs"
 cp "$SCRIPT_DIR/lib/claude_context.mjs" "$RENDER_DIR/lib/claude_context.mjs"
 cp "$SCRIPT_DIR/lib/claude_checkpoint.mjs" "$RENDER_DIR/lib/claude_checkpoint.mjs"
+cp "$SCRIPT_DIR/lib/adaptive_routing.mjs" "$RENDER_DIR/lib/adaptive_routing.mjs"
 cp "$SCRIPT_DIR/lib/direct_handoff.mjs" "$RENDER_DIR/lib/direct_handoff.mjs"
+cp "$SCRIPT_DIR/lib/execution_policy.mjs" "$RENDER_DIR/lib/execution_policy.mjs"
 cp "$SCRIPT_DIR/lib/opencode_transport.mjs" "$RENDER_DIR/lib/opencode_transport.mjs"
 cp "$SCRIPT_DIR/lib/repo_query.mjs" "$RENDER_DIR/lib/repo_query.mjs"
+cp "$SCRIPT_DIR/lib/router_control.mjs" "$RENDER_DIR/lib/router_control.mjs"
 cp "$SCRIPT_DIR/lib/route_contract.mjs" "$RENDER_DIR/lib/route_contract.mjs"
 cp "$SCRIPT_DIR/lib/routing_policy.mjs" "$RENDER_DIR/lib/routing_policy.mjs"
 cp "$SCRIPT_DIR/lib/session_metadata.mjs" "$RENDER_DIR/lib/session_metadata.mjs"
 cp "$SCRIPT_DIR/tools/repo_query.ts" "$RENDER_DIR/tools/repo_query.ts"
 cp "$SCRIPT_DIR/plugins/llm_router_handoff.ts" "$RENDER_DIR/plugins/llm_router_handoff.ts"
 cp "$SCRIPT_DIR/providers/claude_agent_provider.mjs" "$RENDER_DIR/providers/claude_agent_provider.mjs"
+cp "$SCRIPT_DIR/providers/router_control_provider.mjs" "$RENDER_DIR/providers/router_control_provider.mjs"
+cp "$SCRIPT_DIR/llm-router.policy.defaults.json" "$RENDER_DIR/llm-router.policy.defaults.json"
+cp "$SCRIPT_DIR/llm-router.policy.schema.json" "$RENDER_DIR/llm-router.policy.schema.json"
 
 PROVIDER_URL=$("$NODE_PATH" -e '
   const { pathToFileURL } = require("node:url")
   process.stdout.write(pathToFileURL(process.argv[1]).href)
 ' "$CONFIG_DIR/providers/claude_agent_provider.mjs")
+CONTROL_PROVIDER_URL=$("$NODE_PATH" -e '
+  const { pathToFileURL } = require("node:url")
+  process.stdout.write(pathToFileURL(process.argv[1]).href)
+' "$CONFIG_DIR/providers/router_control_provider.mjs")
 
 ROUTER_PATH_VALUE="$ROUTER_PATH" "$NODE_PATH" -e '
   const { readFileSync } = require("node:fs")
@@ -204,9 +214,13 @@ ROUTER_PATH_VALUE="$ROUTER_PATH" "$NODE_PATH" -e '
 ' "$SCRIPT_DIR/plugins/llm_router_handoff.ts" \
   | tee "$RENDER_DIR/plugins/llm_router_handoff.ts" >/dev/null
 
-"$JQ_PATH" --arg provider_url "$PROVIDER_URL" --arg claude_path "$CLAUDE_PATH" '
+"$JQ_PATH" \
+  --arg provider_url "$PROVIDER_URL" \
+  --arg control_provider_url "$CONTROL_PROVIDER_URL" \
+  --arg claude_path "$CLAUDE_PATH" '
   .provider["claude-agent"].npm = $provider_url
   | .provider["claude-agent"].options.claudePath = $claude_path
+  | .provider["router-control"].npm = $control_provider_url
 ' "$SCRIPT_DIR/opencode.jsonc" | tee "$RENDER_DIR/opencode.jsonc" >/dev/null
 
 "$JQ_PATH" empty "$RENDER_DIR/opencode.jsonc" >/dev/null 2>&1 \
@@ -313,6 +327,16 @@ sync_file() {
   printf '%s %s\n' "$action" "$target"
 }
 
+install_once_file() {
+  local source=$1
+  local target=$2
+  if [[ -e "$target" ]]; then
+    printf 'preserved %s\n' "$target"
+    return
+  fi
+  sync_file "$source" "$target"
+}
+
 retire_file() {
   local target=$1
   [[ ! -L "$target" ]] || fail "refusing to retire symlink: $target"
@@ -329,34 +353,46 @@ retire_file() {
 
 SOURCES=(
   "$RENDER_DIR/package.json"
+  "$RENDER_DIR/lib/adaptive_routing.mjs"
   "$RENDER_DIR/lib/claude_agent.mjs"
   "$RENDER_DIR/lib/claude_context.mjs"
   "$RENDER_DIR/lib/claude_checkpoint.mjs"
   "$RENDER_DIR/lib/direct_handoff.mjs"
+  "$RENDER_DIR/lib/execution_policy.mjs"
   "$RENDER_DIR/lib/opencode_transport.mjs"
   "$RENDER_DIR/lib/repo_query.mjs"
   "$RENDER_DIR/lib/route_contract.mjs"
+  "$RENDER_DIR/lib/router_control.mjs"
   "$RENDER_DIR/lib/routing_policy.mjs"
   "$RENDER_DIR/lib/session_metadata.mjs"
   "$RENDER_DIR/tools/repo_query.ts"
   "$RENDER_DIR/plugins/llm_router_handoff.ts"
   "$RENDER_DIR/providers/claude_agent_provider.mjs"
+  "$RENDER_DIR/providers/router_control_provider.mjs"
+  "$RENDER_DIR/llm-router.policy.defaults.json"
+  "$RENDER_DIR/llm-router.policy.schema.json"
   "$RENDER_DIR/opencode.jsonc"
 )
 TARGETS=(
   "$CONFIG_DIR/package.json"
+  "$CONFIG_DIR/lib/adaptive_routing.mjs"
   "$CONFIG_DIR/lib/claude_agent.mjs"
   "$CONFIG_DIR/lib/claude_context.mjs"
   "$CONFIG_DIR/lib/claude_checkpoint.mjs"
   "$CONFIG_DIR/lib/direct_handoff.mjs"
+  "$CONFIG_DIR/lib/execution_policy.mjs"
   "$CONFIG_DIR/lib/opencode_transport.mjs"
   "$CONFIG_DIR/lib/repo_query.mjs"
   "$CONFIG_DIR/lib/route_contract.mjs"
+  "$CONFIG_DIR/lib/router_control.mjs"
   "$CONFIG_DIR/lib/routing_policy.mjs"
   "$CONFIG_DIR/lib/session_metadata.mjs"
   "$CONFIG_DIR/tools/repo_query.ts"
   "$CONFIG_DIR/plugins/llm_router_handoff.ts"
   "$CONFIG_DIR/providers/claude_agent_provider.mjs"
+  "$CONFIG_DIR/providers/router_control_provider.mjs"
+  "$CONFIG_DIR/llm-router.policy.defaults.json"
+  "$CONFIG_DIR/llm-router.policy.schema.json"
   "$CONFIG_DIR/opencode.jsonc"
 )
 RETIRED_TARGETS=(
@@ -377,6 +413,7 @@ RETIRED_TARGETS=(
 for index in "${!TARGETS[@]}"; do
   preflight_target "${TARGETS[$index]}" "replace"
 done
+preflight_target "$CONFIG_DIR/llm-router.policy.json" "preserve"
 for target in "${RETIRED_TARGETS[@]}"; do
   preflight_target "$target" "retire"
 done
@@ -395,6 +432,7 @@ fi
 for index in "${!TARGETS[@]}"; do
   sync_file "${SOURCES[$index]}" "${TARGETS[$index]}"
 done
+install_once_file "$RENDER_DIR/llm-router.policy.defaults.json" "$CONFIG_DIR/llm-router.policy.json"
 for target in "${RETIRED_TARGETS[@]}"; do
   retire_file "$target"
 done
