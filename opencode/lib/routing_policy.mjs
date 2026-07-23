@@ -115,8 +115,8 @@ export const routeCapabilities = Object.freeze({
     canHandleNonLiteralText: true,
     canMutateProject: true,
     canReadRepository: true,
-    canUseAgentMentions: false,
-    canUseAttachments: false,
+    canUseAgentMentions: true,
+    canUseAttachments: true,
     canUseExternalTools: true,
   }),
   codex: Object.freeze({

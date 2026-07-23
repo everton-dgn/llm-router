@@ -1,12 +1,17 @@
 import { parseClassifierResult } from "./route_contract.mjs"
 import {
+  isManagedRouterAgent,
+  normalizeAdaptiveRoutingPolicy,
+  readRoutingState,
+  resolveRoutingMode,
+  ROUTING_STATE_METADATA_KEY,
+  transitionRoutingState,
+} from "./adaptive_routing.mjs"
+import {
   enforceMinimumRoute,
-  routeSupportsRequest,
   routeTarget,
 } from "./routing_policy.mjs"
 import { updateSessionMetadata } from "./session_metadata.mjs"
-
-const managedAgents = new Set(["router-auto", "router-manual"])
 
 export const MANUAL_TARGET_METADATA_KEY = "llm-router.manual.target"
 
@@ -35,7 +40,7 @@ function selectRequest(classify, request, requirements) {
     request.length === 0
     && (requirements.hasAgentMentions || requirements.hasAttachments)
   ) {
-    const route = "codex"
+    const route = "claude"
     return Promise.resolve({
       classified: undefined,
       route,
@@ -52,13 +57,10 @@ function requireSessionReader(client) {
   return client.session
 }
 
-function requireManualSessionClient(client) {
+function requireRoutingSessionClient(client) {
   const session = requireSessionReader(client)
-  if (
-    typeof session.update !== "function"
-    || typeof client?.v2?.session?.switchAgent !== "function"
-  ) {
-    throw new Error("OpenCode v2 session metadata and agent clients are required for manual routing")
+  if (typeof session.update !== "function") {
+    throw new Error("OpenCode v2 session metadata client is required for routing")
   }
   return session
 }
@@ -124,16 +126,25 @@ async function sessionState(client, sessionID) {
 
 async function keepManualRouterSelected(client, sessionID, current) {
   if (current.agent === "router-manual") return
-  requireManualSessionClient(client)
+  if (typeof client?.v2?.session?.switchAgent !== "function") {
+    throw new Error("OpenCode v2 session agent client is required for legacy manual routing")
+  }
   await client.v2.session.switchAgent(
     { sessionID, agent: "router-manual" },
     { throwOnError: true },
   )
 }
 
-async function persistManualTarget(client, sessionID, target) {
-  const sessionClient = requireManualSessionClient(client)
-  await updateSessionMetadata({
+async function persistRoutingState({
+  client,
+  sessionID,
+  mode,
+  recommendedRoute,
+  request,
+  adaptivePolicy,
+}) {
+  const sessionClient = requireRoutingSessionClient(client)
+  const nextMetadata = await updateSessionMetadata({
     sessionID,
     readMetadata: async (currentSessionID) => {
       const current = responseData(await sessionClient.get(
@@ -148,60 +159,100 @@ async function persistManualTarget(client, sessionID, target) {
         { throwOnError: true },
       )
     },
-    update: (currentMetadata) => ({
-      ...currentMetadata,
-      [MANUAL_TARGET_METADATA_KEY]: {
+    update: (currentMetadata) => {
+      const stored = readRoutingState(currentMetadata, sessionID)
+      const legacy = mode === "pinned"
+        ? storedManualTarget(currentMetadata, sessionID)
+        : undefined
+      const state = transitionRoutingState({
+        state: stored,
         sessionID,
-        target,
-      },
-    }),
+        mode,
+        recommendedRoute: mode === "pinned" && stored?.mode === "pinned"
+          ? stored.currentRoute
+          : legacy?.agent ?? recommendedRoute,
+        request,
+        policy: adaptivePolicy,
+      })
+      return {
+        ...currentMetadata,
+        [ROUTING_STATE_METADATA_KEY]: state,
+      }
+    },
   })
+  return nextMetadata[ROUTING_STATE_METADATA_KEY]
 }
 
-async function manualSelection({
+async function selectForMode({
   classify,
   client,
   current,
   metadata,
+  mode,
+  agent,
   request,
   requirements,
   sessionID,
+  adaptivePolicy,
 }) {
-  requireManualSessionClient(client)
-  const stored = storedManualTarget(metadata, sessionID)
-  if (stored) {
-    await keepManualRouterSelected(client, sessionID, current)
-    if (!routeSupportsRequest(stored.agent, request, requirements)) {
-      throw new Error(
-        `Manual router target ${stored.agent} lacks the capabilities required for this request. Start a new conversation with router-auto or with a capable fixed model.`,
-      )
-    }
-    return {
+  requireRoutingSessionClient(client)
+  const storedState = readRoutingState(metadata, sessionID)
+  const legacyTarget = mode === "pinned"
+    ? storedManualTarget(metadata, sessionID)
+    : undefined
+  const pinnedRoute = storedState?.mode === "pinned"
+    ? storedState.currentRoute
+    : legacyTarget?.agent
+  let recommended
+  let reused = false
+  if (mode === "pinned" && pinnedRoute) {
+    const target = routeTarget(pinnedRoute)
+    recommended = {
       classified: undefined,
-      reused: true,
-      route: stored.agent,
-      target: stored,
+      route: pinnedRoute,
+      target,
     }
+    reused = true
+  } else {
+    recommended = await selectRequest(classify, request, requirements)
   }
 
-  const selected = await selectRequest(classify, request, requirements)
-  await keepManualRouterSelected(client, sessionID, current)
-  await persistManualTarget(client, sessionID, selected.target)
-  return { ...selected, reused: false }
+  if (mode === "pinned" && agent === "router-manual") {
+    await keepManualRouterSelected(client, sessionID, current)
+  }
+
+  const nextState = await persistRoutingState({
+    client,
+    sessionID,
+    mode,
+    recommendedRoute: recommended.route,
+    request,
+    adaptivePolicy,
+  })
+  const route = nextState.currentRoute
+  return {
+    classified: recommended.classified,
+    recommendedRoute: recommended.route,
+    reused: reused || route !== recommended.route,
+    route,
+    target: routeTarget(route),
+  }
 }
 
 export function createDirectModelHandoff({
   classify,
   client,
   announce = async () => {},
+  adaptivePolicy,
 }) {
   if (typeof classify !== "function") throw new TypeError("classify must be a function")
   if (typeof announce !== "function") throw new TypeError("announce must be a function")
+  const adaptiveThresholds = normalizeAdaptiveRoutingPolicy(adaptivePolicy)
 
   return {
     "chat.message": async (input, output) => {
       const agent = input.agent ?? output.message?.agent
-      if (!managedAgents.has(agent)) return
+      if (!isManagedRouterAgent(agent)) return
 
       const request = exactUserRequest(output.parts)
       const requirements = {
@@ -215,23 +266,25 @@ export function createDirectModelHandoff({
       ) return
 
       const state = await sessionState(client, input.sessionID)
-      const stickyTarget = storedManualTarget(state.metadata, input.sessionID)
-      const mode = agent === "router-manual"
-        || state.current.agent === "router-manual"
-        || stickyTarget
-        ? "manual"
-        : "auto"
-      const selection = mode === "manual"
-        ? await manualSelection({
-            classify,
-            client,
-            current: state.current,
-            metadata: state.metadata,
-            request,
-            requirements,
-            sessionID: input.sessionID,
-          })
-        : { ...await selectRequest(classify, request, requirements), reused: false }
+      const storedState = readRoutingState(state.metadata, input.sessionID)
+      const legacyTarget = storedManualTarget(state.metadata, input.sessionID)
+      const mode = resolveRoutingMode({
+        agent,
+        state: storedState,
+        hasLegacyPinnedTarget: legacyTarget !== undefined,
+      })
+      const selection = await selectForMode({
+        classify,
+        client,
+        current: state.current,
+        metadata: state.metadata,
+        mode,
+        agent,
+        request,
+        requirements,
+        sessionID: input.sessionID,
+        adaptivePolicy: adaptiveThresholds,
+      })
 
       output.message.agent = selection.target.agent
       output.message.model = {

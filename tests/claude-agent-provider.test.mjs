@@ -109,6 +109,16 @@ function successfulHarness(result = successResult()) {
   })
 }
 
+async function collectSDKMessages(request) {
+  const messages = []
+  for await (const message of request) messages.push(message)
+  return messages
+}
+
+async function serializedSDKBytes(serialized) {
+  return Buffer.byteLength(JSON.stringify(await collectSDKMessages(serialized.request)), "utf8")
+}
+
 function callOptions(prompt, cwd = process.cwd()) {
   const options = {
     prompt,
@@ -190,8 +200,79 @@ test("projects the OpenCode 1.18.4 legacy message API into safe Claude context",
   ])
   assert.throws(
     () => buildSafeClaudeConversation(messages, "user-1"),
-    /does not accept file attachments/,
+    /does not accept agent attachments/,
   )
+})
+
+test("projects supported legacy attachments into the canonical safe context", () => {
+  const imageData = Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString("base64")
+  const pdfData = Buffer.from("%PDF-1.7", "utf8").toString("base64")
+  const messages = projectLegacyClaudeContext({
+    data: [{
+      info: { id: "user-1", role: "user", time: { created: 1 } },
+      parts: [
+        { type: "text", text: "analise" },
+        { type: "file", mime: "image/png", filename: "evidence.png", url: `data:image/png;base64,${imageData}` },
+        { type: "file", mime: "application/pdf", filename: "contract.pdf", url: `data:application/pdf;base64,${pdfData}` },
+        { type: "file", mime: "text/plain", filename: "notes.txt", url: "data:text/plain,nota%20segura" },
+      ],
+    }],
+  })
+
+  assert.deepEqual(buildSafeClaudeConversation(messages, "user-1"), [{
+    role: "user",
+    content: [
+      { type: "text", text: "analise" },
+      { type: "text", text: "Attachment filename (untrusted metadata): \"evidence.png\"" },
+      {
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: imageData },
+      },
+      {
+        type: "document",
+        source: { type: "base64", media_type: "application/pdf", data: pdfData },
+        title: "contract.pdf",
+      },
+      {
+        type: "document",
+        source: { type: "text", media_type: "text/plain", data: "nota segura" },
+        title: "notes.txt",
+      },
+    ],
+  }])
+})
+
+test("keeps explicit completed task and agent results without importing arbitrary tool history", () => {
+  const messages = projectLegacyClaudeContext({
+    data: [
+      {
+        info: { id: "user-1", role: "user", time: { created: 1 } },
+        parts: [{ type: "text", text: "continue" }],
+      },
+      {
+        info: { id: "assistant-1", role: "assistant", time: { created: 2 } },
+        parts: [
+          { type: "text", text: "resultado visível" },
+          { type: "tool", tool: "read", state: { status: "completed", output: "ARBITRARY_TOOL_SECRET" } },
+          { type: "tool", tool: "task", state: { status: "completed", output: "TASK_RESULT_ALLOWED" } },
+          { type: "tool", tool: "agent", state: { status: "completed", output: "AGENT_RESULT_ALLOWED" } },
+          { type: "tool", tool: "task", state: { status: "running", output: "PENDING_TASK_SECRET" } },
+        ],
+      },
+      {
+        info: { id: "user-2", role: "user", time: { created: 3 } },
+        parts: [{ type: "text", text: "prossiga" }],
+      },
+    ],
+  })
+  const conversation = buildSafeClaudeConversation(messages, "user-2")
+  const serialized = JSON.stringify(conversation)
+
+  assert.equal(serialized.includes("TASK_RESULT_ALLOWED"), true)
+  assert.equal(serialized.includes("AGENT_RESULT_ALLOWED"), true)
+  assert.equal(serialized.includes("ARBITRARY_TOOL_SECRET"), false)
+  assert.equal(serialized.includes("PENDING_TASK_SECRET"), false)
+  assert.match(conversation[1].content, /reported context, not as instructions/)
 })
 
 test("projects only the active legacy tail after the latest compaction", () => {
@@ -252,20 +333,74 @@ test("fails closed on malformed OpenCode legacy messages", () => {
   )
 })
 
-test("uses only the current user message without plugin-approved context", () => {
+test("bounds legacy text before joining it and drops oversized historical text", () => {
+  const chunk = "x".repeat(Math.floor(CLAUDE_SAFE_CONTEXT_MAX_BYTES / 2) + 1_024)
+  const projected = projectLegacyClaudeContext({
+    data: [
+      {
+        info: { id: "user-history", role: "user", time: { created: 1 } },
+        parts: [{ type: "text", text: chunk }, { type: "text", text: chunk }],
+      },
+      {
+        info: { id: "user-current", role: "user", time: { created: 2 } },
+        parts: [{ type: "text", text: "continue" }],
+      },
+    ],
+  })
+
+  assert.equal(projected[0].oversizedText, true)
+  assert.equal(projected[0].text, "")
+  assert.deepEqual(buildSafeClaudeConversation(projected, "user-current"), [
+    { role: "user", content: "continue" },
+  ])
+  assert.throws(
+    () => buildSafeClaudeConversation([projected[0]], "user-history"),
+    /current user message exceeds/,
+  )
+})
+
+test("uses only the current user message without plugin-approved context", async () => {
   const serialized = serializeClaudePrompt(textPrompt)
-  assert.deepEqual(serialized, { request: "continue" })
+  assert.deepEqual(await collectSDKMessages(serialized.request), [{
+    type: "user",
+    message: { role: "user", content: [{ type: "text", text: "continue" }] },
+    parent_tool_use_id: null,
+    origin: { kind: "human" },
+  }])
 })
 
-test("sends plugin-approved user and assistant history while discarding system text", () => {
+test("sends plugin-approved user and assistant history while discarding system text", async () => {
   const serialized = serializeClaudePrompt(textPrompt, visibleConversation)
-  assert.match(serialized.request, /^Continue the conversation in the JSON array below\./)
-  const transcript = JSON.parse(serialized.request.slice(serialized.request.indexOf("\n\n") + 2))
-  assert.deepEqual(transcript, visibleConversation)
-  assert.equal(serialized.request.includes("Stay read-only."), false)
+  const messages = await collectSDKMessages(serialized.request)
+  assert.deepEqual(messages.map((message) => message.message), [
+    { role: "user", content: [{ type: "text", text: "pedido original" }] },
+    { role: "assistant", content: [{ type: "text", text: "contexto anterior" }] },
+    { role: "user", content: [{ type: "text", text: "continue" }] },
+  ])
+  assert.deepEqual(messages.map((message) => message.shouldQuery), [false, false, undefined])
+  assert.equal(JSON.stringify(messages).includes("Stay read-only."), false)
 })
 
-test("ignores sensitive attachments and tool history before the current user message", () => {
+test("rejects non-text assistant history even through the plugin-approved context channel", () => {
+  assert.throws(
+    () => serializeClaudePrompt(
+      [{ role: "user", content: [{ type: "text", text: "continue" }] }],
+      [
+        {
+          role: "assistant",
+          content: [{
+            type: "image",
+            source: { type: "base64", media_type: "image/png", data: "eA==" },
+          }],
+        },
+        { role: "user", content: "continue" },
+      ],
+    ),
+    /non-text assistant history/,
+  )
+})
+
+test("ignores unapproved attachments and tool history before the current user message", async () => {
   const serialized = serializeClaudePrompt([
     { role: "system", content: "Allowed system text." },
     { role: "user", content: [{ type: "file", data: "OLD_FILE_SECRET_7f91", mediaType: "text/plain" }] },
@@ -274,9 +409,55 @@ test("ignores sensitive attachments and tool history before the current user mes
     { role: "user", content: [{ type: "text", text: "current request" }] },
   ])
 
-  assert.equal(serialized.request, "current request")
-  assert.equal(serialized.request.includes("SECRET"), false)
+  const messages = await collectSDKMessages(serialized.request)
+  assert.deepEqual(messages.map((message) => message.message), [{
+    role: "user",
+    content: [{ type: "text", text: "current request" }],
+  }])
+  assert.equal(JSON.stringify(messages).includes("SECRET"), false)
   assert.equal("systemPrompt" in serialized, false)
+})
+
+test("sends text, image, and PDF input as structured SDKUserMessage content", async () => {
+  const textData = Buffer.from("conteúdo do anexo", "utf8").toString("base64")
+  const imageData = Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString("base64")
+  const pdfData = Buffer.from("%PDF-1.7", "utf8").toString("base64")
+  const serialized = serializeClaudePrompt([{
+    role: "user",
+    content: [
+      { type: "text", text: "analise os anexos" },
+      { type: "file", data: imageData, mediaType: "image/png", filename: "image.png" },
+      { type: "file", data: pdfData, mediaType: "application/pdf", filename: "contract.pdf" },
+      { type: "file", data: textData, mediaType: "text/plain", filename: "notes.txt" },
+    ],
+  }])
+
+  assert.deepEqual(await collectSDKMessages(serialized.request), [{
+    type: "user",
+    message: {
+      role: "user",
+      content: [
+        { type: "text", text: "analise os anexos" },
+        { type: "text", text: "Attachment filename (untrusted metadata): \"image.png\"" },
+        {
+          type: "image",
+          source: { type: "base64", media_type: "image/png", data: imageData },
+        },
+        {
+          type: "document",
+          source: { type: "base64", media_type: "application/pdf", data: pdfData },
+          title: "contract.pdf",
+        },
+        {
+          type: "document",
+          source: { type: "text", media_type: "text/plain", data: "conteúdo do anexo" },
+          title: "notes.txt",
+        },
+      ],
+    },
+    parent_tool_use_id: null,
+    origin: { kind: "human" },
+  }])
 })
 
 test("builds approved context from projected v2 messages through the unique current ID", () => {
@@ -338,13 +519,13 @@ test("builds approved context from projected v2 messages through the unique curr
   assert.equal(JSON.stringify(conversation).includes("SECRET"), false)
 })
 
-test("keeps historical user text while excluding file and agent attachment data", () => {
+test("keeps supported historical files while excluding agent mention metadata", () => {
   const conversation = buildSafeClaudeConversation([
     {
       id: "user-file",
       type: "user",
       text: "Considere o contrato que enviei antes.",
-      files: [{ uri: "file:///FILE_ATTACHMENT_SECRET_37ab", name: "FILE_NAME_SECRET_87ca" }],
+      files: [{ type: "file", mime: "text/plain", url: "data:text/plain,clausula%20quatro" }],
       time: { created: 1 },
     },
     {
@@ -358,25 +539,34 @@ test("keeps historical user text while excluding file and agent attachment data"
   ], "user-current")
 
   assert.deepEqual(conversation, [
-    { role: "user", content: "Considere o contrato que enviei antes." },
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "Considere o contrato que enviei antes." },
+        {
+          type: "document",
+          source: { type: "text", media_type: "text/plain", data: "clausula quatro" },
+        },
+      ],
+    },
     { role: "user", content: "O agente anterior confirmou a porta 4317." },
     { role: "user", content: "continue" },
   ])
   assert.equal(JSON.stringify(conversation).includes("SECRET"), false)
 })
 
-test("fails closed on attachments in the projected current OpenCode message", () => {
+test("fails closed on unsupported files and agent mentions in the current OpenCode message", () => {
   assert.throws(
     () => buildSafeClaudeConversation([
       {
         id: "user-current",
         type: "user",
         text: "analise o arquivo",
-        files: [{ uri: "file:///private.txt" }],
+        files: [{ type: "file", mime: "application/zip", url: "data:application/zip;base64,eA==" }],
         time: { created: 1 },
       },
     ], "user-current"),
-    /does not accept file attachments/,
+    /does not support current file attachment/,
   )
   assert.throws(
     () => buildSafeClaudeConversation([
@@ -416,7 +606,7 @@ test("requires one projected current ID and excludes assistant messages with err
   )
 })
 
-test("budgets projected context before transcript serialization and always keeps the current message", () => {
+test("budgets projected context before transcript serialization and always keeps the current message", async () => {
   const messages = [
     { id: "user-first", type: "user", text: "primeiro fato", time: { created: 1 } },
     ...Array.from({ length: 30 }, (_, index) => ({
@@ -437,11 +627,22 @@ test("budgets projected context before transcript serialization and always keeps
   assert.equal(conversation.contextMetadata.droppedMessages > 0, true)
   assert.equal(conversation.at(-1).content, "MENSAGEM_ATUAL_única")
   assert.equal(conversation.filter((message) => message.content === "MENSAGEM_ATUAL_única").length, 1)
-  assert.equal(Buffer.byteLength(serialized.request, "utf8") <= 2_048, true)
+  assert.equal(await serializedSDKBytes(serialized) <= 2_048, true)
   assert.throws(
     () => buildSafeClaudeConversation([
       { id: "oversized", type: "user", text: "ç".repeat(800), time: { created: 1 } },
     ], "oversized", { maxBytes: 1_024 }),
+    /current user message exceeds the 1024-byte safe context budget/,
+  )
+  const imageData = Buffer.alloc(800, 1).toString("base64")
+  assert.throws(
+    () => buildSafeClaudeConversation([{
+      id: "oversized-image",
+      type: "user",
+      text: "analise",
+      files: [{ type: "file", mime: "image/png", url: `data:image/png;base64,${imageData}` }],
+      time: { created: 1 },
+    }], "oversized-image", { maxBytes: 1_024 }),
     /current user message exceeds the 1024-byte safe context budget/,
   )
 })
@@ -487,6 +688,30 @@ test("includes a checkpoint only when its compaction ID is present before the cu
   assert.equal(accepted.contextMetadata.checkpointIncluded, true)
   assert.equal(JSON.stringify(rejected).includes("fato validado"), false)
   assert.equal(rejected.contextMetadata.checkpointIncluded, false)
+})
+
+test("falls back to safe active-tail history when a valid checkpoint does not fit", () => {
+  const messages = [
+    { id: "compaction-1", type: "compaction", time: { created: 1 } },
+    { id: "user-history", type: "user", text: "fato do tail ativo", time: { created: 2 } },
+    { id: "user-current", type: "user", text: "continue", time: { created: 3 } },
+  ]
+  const checkpoint = {
+    schemaVersion: 1,
+    sessionID: "session-1",
+    status: "ready",
+    compactionID: "compaction-1",
+    summary: "x".repeat(4_096),
+    source: { firstMessageID: "user-1", lastMessageID: "user-1", selectedMessageCount: 1 },
+  }
+
+  const conversation = buildSafeClaudeConversation(messages, "user-current", {
+    checkpoint,
+    maxBytes: 2_048,
+  })
+
+  assert.equal(conversation.contextMetadata.checkpointIncluded, false)
+  assert.equal(conversation.some((message) => message.content === "fato do tail ativo"), true)
 })
 
 test("creates a bounded checkpoint request from allowed text only", () => {
@@ -875,18 +1100,19 @@ test("rejects an adulterated bound summary that exceeds the validated schema bud
   }), undefined)
 })
 
-test("keeps a single current user request unchanged", () => {
-  assert.deepEqual(
-    serializeClaudePrompt([{ role: "user", content: [{ type: "text", text: "pedido isolado" }] }]),
-    { request: "pedido isolado" },
-  )
+test("keeps a single current user request unchanged", async () => {
+  const serialized = serializeClaudePrompt([
+    { role: "user", content: [{ type: "text", text: "pedido isolado" }] },
+  ])
+  assert.deepEqual(await collectSDKMessages(serialized.request), [{
+    type: "user",
+    message: { role: "user", content: [{ type: "text", text: "pedido isolado" }] },
+    parent_tool_use_id: null,
+    origin: { kind: "human" },
+  }])
 })
 
-test("fails closed on unsafe parts in the current user message", () => {
-  assert.throws(
-    () => serializeClaudePrompt([{ role: "user", content: [{ type: "file", data: "x", mediaType: "text/plain" }] }]),
-    /does not accept file attachments/,
-  )
+test("fails closed on tool history and unsupported files in the current user message", () => {
   assert.throws(
     () => serializeClaudePrompt([{ role: "user", content: [{ type: "tool-call", toolCallId: "1", toolName: "read", input: {} }] }]),
     /does not accept tool-call/,
@@ -898,6 +1124,10 @@ test("fails closed on unsafe parts in the current user message", () => {
   assert.throws(
     () => serializeClaudePrompt([{ role: "user", content: [{ type: "mystery" }] }]),
     /does not support user message part/,
+  )
+  assert.throws(
+    () => serializeClaudePrompt([{ role: "user", content: [{ type: "file", data: "eA==", mediaType: "application/zip" }] }]),
+    /does not support file media type/,
   )
 })
 
@@ -919,6 +1149,18 @@ test("rejects oversized input before calling the Agent SDK", async () => {
     new RegExp(`exceeds the ${CLAUDE_MAX_INPUT_BYTES}-byte input limit`),
   )
   assert.equal(queryCalls, 0)
+})
+
+test("rejects oversized base64 attachments before SDK serialization", () => {
+  const oversizedBase64 = "A".repeat(CLAUDE_MAX_INPUT_BYTES + 4)
+
+  assert.throws(
+    () => serializeClaudePrompt([{
+      role: "user",
+      content: [{ type: "file", data: oversizedBase64, mediaType: "image/png" }],
+    }]),
+    /attachment exceeds the maximum encoded size/,
+  )
 })
 
 test("applies the input limit to the complete visible transcript", () => {
@@ -976,14 +1218,7 @@ test("stops progressive output above the independent maxOutputBytes guard", asyn
   const parts = []
   for await (const part of response.stream) parts.push(part)
 
-  assert.deepEqual(parts.map((part) => part.type), [
-    "stream-start",
-    "text-start",
-    "text-delta",
-    "text-end",
-    "error",
-  ])
-  assert.equal(parts[2].delta, "123456")
+  assert.deepEqual(parts.map((part) => part.type), ["stream-start", "error"])
   assert.match(parts.at(-1).error.message, /exceeded maxOutputBytes 10/)
   assert.equal(harness.calls[0].iterator.closed, true)
   assert.equal(parts.filter((part) => ["finish", "error"].includes(part.type)).length, 1)
@@ -1009,6 +1244,19 @@ test("uses a bounded byte guard by default and validates explicit maxOutputBytes
   options.providerOptions["claude-agent"].maxOutputBytes = 0
   await assert.rejects(model.doGenerate(options), /maxOutputBytes must be a positive integer/)
   assert.equal(harness.calls.length, 0)
+})
+
+test("forwards an enforceable maxTurns limit to the Claude Agent SDK", async () => {
+  const harness = successfulHarness()
+  const model = createClaudeAgent({ query: harness.query }).languageModel("claude-opus-4-8")
+  const options = callOptions(textPrompt)
+  options.providerOptions["claude-agent"].maxTurns = 5
+
+  await model.doGenerate(options)
+  assert.equal(harness.calls[0].options.maxTurns, 5)
+
+  options.providerOptions["claude-agent"].maxTurns = 0
+  await assert.rejects(model.doGenerate(options), /maxTurns must be a positive integer/)
 })
 
 test("surfaces projected-context truncation as a provider warning", async () => {
@@ -1068,16 +1316,60 @@ test("implements LanguageModelV3 generation through the Claude Agent SDK", async
 
   const received = harness.calls[0]
   assert.equal(received.options.cwd, process.cwd())
-  assert.match(received.prompt, /^Continue the conversation in the JSON array below\./)
-  assert.equal(received.prompt.includes("pedido original"), true)
-  assert.equal(received.prompt.includes("contexto anterior"), true)
-  assert.equal(received.prompt.includes("continue"), true)
+  const messages = await collectSDKMessages(received.prompt)
+  assert.deepEqual(messages.map((message) => message.message), [
+    { role: "user", content: [{ type: "text", text: "pedido original" }] },
+    { role: "assistant", content: [{ type: "text", text: "contexto anterior" }] },
+    { role: "user", content: [{ type: "text", text: "continue" }] },
+  ])
   assert.deepEqual(received.options.tools, { type: "preset", preset: "claude_code" })
   assert.equal(received.options.permissionMode, "auto")
+  assert.equal(typeof received.options.canUseTool, "function")
   assert.equal(received.options.pathToClaudeCodeExecutable, process.execPath)
   assert.equal(JSON.stringify(received.options).includes("external_tool"), false)
   assert.equal(received.options.systemPrompt.append.includes("Stay read-only."), false)
-  assert.equal(received.prompt.includes("Stay read-only."), false)
+  assert.equal(JSON.stringify(messages).includes("Stay read-only."), false)
+})
+
+test("forwards the provider permission profile and injectable callback to Agent SDK canUseTool", async () => {
+  const harness = successfulHarness()
+  const callbackCalls = []
+  const model = createClaudeAgent({
+    query: harness.query,
+    permissionCallback: async (toolName) => {
+      callbackCalls.push(toolName)
+      return "allow"
+    },
+  }).languageModel("claude-opus-4-8")
+  const options = callOptions(textPrompt)
+  options.providerOptions["claude-agent"].permissionProfile = {
+    default: "ask",
+    tools: { Bash: "deny", Read: "allow" },
+  }
+  options.providerOptions["claude-agent"].permissionTimeoutMs = 100
+
+  await model.doGenerate(options)
+  const sdkOptions = harness.calls[0].options
+  assert.equal("allowedTools" in sdkOptions, false)
+  assert.deepEqual(sdkOptions.disallowedTools, ["Bash"])
+  assert.deepEqual(sdkOptions.sandbox, { autoAllowBashIfSandboxed: false })
+  assert.deepEqual(sdkOptions.settings, {
+    permissions: {
+      allow: ["Read"],
+      ask: ["*"],
+      defaultMode: "default",
+      deny: ["Bash"],
+    },
+  })
+  assert.deepEqual(await sdkOptions.canUseTool("Edit", {}, {
+    requestId: "permission-3",
+    signal: new AbortController().signal,
+    toolUseID: "tool-3",
+  }), {
+    behavior: "allow",
+    toolUseID: "tool-3",
+  })
+  assert.deepEqual(callbackCalls, ["Edit"])
 })
 
 test("streams Agent SDK text deltas before the final result supplies usage", async () => {

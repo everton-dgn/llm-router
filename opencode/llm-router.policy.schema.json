@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://llm-router.local/schemas/llm-router.policy.schema.json",
+  "title": "LLM Router execution policy",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": { "const": 1 },
+    "defaultProfile": { "$ref": "#/$defs/profileName" },
+    "agents": {
+      "type": "object",
+      "propertyNames": {
+        "minLength": 1,
+        "not": { "pattern": "\\*" }
+      },
+      "additionalProperties": { "$ref": "#/$defs/assignment" }
+    },
+    "models": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[^/*\\s]+/[^*\\s]+$"
+      },
+      "additionalProperties": { "$ref": "#/$defs/assignment" }
+    },
+    "profiles": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "native": { "$ref": "#/$defs/profileSettings" },
+        "restricted": { "$ref": "#/$defs/profileSettings" },
+        "full": { "$ref": "#/$defs/profileSettings" }
+      }
+    }
+  },
+  "$defs": {
+    "profileName": {
+      "type": "string",
+      "enum": ["native", "restricted", "full"]
+    },
+    "permissionRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["permission", "pattern", "action"],
+      "properties": {
+        "permission": { "type": "string", "minLength": 1 },
+        "pattern": { "type": "string", "minLength": 1 },
+        "action": { "type": "string", "enum": ["allow", "ask", "deny"] }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_steps": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "max_tool_calls": { "type": "integer", "minimum": 1, "maximum": 100000 },
+        "max_child_depth": { "type": "integer", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "profileSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "permissions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/permissionRule" }
+        },
+        "limits": { "$ref": "#/$defs/limits" }
+      }
+    },
+    "assignmentObject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile"],
+      "properties": {
+        "profile": { "$ref": "#/$defs/profileName" },
+        "permissions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/permissionRule" }
+        },
+        "limits": { "$ref": "#/$defs/limits" }
+      }
+    },
+    "assignment": {
+      "oneOf": [
+        { "$ref": "#/$defs/profileName" },
+        { "$ref": "#/$defs/assignmentObject" }
+      ]
+    }
+  }
+}
