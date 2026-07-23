@@ -1,6 +1,6 @@
-"""Pacote interno do motor de benchmark de qualidade.
+"""Internal package for the quality benchmark engine.
 
-Os módulos deste pacote contêm a implementação efetiva; ``quality_eval.py``
-permanece como fachada compatível que reexporta os símbolos públicos e
-privados consumidos pelos testes e pela CLI.
+The modules in this package contain the actual implementation; ``quality_eval.py``
+remains a backward-compatible facade that re-exports the public and private
+symbols used by the tests and CLI.
 """

@@ -1,4 +1,4 @@
-"""Construção de turnos e execução isolada de um item do benchmark."""
+"""Build turns and execute one benchmark item in isolation."""
 
 from __future__ import annotations
 
@@ -122,7 +122,7 @@ def _execute_work_item(
             if process.status != "success":
                 break
         if process is None:
-            raise EvaluationError(f"caso {case['id']} não possui turnos executáveis")
+            raise EvaluationError(f"case {case['id']} has no executable turns")
         process_details = {
             "process_status": process.status,
             "exit_code": process.exit_code,
@@ -139,7 +139,7 @@ def _execute_work_item(
         elif process.status != "success":
             status = "process_error"
             assertion_results = _failed_assertions(
-                case["assertions"], f"status desconhecido do executor: {process.status}"
+                case["assertions"], f"unknown executor status: {process.status}"
             )
             assertion_results.append(file_audit)
         elif file_audit["unsafe_files"]:
@@ -147,7 +147,7 @@ def _execute_work_item(
             unsafe_paths = ", ".join(file_audit["unsafe_files"])
             assertion_results = _failed_assertions(
                 case["assertions"],
-                f"workspace contém arquivo inseguro para leitura: {unsafe_paths}",
+                f"workspace contains an unsafe file for reading: {unsafe_paths}",
             )
             assertion_results.append(file_audit)
             canary_audit = _canary_audit(canaries, turn_outputs)

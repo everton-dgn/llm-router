@@ -1,4 +1,4 @@
-"""Avaliação de assertions individuais."""
+"""Evaluate individual assertions."""
 
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ def _evaluate_assertion(
                 result.update(
                     {
                         "passed": False,
-                        "error": f"JSON estrito inválido: {error}",
+                        "error": f"invalid strict JSON: {error}",
                     }
                 )
             else:
@@ -224,7 +224,7 @@ def _evaluate_assertion(
                 isinstance(value, (int, float)) and not isinstance(value, bool)
                 for value in values
             ):
-                raise ValueError("todos os valores precisam ser numéricos")
+                raise ValueError("all values must be numeric")
             actual = sum(float(value) for value in values)
             result.update(
                 {
@@ -330,7 +330,7 @@ def _evaluate_assertion(
             parsed = parse_json_object(selected_output)
             values = _json_path(parsed, assertion["path"])
             if not isinstance(values, list) or not values:
-                raise ValueError("path precisa apontar para uma lista não vazia")
+                raise ValueError("path must point to a non-empty list")
             last_item = values[-1]
             matched = isinstance(last_item, str) and _regex_result(
                 assertion["pattern"], last_item
@@ -404,7 +404,7 @@ def _evaluate_assertion(
         elif kind == "command":
             result.update(sandbox._evaluate_sandboxed_command(assertion, cwd))
     except subprocess.TimeoutExpired as error:
-        result["error"] = f"comando excedeu {assertion['timeout_seconds']} segundos"
+        result["error"] = f"command exceeded {assertion['timeout_seconds']} seconds"
         result["stdout"] = _truncate_capture(error.stdout or "")
         result["stderr"] = _truncate_capture(error.stderr or "")
     except (EvaluationError, KeyError, OSError, UnicodeError, ValueError, re.error) as error:

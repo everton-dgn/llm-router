@@ -1,4 +1,4 @@
-"""Sandbox: perfil, leitura segura, execução Python, behavior, mutantes e AST guard."""
+"""Sandbox profiles, safe reads, Python execution, behavior, mutants, and AST guard."""
 
 from __future__ import annotations
 
@@ -82,10 +82,10 @@ def _run_sandboxed_python(
 ) -> dict[str, Any]:
     sandbox = shutil.which("sandbox-exec")
     if sandbox != "/usr/bin/sandbox-exec":
-        raise EvaluationError("/usr/bin/sandbox-exec é obrigatório para graders Python")
+        raise EvaluationError("/usr/bin/sandbox-exec is required for Python graders")
     python = constants.SANDBOX_PYTHON
     if not python.is_file():
-        raise EvaluationError(f"{python} é obrigatório para graders Python")
+        raise EvaluationError(f"{python} is required for Python graders")
     try:
         completed = subprocess.run(
             [
@@ -168,7 +168,7 @@ def _evaluate_sandboxed_command(assertion: dict[str, Any], cwd: Path) -> dict[st
 
 
 def _read_regular_text(workspace: Path, relative_path: str) -> str:
-    normalized = _safe_relative_path(relative_path, "arquivo para leitura")
+    normalized = _safe_relative_path(relative_path, "file to read")
     parts = Path(normalized).parts
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     directory_flags |= getattr(os, "O_NOFOLLOW", 0)
@@ -185,7 +185,7 @@ def _read_regular_text(workspace: Path, relative_path: str) -> str:
             descriptors.append(current_descriptor)
             if not stat.S_ISDIR(os.fstat(current_descriptor).st_mode):
                 raise EvaluationError(
-                    f"diretório inseguro no caminho do arquivo: {normalized}"
+                    f"unsafe directory in file path: {normalized}"
                 )
         file_descriptor = os.open(
             parts[-1], file_flags, dir_fd=current_descriptor
@@ -193,10 +193,10 @@ def _read_regular_text(workspace: Path, relative_path: str) -> str:
         descriptors.append(file_descriptor)
         metadata = os.fstat(file_descriptor)
         if not stat.S_ISREG(metadata.st_mode):
-            raise EvaluationError(f"arquivo inseguro para leitura: {normalized}")
+            raise EvaluationError(f"unsafe file for reading: {normalized}")
         if metadata.st_size > constants.MAX_SNAPSHOT_FILE_BYTES:
             raise EvaluationError(
-                f"arquivo excede o limite de {constants.MAX_SNAPSHOT_FILE_BYTES} bytes: {normalized}"
+                f"file exceeds the {constants.MAX_SNAPSHOT_FILE_BYTES}-byte limit: {normalized}"
             )
         chunks: list[bytes] = []
         observed_bytes = 0
@@ -207,14 +207,14 @@ def _read_regular_text(workspace: Path, relative_path: str) -> str:
             observed_bytes += len(chunk)
             if observed_bytes > constants.MAX_SNAPSHOT_FILE_BYTES:
                 raise EvaluationError(
-                    f"arquivo cresceu além do limite de {constants.MAX_SNAPSHOT_FILE_BYTES} bytes: "
+                    f"file grew beyond the {constants.MAX_SNAPSHOT_FILE_BYTES}-byte limit: "
                     f"{normalized}"
                 )
             chunks.append(chunk)
         return b"".join(chunks).decode("utf-8")
     except OSError as error:
         raise EvaluationError(
-            f"arquivo inseguro ou indisponível para leitura: {normalized}: "
+            f"unsafe or unavailable file for reading: {normalized}: "
             f"{type(error).__name__}"
         ) from error
     finally:
@@ -228,9 +228,9 @@ def _safe_grader_file(workspace: Path, relative_path: str) -> Path:
     try:
         resolved = target.resolve(strict=True)
     except OSError as error:
-        raise EvaluationError(f"arquivo do grader ausente: {relative_path}: {error}") from error
+        raise EvaluationError(f"missing grader file: {relative_path}: {error}") from error
     if not resolved.is_relative_to(workspace_root) or target.is_symlink() or not target.is_file():
-        raise EvaluationError(f"arquivo inseguro para grader: {relative_path}")
+        raise EvaluationError(f"unsafe file for grader: {relative_path}")
     return target
 
 
@@ -250,7 +250,7 @@ def _sandbox_json_response(grader: dict[str, Any]) -> dict[str, Any] | None:
 def _safe_behavior_module(workspace: Path, module: str) -> None:
     forbidden_roots = {"contextlib", "importlib", "io", "json", "os", "sys"}
     if module.split(".", 1)[0] in forbidden_roots:
-        raise EvaluationError(f"python_behavior.module reservado: {module}")
+        raise EvaluationError(f"python_behavior.module is reserved: {module}")
     relative_path = Path(*module.split(".")).with_suffix(".py").as_posix()
     _safe_grader_file(workspace, relative_path)
 
@@ -315,7 +315,7 @@ def _validate_mutant_test_ast(source: str) -> None:
     try:
         tree = ast.parse(source, filename="<candidate-test>")
     except SyntaxError as error:
-        raise EvaluationError(f"python_test_mutants recebeu teste inválido: {error.msg}") from error
+        raise EvaluationError(f"python_test_mutants received an invalid test: {error.msg}") from error
     forbidden_modules = {"inspect", "linecache", "os", "pathlib", "subprocess"}
     forbidden_names = {
         "__base__",
@@ -374,7 +374,7 @@ def _validate_mutant_test_ast(source: str) -> None:
     if violations:
         names = ", ".join(sorted(violations))
         raise EvaluationError(
-            f"python_test_mutants rejeitado pelo AST guard por acesso ao source: {names}"
+            f"python_test_mutants rejected by the AST guard for source access: {names}"
         )
 
 
@@ -391,7 +391,7 @@ def _evaluate_python_test_mutants(
     module_path = Path(assertion["module_file"])
     if len(module_path.parts) != 1 or module_path.suffix != ".py":
         raise EvaluationError(
-            "python_test_mutants.module_file precisa ser um módulo Python de nível raiz"
+            "python_test_mutants.module_file must be a top-level Python module"
         )
     module_name = _safe_python_symbol_path(module_path.stem, "module_file")
 

@@ -1,0 +1,69 @@
+name: Release notes sync
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to sync, for example v0.1.0"
+        required: true
+        type: string
+      create_if_missing:
+        description: "Create the GitHub Release when it is missing"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: release-notes-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.15.0"
+
+      - name: Sync GitHub Release body
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          INPUT_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+          INPUT_CREATE_IF_MISSING: ${{ inputs.create_if_missing }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(--repo "$REPOSITORY")
+
+          if [ -n "${INPUT_TAG:-}" ]; then
+            args+=(--tag "$INPUT_TAG")
+          fi
+
+          expected_commit="$(
+            node scripts/verify-release-tag.mjs \
+              --tag "${INPUT_TAG:?release tag is required}" \
+              --print-commit
+          )"
+          args+=(--expected-commit "$expected_commit")
+
+          if [[ "$EVENT_NAME" == "push" && "$REF" == refs/tags/* ]] ||
+             [[ "${INPUT_CREATE_IF_MISSING:-false}" == "true" ]]; then
+            args+=(--create-if-missing)
+          fi
+
+          node scripts/sync-release-notes-from-changelog.mjs "${args[@]}"

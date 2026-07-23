@@ -1,0 +1,60 @@
+colors: true
+
+commit-msg:
+  jobs:
+    - name: commitlint
+      run: pnpm commitlint --edit {1}
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: release-tooling
+      glob:
+        - "package.json"
+        - "pnpm-lock.yaml"
+        - "scripts/*.mjs"
+      run: pnpm test:release
+
+    - name: repository-hooks
+      glob:
+        - ".lefthook.yml"
+        - "commitlint.config.mjs"
+        - "package.json"
+        - "pnpm-lock.yaml"
+        - "pnpm-workspace.yaml"
+      run: pnpm hooks:check
+
+    - name: documentation
+      glob:
+        - "*.md"
+        - "docs/**/*.md"
+        - ".github/**/*.md"
+      run: node --test tests/documentation.test.mjs
+
+    - name: node
+      glob:
+        - "opencode/**/*.{mjs,ts,json,jsonc}"
+        - "tests/*.test.mjs"
+      run: pnpm test:node
+
+    - name: shell
+      glob:
+        - "route"
+        - "config.json"
+        - "opencode/install.sh"
+        - "tests/*.sh"
+      run: pnpm test:shell
+
+    - name: python
+      glob:
+        - "*.py"
+        - "qeval/**/*.py"
+        - "tests/*.py"
+        - "tests/quality-cases*.json"
+        - "benchmark_config.json"
+      run: pnpm test:python
+
+pre-push:
+  jobs:
+    - name: deterministic-gate
+      run: pnpm test

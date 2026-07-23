@@ -1,4 +1,4 @@
-"""Exceções compartilhadas pelo motor de benchmark."""
+"""Exceptions shared by the benchmark engine."""
 
 from __future__ import annotations
 

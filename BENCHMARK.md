@@ -1,34 +1,32 @@
-# Benchmark de qualidade
+# Quality benchmark
 
-Execuções: V1 em 20 de julho de 2026; V2 e comparação de effort em 21 de
-julho de 2026.
+Runs: V1 on July 20, 2026; V2 and the effort comparison on July 21, 2026.
 
-Este documento descreve somente o benchmark offline. `quality_eval.py` lê
-`benchmark_config.json` e usa `BenchmarkExecutor` para executar chamadas
-single-shot. Os comandos externos e ambientes de provider dessa configuração
-servem para reproduzir as medições e nunca participam do roteamento no
-OpenCode. O runtime de produção usa o handoff direto para providers nativos e
-para o adapter local da CLI oficial do Claude.
+This document describes only the offline benchmark. `quality_eval.py` reads
+`benchmark_config.json` and uses `BenchmarkExecutor` to execute single-shot
+calls. The external commands and provider environments in that configuration
+reproduce the measurements and never participate in OpenCode routing. The
+production runtime uses direct handoff to native providers and the local
+adapter for the official Claude CLI.
 
-## V1: piloto inicial
+## V1: initial pilot
 
-Este primeiro benchmark compara os quatro executores configurados no
-`llm-router`. Ele
-não isola os modelos base e não mede generalização. A matriz contém seis casos
-sintéticos, quatro rotas e três repetições por par, totalizando 72 chamadas
-single-shot em ordem aleatória reproduzível com seed 42.
+This first benchmark compares the four executors configured in `llm-router`.
+It does not isolate the base models or measure generalization. The matrix
+contains six synthetic cases, four routes, and three repetitions per pair, for
+a total of 72 single-shot calls in reproducible random order with seed 42.
 
-## Metodologia
+## Methodology
 
-- Cada chamada usa um workspace temporário novo.
-- O executor chama `BenchmarkExecutor.execute_model` diretamente, sem retry,
-  escalada, `stage_prepare`, `stage_verify` ou reviewer do OpenCode.
-- As rubricas são determinísticas e falhas críticas zeram a execução.
-- Cada rota recebeu 18 chamadas; cada caso recebeu 12.
-- As 72 chamadas terminaram com exit code zero, sem timeout ou erro de processo.
-- Os fixtures foram enviados ao `trash` após a auditoria.
+- Each call uses a new temporary workspace.
+- The executor calls `BenchmarkExecutor.execute_model` directly, without
+  retries, escalation, `stage_prepare`, `stage_verify`, or an OpenCode reviewer.
+- The rubrics are deterministic, and critical failures score the run as zero.
+- Each route received 18 calls; each case received 12.
+- All 72 calls finished with exit code zero, without a timeout or process error.
+- The fixtures were sent to `trash` after the audit.
 
-Comando usado:
+Command used:
 
 ```bash
 uv run --no-project --no-python-downloads python quality_eval.py \
@@ -42,310 +40,333 @@ uv run --no-project --no-python-downloads python quality_eval.py \
   --output /tmp/llm-router-quality-20260720-run2.json
 ```
 
-## Correção da rubrica
+## Rubric correction
 
-O relatório original marcou 31 falhas. A inspeção das saídas encontrou dois
-erros de medição:
+The original report marked 31 failures. Inspection of the outputs found two
+measurement errors:
 
-1. O caso de planejamento aceitava somente uma representação de `0,5%`, embora
-   o prompt não fixasse unidade ou tipo JSON. Respostas equivalentes usaram
-   `0.005`, `"0.5%"` ou `0.5`.
-2. O caso de resumo exigia tipos internos de JSON que o prompt não definia. As
-   frases preservavam todos os fatos e a incerteza, mas valores como
-   `"120 usuários"` eram reprovados por não serem o número `120`.
+1. The planning case accepted only one representation of `0.5%`, although the
+   prompt did not specify a JSON unit or type. Equivalent responses used
+   `0.005`, `"0.5%"`, or `0.5`.
+2. The summary case required internal JSON types that the prompt did not
+   define. The sentences preserved all facts and uncertainty, but values such
+   as `"120 users"` failed because they were not the number `120`.
 
-O relatório auditado reaplicou somente assertions de saída. As 24 execuções que
-dependiam do workspace mantiveram a avaliação original, inclusive as violações
-de escopo. Nenhuma chamada adicional foi feita.
+The audited report reapplied only output assertions. The 24 runs that depended
+on the workspace kept their original evaluation, including scope violations.
+No additional call was made.
 
-| Artefato | SHA-256 |
+| Artifact | SHA-256 |
 | --- | --- |
-| Relatório original | `1aeac33135248d7ede5867ff1bfc491139777a607a4b89cc58e9458f33603eb6` |
-| Relatório auditado | `93f7df8cf3466fb38011dde5684369d54f039ccf9ef8bc45d3fd67cc40bf1afc` |
+| Original report | `1aeac33135248d7ede5867ff1bfc491139777a607a4b89cc58e9458f33603eb6` |
+| Audited report | `93f7df8cf3466fb38011dde5684369d54f039ccf9ef8bc45d3fd67cc40bf1afc` |
 
-## Resultados locais
+## Local results
 
-| Rota | Score original | Score auditado | Aprovações auditadas |
+| Route | Original score | Audited score | Audited passes |
 | --- | ---: | ---: | ---: |
-| MiniMax M3 | 38,89% | 77,78% | 14/18 |
-| GLM 5.2 | 61,11% | 94,44% | 17/18 |
-| Claude Opus 4.8 `xhigh` | 61,11% | 94,44% | 17/18 |
-| GPT-5.6 Sol `xhigh` | 66,67% | 100% | 18/18 |
+| MiniMax M3 | 38.89% | 77.78% | 14/18 |
+| GLM 5.2 | 61.11% | 94.44% | 17/18 |
+| Claude Opus 4.8 `xhigh` | 61.11% | 94.44% | 17/18 |
+| GPT-5.6 Sol `xhigh` | 66.67% | 100% | 18/18 |
 
-| Categoria | Aprovações auditadas |
+| Category | Audited passes |
 | --- | ---: |
-| Extração e formatação sem perda | 12/12 |
-| Resumo fiel | 12/12 |
-| Planejamento com restrições | 12/12 |
-| Tradução fiel | 10/12 |
-| Implementação contida | 10/12 |
+| Lossless extraction and formatting | 12/12 |
+| Faithful summary | 12/12 |
+| Constrained planning | 12/12 |
+| Faithful translation | 10/12 |
+| Contained implementation | 10/12 |
 | Code review | 10/12 |
 
-As seis falhas auditadas foram:
+The six audited failures were:
 
-- MiniMax criou `.serena/` em duas implementações e duas revisões, apesar da
-  allowlist e da proibição de novos arquivos.
-- GLM escreveu `répapas` em uma tradução.
-- Claude escreveu `replicas` sem acento em uma tradução.
+- MiniMax created `.serena/` in two implementations and two reviews, despite
+  the allowlist and the prohibition against new files.
+- GLM produced the malformed Portuguese word `répapas` in one translation.
+- Claude wrote the Portuguese word `replicas` without the required accent in
+  one translation.
 
-No único caso de tradução, Codex passou 3/3, MiniMax passou semanticamente 3/3,
-GLM passou 2/3 e Claude passou 2/3. Uma amostra sintética não sustenta conclusão
-geral sobre tradução. O piso GLM permanece uma decisão conservadora de política,
-não uma alegação de que este piloto provou inferioridade do MiniMax nessa área.
+In the single translation case, Codex passed 3/3, MiniMax passed semantically
+3/3, GLM passed 2/3, and Claude passed 2/3. One synthetic sample does not
+support a general conclusion about translation. The GLM floor remains a
+conservative policy decision, not a claim that this pilot proved MiniMax
+inferior in that area.
 
-## Métricas públicas
+## Public metrics
 
-As fontes usam esforços, scaffolds e datas diferentes. Os números servem como
-sinal direcional e não podem ser combinados diretamente com o score local.
+The sources use different effort settings, scaffolds, and dates. The numbers
+provide a directional signal and cannot be combined directly with the local
+score.
 
-- No [GDPval-AA v2 da Artificial Analysis](https://artificialanalysis.ai/evaluations/gdpval-aa),
-  Claude Opus 4.8 aparece com Elo 1600, GLM 5.2 com 1514 e MiniMax M3 com 1396.
-- A [publicação oficial do GLM 5.2](https://z.ai/blog/glm-5.2) reporta
-  Terminal-Bench 2.1 de 81,0 para GLM, 65,0 para MiniMax e 85,0 para Opus 4.8;
-  no SWE-bench Pro, os valores publicados são 62,1, 59,0 e 69,2.
-- A [publicação oficial do GPT-5.6](https://openai.com/index/gpt-5-6/) reporta
-  Coding Agent Index de 80 e Terminal-Bench 2.1 de 88,8% para Sol, além de
-  64,6% no SWE-bench Pro.
-- A [página oficial do MiniMax M3](https://www.minimax.io/models/text/m3)
-  enfatiza coding, uso de ferramentas e tarefas agentic. Ela não publica uma
-  métrica específica de tradução comparável aos outros três executores.
-- A [página oficial do Claude Opus 4.8](https://www.anthropic.com/news/claude-opus-4-8)
-  apresenta ganhos em coding, julgamento e tarefas agentic, mas também não traz
-  um benchmark quantitativo de tradução comparável para esta matriz.
+- In [Artificial Analysis GDPval-AA v2](https://artificialanalysis.ai/evaluations/gdpval-aa),
+  Claude Opus 4.8 appears with Elo 1600, GLM 5.2 with 1514, and MiniMax M3 with
+  1396.
+- The [official GLM 5.2 publication](https://z.ai/blog/glm-5.2) reports a
+  Terminal-Bench 2.1 score of 81.0 for GLM, 65.0 for MiniMax, and 85.0 for Opus
+  4.8; the published SWE-bench Pro values are 62.1, 59.0, and 69.2.
+- The [official GPT-5.6 publication](https://openai.com/index/gpt-5-6/) reports
+  a Coding Agent Index score of 80 and a Terminal-Bench 2.1 score of 88.8% for
+  Sol, as well as 64.6% on SWE-bench Pro.
+- The [official MiniMax M3 page](https://www.minimax.io/models/text/m3)
+  emphasizes coding, tool use, and agentic tasks. It does not publish a
+  translation-specific metric comparable to the other three executors.
+- The [official Claude Opus 4.8 page](https://www.anthropic.com/news/claude-opus-4-8)
+  presents gains in coding, judgment, and agentic tasks, but it also does not
+  provide a comparable quantitative translation benchmark for this matrix.
 
-## Política após o V1
+## Historical policy after V1
 
-- MiniMax: tarefas triviais sem mutação, como contagem, listagem, busca,
-  formatação e respostas curtas. O worker fica limitado a `Read,Glob,Grep` e
-  sem MCP externo.
-- GLM: piso para tradução e rota padrão de implementação contida.
-- Claude: planejamento complexo cuja entrega final é plano, arquitetura ou ADR.
-- Codex: implementação difícil, debugging profundo, auditoria e code review.
+- MiniMax: trivial non-mutating tasks such as counting, listing, searching,
+  formatting, and short answers. In the configuration used for that run, the
+  worker was limited to `Read,Glob,Grep` with no external MCP.
+- GLM: the floor for translation and the default route for contained
+  implementation.
+- Claude: complex planning whose final deliverable is a plan, architecture, or
+  ADR.
+- Codex: difficult implementation, deep debugging, audits, and code review.
 
-A contenção read-only do MiniMax foi aplicada depois desta rodada, como resposta
-às quatro criações de `.serena/`. Naquele momento, ela havia passado somente no
-preflight e nos testes locais. O V2 abaixo executou 36 slots reais com o perfil
-limitado a `Read,Glob,Grep`.
+MiniMax read-only containment was applied after this run in response to the
+four `.serena/` creations. At that point, it had passed only preflight and
+local tests. V2 below executed 36 real slots with a profile limited to
+`Read,Glob,Grep`.
 
-O caso de planejamento saturou em 12/12 depois da correção semântica e não
-distinguiu os modelos. Uma próxima versão precisa usar vários planos abertos,
-com avaliação de trade-offs e riscos, antes de recalibrar a fronteira GLM versus
-Claude.
+The current profile system replaced that policy. The distributed bundle uses
+`native` for all models. The user may select `restricted` to apply permissions
+and limits or `full` to declare full access. Routing selects the worker, while
+the execution profile controls tools separately. See
+[Execution policies](docs/execution-policies.md).
 
-## V2: categorias e dificuldades
+The planning case saturated at 12/12 after the semantic correction and did not
+distinguish the models. A future version needs several open-ended plans with
+trade-off and risk evaluation before recalibrating the GLM versus Claude
+boundary.
 
-O V2 cobre 36 casos em 12 categorias, com níveis simples, intermediário e
-difícil. Trinta casos autorais ou de julgamento receberam revisão cega. Os seis
-casos restantes usam testes comportamentais ou critérios determinísticos para
-bugs, refatoração e escrita de testes.
+## V2: categories and difficulty
 
-As rubricas seguem três referências públicas:
+V2 covers 36 cases in 12 categories, at simple, intermediate, and difficult
+levels. Thirty authorial or judgment-based cases received a blind review. The
+remaining six cases use behavioral tests or deterministic criteria for bugs,
+refactoring, and test writing.
 
-- [WritingBench](https://arxiv.org/abs/2503.05244) separa seis domínios e 100
-  subdomínios e gera critérios específicos por consulta.
-- [LiveIdeaBench](https://arxiv.org/abs/2412.17596) mede originalidade,
-  viabilidade, fluência, flexibilidade e clareza em ideação.
-- O [Creativity Benchmark](https://arxiv.org/abs/2509.09702) reuniu 11.012
-  comparações anônimas de 678 profissionais criativos. O estudo encontrou
-  correlação fraca e vieses específicos em juízes LLM, por isso a avaliação
-  cega automatizada deste projeto é suplementar e não recebe o rótulo de
-  avaliação humana.
+The rubrics follow three public references:
 
-Para code review, [SWE-PRBench](https://arxiv.org/abs/2603.26130) mostra que
-oito modelos de fronteira detectaram apenas 15% a 31% dos problemas apontados
-por humanos em 350 PRs. Ele também encontrou perda com contexto excessivo. Os
-casos locais mantêm diffs curtos e findings verificáveis, mas não demonstram
-paridade com revisão humana.
+- [WritingBench](https://arxiv.org/abs/2503.05244) separates six domains and
+  100 subdomains and generates query-specific criteria.
+- [LiveIdeaBench](https://arxiv.org/abs/2412.17596) measures originality,
+  feasibility, fluency, flexibility, and clarity in ideation.
+- The [Creativity Benchmark](https://arxiv.org/abs/2509.09702) collected
+  11,012 anonymous comparisons from 678 creative professionals. The study found
+  weak correlation and specific biases in LLM judges, so this project's
+  automated blind evaluation is supplemental and is not labeled a human
+  evaluation.
 
-### Rodadas e contabilidade
+For code review, [SWE-PRBench](https://arxiv.org/abs/2603.26130) shows that
+eight frontier models detected only 15% to 31% of the problems identified by
+humans in 350 pull requests. It also found degradation from excessive context.
+The local cases keep diffs short and findings verifiable, but they do not
+demonstrate parity with human review.
 
-| Rodada | Slots | Chamadas registradas | Limite superior | Objetivo |
+### Runs and accounting
+
+| Run | Slots | Recorded calls | Upper bound | Goal |
 | --- | ---: | ---: | ---: | --- |
-| Screening | 144 | 156 | 168 | Uma saída por rota e caso |
-| Rescore | 144 reutilizados | 0 novas | 0 | Corrigir somente as assertions |
-| Extra | 12 | 12 | 12 | Repetir falhas transitórias e casos comportamentais |
-| Adaptativa | 120 | 132 | 132 | Duas novas saídas para os dois finalistas de 30 casos |
-| Total único | 276 | 300 | 312 | Screening, extra e adaptativa |
+| Screening | 144 | 156 | 168 | One output per route and case |
+| Rescore | 144 reused | 0 new | 0 | Correct only the assertions |
+| Extra | 12 | 12 | 12 | Repeat transient failures and behavioral cases |
+| Adaptive | 120 | 132 | 132 | Two new outputs for the two finalists in 30 cases |
+| Unique total | 276 | 300 | 312 | Screening, extra, and adaptive |
 
-O screening foi interrompido enquanto a concorrência era aumentada. Onze slots
-ficaram ambíguos e reservaram até 12 chamadas adicionais. O artefato prova 300
-chamadas registradas; 312 é apenas o limite superior. O rescore não chamou
-nenhum modelo.
+Screening was interrupted while concurrency was being increased. Eleven slots
+became ambiguous and reserved up to 12 additional calls. The artifact proves
+300 recorded calls; 312 is only the upper bound. The rescore called no model.
 
-A rodada adaptativa usou `--parallel 30` numa máquina de 10 núcleos. Ela somou
-11.570,66 segundos de duração dos slots e terminou em 549,21 segundos de parede,
-ganho efetivo de 21,07 vezes. O load average de um minuto teve pico de 71,50 na
-criação dos clientes, caiu para 23,31 durante a execução e voltou a 3,03 depois.
-Na amostra intermediária, a CPU estava 76,62% ociosa e a memória não apresentou
-novo swap. O pico refletiu processos aguardando rede e modelo; não houve
-saturação sustentada de CPU.
+The adaptive run used `--parallel 30` on a 10-core machine. It accumulated
+11,570.66 seconds of slot duration and finished in 549.21 seconds of wall time,
+an effective 21.07-fold speedup. The one-minute load average peaked at 71.50
+during client creation, fell to 23.31 during execution, and returned to 3.03
+afterward. In the intermediate sample, the CPU was 76.62% idle and memory
+showed no new swap. The peak reflected processes waiting on the network and
+models; there was no sustained CPU saturation.
 
-Load average, CPU e swap foram observados ao vivo com `uptime`, `top` e
-`memory_pressure`; essas amostras não fazem parte dos relatórios JSON
-preservados. Contagens, durações e `--parallel 30` estão nos relatórios e
+Load average, CPU, and swap were observed live with `uptime`, `top`, and
+`memory_pressure`; those samples are not part of the preserved JSON reports.
+Counts, durations, and `--parallel 30` are present in the reports and
 checkpoints.
 
-O fingerprint da engine agrega `quality_eval.py` e todos os arquivos Python de
-`qeval/`, em ordem determinística. Assim, o resume de checkpoints anteriores à
-modularização pode ser recusado por divergência de fingerprint, como esperado.
+The engine fingerprint aggregates `quality_eval.py` and all Python files under
+`qeval/` in deterministic order. As expected, resuming checkpoints created
+before modularization may be rejected because their fingerprints differ.
 
-### Confiabilidade do processo
+### Process reliability
 
-Agregado das três rodadas que fizeram chamadas, sem contar o rescore:
+Aggregate from the three runs that made calls, excluding the rescore:
 
-| Rota | Slots concluídos | Turnos físicos concluídos | Falhas |
+| Route | Completed slots | Completed physical turns | Failures |
 | --- | ---: | ---: | --- |
 | Claude | 90/90, 100% | 99/99, 100% | 0 |
-| Codex | 88/89, 98,88% | 97/98, 98,98% | 1 timeout |
-| GLM | 54/61, 88,52% | 57/64, 89,06% | 5 timeouts e 2 erros |
+| Codex | 88/89, 98.88% | 97/98, 98.98% | 1 timeout |
+| GLM | 54/61, 88.52% | 57/64, 89.06% | 5 timeouts and 2 errors |
 | MiniMax | 36/36, 100% | 39/39, 100% | 0 |
 
-GLM foi o executor mais lento e repetiu uma taxa de conclusão próxima de 89%
-no screening e na rodada adaptativa. A política mantém uma repetição na mesma
-rota e fallback para tarefas que começam nele.
+GLM was the slowest executor and repeated a completion rate near 89% in both
+screening and the adaptive run. The policy keeps one retry on the same route
+and a fallback for tasks that start there.
 
-### Conformidade determinística
+### Deterministic compliance
 
-| Artefato | Geral | Codex | Claude | GLM | MiniMax |
+| Artifact | Overall | Codex | Claude | GLM | MiniMax |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Screening bruto | 44/144, 30,56% | 30,56% | 50,00% | 27,78% | 13,89% |
-| Screening rescored | 43/144, 29,86% | 52,78% | 33,33% | 27,78% | 5,56% |
-| Extra selecionado | 8/12, 66,67% | 100% | 100% | 42,86% | sem amostra |
-| Adaptativa selecionada | 45/120, 37,50% | 46,00% | 25,00% | 50,00% | sem amostra |
+| Raw screening | 44/144, 30.56% | 30.56% | 50.00% | 27.78% | 13.89% |
+| Rescored screening | 43/144, 29.86% | 52.78% | 33.33% | 27.78% | 5.56% |
+| Selected extra | 8/12, 66.67% | 100% | 100% | 42.86% | no sample |
+| Selected adaptive | 45/120, 37.50% | 46.00% | 25.00% | 50.00% | no sample |
 
-Esses percentuais medem assertions como JSON estrito, campos exigidos,
-allowlists, canaries e comportamento dos fixtures. As rotas receberam conjuntos
-diferentes nas rodadas selecionadas, então as médias não formam um ranking
-geral. Várias respostas semanticamente fortes zeraram ao adicionar texto fora
-do JSON solicitado. Esse resultado é uma falha real de conformidade, separada
-da qualidade autoral.
+These percentages measure assertions such as strict JSON, required fields,
+allowlists, canaries, and fixture behavior. The routes received different sets
+in the selected runs, so their averages do not form a general ranking. Several
+semantically strong responses scored zero after adding text outside the
+requested JSON. That result is a real compliance failure, separate from
+authorial quality.
 
-### Qualidade cega suplementar
+### Supplemental blind quality
 
-No screening, um juiz LLM recebeu 120 candidatos anonimizados e não teve acesso
-ao mapping, à configuração ou aos relatórios:
+During screening, an LLM judge received 120 anonymized candidates and had no
+access to the mapping, configuration, or reports:
 
-| Rota | n | Média em 7 | Mediana | Pior |
+| Route | n | Mean out of 7 | Median | Worst |
 | --- | ---: | ---: | ---: | ---: |
-| Codex | 30 | 6,682 | 6,835 | 4,55 |
-| Claude | 30 | 6,609 | 6,635 | 5,98 |
-| MiniMax | 30 | 5,668 | 5,885 | 1,63 |
-| GLM | 30 | 5,656 | 6,315 | 1,00 |
+| Codex | 30 | 6.682 | 6.835 | 4.55 |
+| Claude | 30 | 6.609 | 6.635 | 5.98 |
+| MiniMax | 30 | 5.668 | 5.885 | 1.63 |
+| GLM | 30 | 5.656 | 6.315 | 1.00 |
 
-Codex e Claude tiveram diferença média de 0,073. No confronto direto, Codex
-teve 8 vitórias materiais, Claude teve 3 e houve 19 empates com limiar de 0,3.
-MiniMax não ficou no top 2 dos 30 casos, o que sustenta sua contenção a tarefas
-literais de baixo risco.
+Codex and Claude had a mean difference of 0.073. In the direct comparison,
+Codex had 8 material wins, Claude had 3, and there were 19 ties at a threshold
+of 0.3. MiniMax did not place in the top two in any of the 30 cases. This result
+supported the historical preference for low-risk literal tasks, but it imposes
+no tool restrictions in the current runtime.
 
-A rodada adaptativa adicionou duas respostas aos dois finalistas de cada caso.
-Isso produziu 60 pares rota e caso com três amostras cada. O mesmo juiz avaliou
-os 120 candidatos sem identidades. Os agregados abaixo são selecionados e não
-devem ser comparados como ranking geral:
+The adaptive run added two responses for the two finalists in each case. This
+produced 60 route-case pairs with three samples each. The same judge evaluated
+all 120 candidates without identities. The aggregates below are selected and
+must not be compared as a general ranking:
 
-| Rota | Pares selecionados | Amostras | Média em 7 | Pior |
+| Route | Selected pairs | Samples | Mean out of 7 | Worst |
 | --- | ---: | ---: | ---: | ---: |
-| Claude | 26 | 78 | 6,729 | 5,98 |
-| Codex | 25 | 75 | 6,708 | 1,00 |
-| GLM | 9 | 27 | 6,380 | 1,00 |
+| Claude | 26 | 78 | 6.729 | 5.98 |
+| Codex | 25 | 75 | 6.708 | 1.00 |
+| GLM | 9 | 27 | 6.380 | 1.00 |
 
-Os scores 1,00 correspondem a saídas vazias por timeout e preservam o custo de
-confiabilidade na qualidade percebida. Sinais estáveis por categoria:
+Scores of 1.00 correspond to empty outputs caused by timeouts and preserve the
+reliability cost in perceived quality. Stable signals by category:
 
-- Claude liderou ideias de produto nos três níveis, média 6,779 contra 6,528
-  do Codex.
-- Codex liderou texto técnico nos três níveis, média 6,912 contra 6,562 do
-  Claude.
-- GLM liderou documentação simples e intermediária. Codex ficou como rota de
-  documentação difícil.
-- PR review ficou quase empatado, 6,964 para Codex e 6,922 para Claude. A rota
-  continua Codex por especialização e política.
-- Brainstorm e discussão aberta também ficaram próximos. A política usa GLM em
-  casos simples e Claude nos níveis superiores para controlar custo e preservar
-  o papel de raciocínio criativo.
-- Em social e sales copy, GLM produziu boas respostas quando concluiu, mas os
-  timeouts reduziram os piores scores a 1,00. Ele fica nos casos simples com
-  retry; Claude recebe os difíceis; Codex recebe social intermediário técnico.
-- Testes intermediários e difíceis ficaram empatados entre GLM e Claude. A
-  política usa GLM até o nível intermediário e Codex no nível difícil, seguindo
-  a regra de engenharia difícil definida pelo usuário.
+- Claude led product ideas at all three levels, with a mean of 6.779 versus
+  Codex at 6.528.
+- Codex led technical writing at all three levels, with a mean of 6.912 versus
+  Claude at 6.562.
+- GLM led simple and intermediate documentation. Codex remained the route for
+  difficult documentation.
+- Pull request review was nearly tied, at 6.964 for Codex and 6.922 for Claude.
+  The route remains Codex because of specialization and policy.
+- Brainstorming and open discussion were also close. The policy uses GLM for
+  simple cases and Claude at higher levels to control cost and preserve the
+  creative reasoning role.
+- For social and sales copy, GLM produced good responses when it completed, but
+  timeouts reduced its worst scores to 1.00. It remains on simple cases with a
+  retry; Claude receives difficult cases; Codex receives technically precise
+  intermediate social content.
+- Intermediate and difficult tests were tied between GLM and Claude. The policy
+  uses GLM through the intermediate level and Codex for the difficult level,
+  following the user-defined difficult-engineering rule.
 
-### Matriz de produção
+### Production matrix
 
-| Categoria | Simples | Intermediária | Difícil |
+| Category | Simple | Intermediate | Difficult |
 | --- | --- | --- | --- |
-| Discussão aberta | GLM | Claude | Claude |
-| Brainstorm | GLM | Claude | Claude |
-| Ideias de produto | Claude | Claude | Claude |
-| Arquitetura | Claude | Claude | Claude |
-| PR review | Codex | Codex | Codex |
-| Texto técnico | Codex | Codex | Codex |
-| Documentação | GLM | GLM | Codex |
-| Rede social | GLM | Codex técnico, GLM geral | Claude |
-| Resolução de bugs | GLM | GLM | Codex |
-| Refatoração | GLM | GLM | Codex |
-| Escrita de testes | GLM | GLM | Codex |
+| Open discussion | GLM | Claude | Claude |
+| Brainstorming | GLM | Claude | Claude |
+| Product ideas | Claude | Claude | Claude |
+| Architecture | Claude | Claude | Claude |
+| Pull request review | Codex | Codex | Codex |
+| Technical writing | Codex | Codex | Codex |
+| Documentation | GLM | GLM | Codex |
+| Social content | GLM | Technical: Codex; general: GLM | Claude |
+| Bug resolution | GLM | GLM | Codex |
+| Refactoring | GLM | GLM | Codex |
+| Test writing | GLM | GLM | Codex |
 | Sales copy | GLM | Claude | Claude |
 
-Tradução continua tendo piso GLM. Arquitetura ou planejamento complexo elevam
-para Claude. Review, auditoria, segurança, texto técnico de precisão e
-implementação difícil elevam para Codex. MiniMax recebe apenas contagem,
-listagem, busca, extração literal, formatação mecânica e fatos diretos em modo
-read-only.
+Translation continues to have a GLM floor. Architecture or complex planning
+promotes to Claude. Review, audits, security, precise technical writing, and
+difficult implementation promote to Codex. The matrix recommends MiniMax for
+counting, listing, searching, literal extraction, mechanical formatting, and
+direct facts. This recommendation affects automatic selection and does not
+reduce the model's tools. Only an execution profile selected by the user can do
+that.
 
-### Artefatos V2
+### V2 artifacts
 
-| Artefato | SHA-256 |
+| Artifact | SHA-256 |
 | --- | --- |
-| Dataset corrigido | `43934b32fd758f398e0a7a2d5318b41fee32936edd27628afb3a88d7469f184e` |
-| Screening original | `7f85eb8e66d80d3cb8801769df4f68fad160b1636936e5386cf6e9e5c820fe3b` |
-| Screening rescored | `b8d66845c98b896c6755f523fb869ed54b90950b44c12911d162d0877a74e9da` |
-| Extra selecionado | `cef1772e5b628e48f096ceb095e11b1ccd2361f3801193a659e8dbf8af28682c` |
-| Adaptativa | `e71794680f6f78029616df0cdee9b79b9606a1afb477acb481897c08a6f82457` |
-| Pacote cego adaptativo | `e6721558838fbda044e0df6e9e3244a9b9a3b419785ad33b487dd3762ea8a2ff` |
-| Mapping adaptativo privado | `dea1054b07573634c23c44b6c01aaa1a5ca4a3a8047b14781c484297c6138fbd` |
-| Auditoria cega adaptativa | `bf3f9bd34d886e0c491fed85568b482a98ccf7a6b80b9105658750fcae090afd` |
+| Corrected dataset | `43934b32fd758f398e0a7a2d5318b41fee32936edd27628afb3a88d7469f184e` |
+| Original screening | `7f85eb8e66d80d3cb8801769df4f68fad160b1636936e5386cf6e9e5c820fe3b` |
+| Rescored screening | `b8d66845c98b896c6755f523fb869ed54b90950b44c12911d162d0877a74e9da` |
+| Selected extra | `cef1772e5b628e48f096ceb095e11b1ccd2361f3801193a659e8dbf8af28682c` |
+| Adaptive | `e71794680f6f78029616df0cdee9b79b9606a1afb477acb481897c08a6f82457` |
+| Blind adaptive package | `e6721558838fbda044e0df6e9e3244a9b9a3b419785ad33b487dd3762ea8a2ff` |
+| Private adaptive mapping | `dea1054b07573634c23c44b6c01aaa1a5ca4a3a8047b14781c484297c6138fbd` |
+| Blind adaptive audit | `bf3f9bd34d886e0c491fed85568b482a98ccf7a6b80b9105658750fcae090afd` |
 
-Os pacotes cegos estão em `/private/tmp` e ainda não contêm notas humanas. Uma
-decisão de produto pode usar as diferenças claras acima. Casos criativos com
-margem inferior a 0,3 continuam classificados como empate até revisão humana.
+The hashes preserve the identity of the artifacts used in the audit. Raw
+reports, blind packages, and the private mapping are not part of this
+repository because they may contain provider outputs and execution metadata.
+The results published here can therefore be audited through their methodology
+and hashes, but they cannot be reproduced in full from the public checkout
+alone.
 
-## Comparação de reasoning effort
+A product decision may use the clear differences above. Creative cases with a
+margin below 0.3 remain classified as ties pending human review.
 
-Uma rodada suplementar comparou `xhigh` e `max` nos pontos em que o effort
-altera custo, latência ou qualidade. Essa rodada tem amostra pequena e serve
-para configurar o roteador local. Ela não sustenta uma classificação geral dos
-modelos ou efforts.
+## Reasoning effort comparison
 
-### Coordenador GPT-5.6 Sol
+A supplemental run compared `xhigh` and `max` where effort changes cost,
+latency, or quality. This run has a small sample and serves to configure the
+local router. It does not support a general ranking of models or effort
+settings.
 
-O mesmo fluxo completo foi executado com o coordenador em `xhigh` e `max`:
+### GPT-5.6 Sol executor in the historical architecture
 
-| Effort | Tempo de parede | Achados na primeira revisão | Achados na revisão final |
+In the architecture used for that experiment, the same complete flow ran with
+GPT-5.6 Sol at `xhigh` and `max`:
+
+| Effort | Wall time | Findings in first review | Findings in final review |
 | --- | ---: | ---: | ---: |
-| `xhigh` | cerca de 13 min | 10 | 6 |
-| `max` | cerca de 21 min | 11 | 12 |
+| `xhigh` | about 13 min | 10 | 6 |
+| `max` | about 21 min | 11 | 12 |
 
-`xhigh` terminou cerca de oito minutos antes e deixou metade dos achados na
-revisão final. O coordenador de produção permanece em `xhigh`. Os achados
-medem o resultado destes dois fluxos, sem provar uma taxa de defeitos estável.
+`xhigh` finished about eight minutes earlier and left half as many findings in
+the final review. That conclusion informed the historical configuration of
+that flow. The current runtime does not keep a coordinator after handoff. The
+findings measure the result of these two experiments without proving a stable
+defect rate.
 
 ### Claude Opus 4.8
 
-Quatro tarefas receberam respostas em `xhigh` e `max`, avaliadas de forma cega:
+Four tasks received responses at `xhigh` and `max`, evaluated blindly:
 
-| Tarefa | Vencedor |
+| Task | Winner |
 | --- | --- |
-| Arquitetura | `max` |
-| Ideação de produto | `max` |
+| Architecture | `max` |
+| Product ideation | `max` |
 | Copy | `max` |
-| Discussão técnica aberta | `xhigh` |
+| Open technical discussion | `xhigh` |
 
-No agregado desta rodada, `max` marcou 8,05 contra 7,30 de `xhigh`. A contagem
-de defeitos foi 17 para `max` e 23 para `xhigh`. A política resultante usa
-`max` em planejamento, arquitetura, produto, ideação, copy e trabalho
-criativo. Discussão aberta, debate, trade-offs, política e falsificação usam
-`xhigh`.
+Across this run, `max` scored 8.05 versus 7.30 for `xhigh`. The defect count was
+17 for `max` and 23 for `xhigh`. The resulting policy uses `max` for planning,
+architecture, product, ideation, copy, and creative work. Open discussion,
+debate, trade-offs, policy, and falsification use `xhigh`.
 
-O fallback do Claude é `max`. Novas categorias precisam de comparação antes
-de receber exceção, e uma rodada futura deve repetir os quatro pares para medir
-a variância entre execuções.
+Claude's fallback is `max`. New categories require a comparison before
+receiving an exception, and a future run should repeat all four pairs to measure
+variance across executions.

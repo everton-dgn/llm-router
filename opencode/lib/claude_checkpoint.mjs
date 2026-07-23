@@ -425,7 +425,7 @@ export function createClaudeCheckpointLifecycle({
       })
       await notify({
         code: "checkpoint_failed",
-        message: "O checkpoint local do Claude falhou; após a compactação será usada somente a cauda ativa.",
+        message: "The local Claude checkpoint failed; only the active tail will be used after compaction.",
       })
     }
     await persist(sessionID, record)
@@ -441,7 +441,7 @@ export function createClaudeCheckpointLifecycle({
         .catch(async (error) => {
           await notify({
             code: "checkpoint_prepare_failed",
-            message: "O checkpoint local do Claude não pôde ser preparado; após a compactação será usada somente a cauda ativa.",
+            message: "The local Claude checkpoint could not be prepared; only the active tail will be used after compaction.",
           })
           return undefined
         })
@@ -464,14 +464,14 @@ export function createClaudeCheckpointLifecycle({
         if (error?.code === "compaction_not_visible") {
           await notify({
             code: "checkpoint_binding_deferred",
-            message: "O vínculo do checkpoint local do Claude foi adiado; a próxima mensagem tentará validá-lo novamente.",
+            message: "Local Claude checkpoint binding was deferred; the next message will try to validate it again.",
           })
           return
         }
         if (error?.code !== "ambiguous_compaction_id") {
           await notify({
             code: "checkpoint_binding_deferred",
-            message: "O vínculo do checkpoint local do Claude foi adiado; a próxima mensagem tentará validá-lo novamente.",
+            message: "Local Claude checkpoint binding was deferred; the next message will try to validate it again.",
           })
           return
         }
@@ -485,7 +485,7 @@ export function createClaudeCheckpointLifecycle({
         })
         await notify({
           code: "checkpoint_binding_failed",
-          message: "O checkpoint local do Claude não foi associado com segurança à compactação; será usada somente a cauda ativa.",
+          message: "The local Claude checkpoint could not be safely bound to the compaction; only the active tail will be used.",
         })
       }
     },
@@ -502,7 +502,7 @@ export function createClaudeCheckpointLifecycle({
           if (error?.code === "compaction_not_visible") {
             await notify({
               code: "checkpoint_binding_deferred",
-              message: "O vínculo do checkpoint local do Claude ainda não está visível; será usada a cauda ativa até a validação.",
+              message: "Local Claude checkpoint binding is not visible yet; the active tail will be used until validation.",
             })
           } else {
             record = {
@@ -513,7 +513,7 @@ export function createClaudeCheckpointLifecycle({
             await persist(sessionID, record)
             await notify({
               code: "checkpoint_binding_failed",
-              message: "O checkpoint local do Claude não foi associado com segurança à compactação; será usada somente a cauda ativa.",
+              message: "The local Claude checkpoint could not be safely bound to the compaction; only the active tail will be used.",
             })
           }
         }
@@ -535,7 +535,7 @@ export function createClaudeCheckpointLifecycle({
           warnedFallbacks.add(warningKey)
           await notify({
             code: "checkpoint_tail_fallback",
-            message: "O Claude recebeu somente a cauda ativa porque não há checkpoint local validado para esta compactação.",
+            message: "Claude received only the active tail because no local checkpoint was validated for this compaction.",
           })
         }
       }

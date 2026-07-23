@@ -1,4 +1,4 @@
-"""Constantes escalares, tipos de assertion, limites, padrões e nomes."""
+"""Scalar constants, assertion types, limits, patterns, and names."""
 
 from __future__ import annotations
 

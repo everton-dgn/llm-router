@@ -1,4 +1,4 @@
-"""Escrita atômica, checkpoint e validações de contagem de resultados."""
+"""Atomic writes, checkpoints, and result-count validation."""
 
 from __future__ import annotations
 
@@ -45,9 +45,9 @@ def _load_checkpoint(path: Path) -> dict[str, Any]:
         with path.open(encoding="utf-8") as stream:
             checkpoint = json.load(stream)
     except OSError as error:
-        raise EvaluationError(f"não foi possível ler checkpoint: {error}") from error
+        raise EvaluationError(f"could not read checkpoint: {error}") from error
     except json.JSONDecodeError as error:
-        raise EvaluationError(f"checkpoint JSON inválido: {error}") from error
+        raise EvaluationError(f"invalid checkpoint JSON: {error}") from error
     if (
         not isinstance(checkpoint, dict)
         or checkpoint.get("version") != 2
@@ -55,7 +55,7 @@ def _load_checkpoint(path: Path) -> dict[str, Any]:
         or not isinstance(checkpoint.get("slots"), dict)
         or not isinstance(checkpoint.get("results"), list)
     ):
-        raise EvaluationError("checkpoint possui formato inválido")
+        raise EvaluationError("checkpoint has an invalid format")
     return checkpoint
 
 
@@ -71,7 +71,7 @@ def _reserved_ambiguous_calls(
             or retry_count < 0
         ):
             raise EvaluationError(
-                f"checkpoint possui ambiguous_retry_count inválido no slot {key}"
+                f"checkpoint has an invalid ambiguous_retry_count in slot {key}"
             )
         total += retry_count * len(slot_definitions[key]["physical_call_keys"])
     return total
@@ -95,4 +95,4 @@ def _validate_result_counts(
         (result["route"], result["case_id"], result["repetition"]) for result in results
     )
     if set(actual) != expected or any(count != 1 for count in actual.values()):
-        raise EvaluationError("contagem final de resultados diverge dos slots planejados")
+        raise EvaluationError("final result count differs from planned slots")

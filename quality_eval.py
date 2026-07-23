@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fachada compatível e CLI do benchmark determinístico de qualidade."""
+"""Backward-compatible facade and CLI for deterministic quality benchmarking."""
 
 from __future__ import annotations
 
@@ -130,48 +130,48 @@ from qeval.validation import (
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Executa um benchmark determinístico de qualidade das rotas"
+        description="Run a deterministic quality benchmark for routes"
     )
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--cases", required=True, type=Path)
-    parser.add_argument("--routes", help="nomes de rotas separados por vírgula; padrão: todas")
+    parser.add_argument("--routes", help="comma-separated route names; default: all")
     parser.add_argument(
         "--selection",
         type=Path,
-        help="JSON opcional que seleciona as rotas executadas em cada caso",
+        help="optional JSON selecting the routes run for each case",
     )
     parser.add_argument("--repetitions", type=int, default=3)
     parser.add_argument("--parallel", type=int, default=1)
     parser.add_argument("--max-calls", type=int, default=72)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--output", required=True, type=Path, help="relatório JSON")
+    parser.add_argument("--output", required=True, type=Path, help="JSON report")
     parser.add_argument("--validate-only", action="store_true")
     parser.add_argument(
-        "--manifest-output", type=Path, help="grava o manifesto do dry-run em JSON"
+        "--manifest-output", type=Path, help="write the dry-run manifest as JSON"
     )
     parser.add_argument(
-        "--checkpoint", type=Path, help="checkpoint atômico; padrão derivado de --output"
+        "--checkpoint", type=Path, help="atomic checkpoint; default derived from --output"
     )
-    parser.add_argument("--resume", action="store_true", help="retoma um checkpoint existente")
+    parser.add_argument("--resume", action="store_true", help="resume an existing checkpoint")
     parser.add_argument(
         "--retry-ambiguous",
         action="store_true",
-        help="repete slots ambiguous com aumento explícito de --max-calls",
+        help="retry ambiguous slots with an explicit --max-calls increase",
     )
     parser.add_argument(
         "--replay-report",
         type=Path,
-        help="reavalia saídas de um relatório existente sem chamar modelos",
+        help="rescore outputs from an existing report without calling models",
     )
     parser.add_argument(
         "--human-review-dir",
         type=Path,
-        help="diretório que receberá somente o pacote cego",
+        help="directory that will receive only the blind review packet",
     )
     parser.add_argument(
         "--human-mapping-dir",
         type=Path,
-        help="diretório privado separado que receberá o mapping",
+        help="separate private directory that will receive the mapping",
     )
     return parser.parse_args(argv)
 
@@ -186,22 +186,22 @@ def main(argv: list[str] | None = None) -> int:
         cases_path = args.cases.expanduser().resolve()
         output_path = args.output.expanduser().resolve()
         if output_path.suffix.lower() != ".json":
-            raise EvaluationError("--output precisa terminar em .json")
+            raise EvaluationError("--output must end in .json")
         config = load_config(config_path)
         dataset = load_dataset(cases_path)
         if args.replay_report is not None:
             if args.validate_only:
-                raise EvaluationError("--replay-report não pode ser combinado com --validate-only")
+                raise EvaluationError("--replay-report cannot be combined with --validate-only")
             source_path = args.replay_report.expanduser().resolve()
             if source_path == output_path:
-                raise EvaluationError("--output precisa ser diferente de --replay-report")
+                raise EvaluationError("--output must differ from --replay-report")
             report = rescore_output_only_report(load_report(source_path), dataset, source_path)
             report["audit"]["rescore_dataset_source"] = str(cases_path)
             report["audit"]["rescore_dataset_source_sha256"] = hashlib.sha256(
                 cases_path.read_bytes()
             ).hexdigest()
             json_path, markdown_path = write_reports(output_path, report)
-            print(f"relatórios reavaliados: {json_path} e {markdown_path}")
+            print(f"rescored reports: {json_path} and {markdown_path}")
             return 0
         requested_routes = parse_routes(args.routes)
         available_routes = validate_routes(config, requested_routes, set())
@@ -246,12 +246,12 @@ def main(argv: list[str] | None = None) -> int:
         call_count = manifest["physical_call_count"]
         if call_count > max_calls and not args.validate_only:
             raise EvaluationError(
-                f"benchmark exigiria {call_count} chamadas, acima de --max-calls={max_calls}"
+                f"benchmark would require {call_count} calls, above --max-calls={max_calls}"
             )
         if args.manifest_output is not None:
             manifest_path = args.manifest_output.expanduser().resolve()
             if manifest_path.suffix.lower() != ".json":
-                raise EvaluationError("--manifest-output precisa terminar em .json")
+                raise EvaluationError("--manifest-output must end in .json")
             _atomic_write_json(manifest_path, manifest)
         if args.validate_only:
             selected_cases = [
@@ -283,8 +283,8 @@ def main(argv: list[str] | None = None) -> int:
                 route_roles,
             )
             print(
-                f"válido: {len(selected_cases)} casos, {len(routes)} rotas, "
-                f"{manifest['slot_count']} slots e {call_count} chamadas físicas planejadas"
+                f"valid: {len(selected_cases)} cases, {len(routes)} routes, "
+                f"{manifest['slot_count']} slots, and {call_count} planned physical calls"
             )
             return 0
         checkpoint_path = (
@@ -318,15 +318,15 @@ def main(argv: list[str] | None = None) -> int:
             args.human_review_dir,
             args.human_mapping_dir,
         )
-        print(f"relatórios: {json_path} e {markdown_path}")
+        print(f"reports: {json_path} and {markdown_path}")
         if human_paths is not None:
-            print(f"avaliação humana cega: {human_paths[0]}")
+            print(f"blind human review: {human_paths[0]}")
         return 0
     except (ConfigError, EvaluationError, OSError) as error:
-        print(f"erro: {error}", file=sys.stderr)
+        print(f"error: {error}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
-        print("benchmark interrompido", file=sys.stderr)
+        print("benchmark interrupted", file=sys.stderr)
         return 130
 
 

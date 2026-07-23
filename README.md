@@ -1,255 +1,170 @@
 # llm-router
 
-Roteador local de mensagens do OpenCode entre MiniMax M3, GLM 5.2, Claude Opus 4.8 e GPT-5.6 Sol. O composer permanece no agente principal `router`; o plugin escolhe o worker da mensagem e mostra o destino efetivo na interface.
+[![CI](https://github.com/everton-dgn/llm-router/actions/workflows/ci.yml/badge.svg)](https://github.com/everton-dgn/llm-router/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-O produto separa duas decisões:
+Local message router for OpenCode. It keeps one visible conversation while
+selecting MiniMax M3, GLM 5.2, Claude Opus 4.8, or GPT-5.6 Sol as the worker for
+each message.
 
-- modo de roteamento: `auto`, `adaptive` ou `pinned`;
-- perfil de execução: `native`, `restricted` ou `full`.
+The composer always stays on the primary `router` agent. The plugin changes the
+effective worker for the current message and displays that destination in the
+OpenCode interface.
 
-O modo decide quando trocar de modelo. O perfil decide ferramentas e limites. Todas as nove combinações são válidas.
+> Project status: pre-1.0 and under active development. The current integration
+> is pinned to OpenCode 1.18.4. Review the
+> [compatibility contract](docs/compatibility.md) before upgrading OpenCode or
+> the provider SDKs.
 
-## Documentação
+## Why
 
-- [Início rápido](docs/quick-start.md)
-- [Modos de roteamento, contexto e fork](docs/routing-modes.md)
-- [Perfis, permissões e configuração](docs/execution-policies.md)
-- [Claude via Agent SDK, anexos e subtasks](docs/claude.md)
-- [Diagnóstico e segurança](docs/troubleshooting.md)
+A full orchestration turn adds latency, cost, and another model that can distort
+the request. llm-router uses a small local Ollama model for one deterministic
+classification, then hands the original message to the selected native worker.
+The classifier exits immediately after returning the route.
 
-## Arquitetura
+Routing and tool control are independent:
 
-| Componente | Responsabilidade |
+- routing mode: `auto`, `adaptive`, or `pinned`;
+- execution profile: `native`, `restricted`, or `full`.
+
+All nine combinations are valid. A model selected by the router keeps its native
+OpenCode capabilities unless the user explicitly selects a restrictive profile.
+
+## Routing modes
+
+| Mode | Behavior | Typical use |
+| --- | --- | --- |
+| `auto` | Classifies every message independently | Short, mixed requests |
+| `adaptive` | Promotes immediately and requires evidence before downgrading | General use with fewer unnecessary switches |
+| `pinned` | Selects the first worker and keeps it for the session | Long work that must stay on one model |
+
+Resuming a session preserves its routing state. A fork gets a new session ID,
+copies the visible conversation, and makes an independent routing decision.
+
+## Execution profiles
+
+| Profile | Behavior |
 | --- | --- |
-| `route` | Classifica pedidos e produz checkpoints locais sanitizados na compactação |
-| `config.json` | Define as intenções, os destinos e as opções dos dois trabalhos locais |
-| `opencode/plugins/llm_router_handoff.ts` | Executa o handoff e integra contexto e compactação do OpenCode |
-| `opencode/lib/direct_handoff.mjs` | Resolve o modo da sessão e troca `message.agent` e `message.model` |
-| `opencode/lib/adaptive_routing.mjs` | Mantém estado, histerese e compatibilidade dos modos de roteamento |
-| `opencode/lib/execution_policy.mjs` | Carrega, valida, mescla e resolve perfis de execução |
-| `opencode/lib/router_control.mjs` | Persiste comandos, aplica permissões e fiscaliza limites |
-| `opencode/lib/opencode_transport.mjs` | Reutiliza o transporte in-process do OpenCode 1.18.4 para criar o cliente v2 |
-| `opencode/lib/claude_context.mjs` | Projeta, sanitiza e limita o contexto v2 enviado ao Claude |
-| `opencode/lib/claude_checkpoint.mjs` | Gera, vincula e valida o checkpoint seguro de memória de longo prazo |
-| `opencode/lib/routing_policy.mjs` | Mapeia as quatro rotas para seus destinos |
-| `opencode/providers/claude_agent_provider.mjs` | Expõe o Claude Agent SDK como provider `LanguageModelV3` local |
-| `opencode/providers/router_control_provider.mjs` | Responde aos comandos do router localmente, com uso zero de tokens |
-| `opencode/lib/claude_agent.mjs` | Configura `query()`, ferramentas, ambiente, cancelamento e deadline do Claude |
-| `opencode/llm-router.policy.defaults.json` | Define perfis e assignments distribuídos |
-| `opencode/llm-router.policy.schema.json` | Valida configurações globais e de projeto |
-| `opencode/opencode.jsonc` | Configura o router, os workers, os comandos e os providers |
-| `opencode/tools/repo_query.ts` | Oferece consultas auxiliares read-only a qualquer worker |
+| `native` | Adds no llm-router tool restrictions |
+| `restricted` | Applies configured `allow`, `ask`, `deny`, and turn limits |
+| `full` | Explicitly allows every tool exposed by the host |
 
-Fluxo de uma mensagem:
+The shipped default is `native` for every worker. Project policy files may reduce
+permissions, but they cannot silently expand a user's global policy.
 
-```text
-pedido do usuário no router
-  -> hook chat.message
-  -> lê modo e perfil da sessão
-  -> route --classify --json
-  -> Ollama: Plano-Orchestrator-4B
-  -> auto, adaptive ou pinned decide o destino efetivo
-  -> troca agent/model na mesma mensagem
-  -> MiniMax, GLM, Claude Agent SDK ou Codex executa
-  -> resposta na sessão atual
-```
+See [routing modes](docs/routing-modes.md) and
+[execution policies](docs/execution-policies.md) for the complete state and
+configuration contracts.
 
-O classificador encerra depois de devolver a rota. Ele não gera plano, não chama ferramentas do projeto, não cria sessão filha do OpenCode e não espera a resposta do worker. Também não existe um turno posterior de coordenador para resumir o resultado. No modo `pinned`, o destino já fixado é reutilizado. Quando a rota é Claude, o OpenCode chama diretamente o provider local, que usa `query()` do Agent SDK e devolve o resultado à mesma mensagem.
+## Default route matrix
 
-O mesmo modelo local executa um segundo trabalho independente antes de uma compactação: resume somente a transcrição já sanitizada e grava um checkpoint versionado. Esse trabalho ocorre uma vez por compactação, não acompanha o worker e não roda a cada mensagem. Em caso de falha ou saída inválida, o sistema mantém apenas a cauda ativa e gera um aviso visível.
+| Intent | Route | OpenCode destination |
+| --- | --- | --- |
+| Literal lookup and mechanical formatting | MiniMax | `minimax-coding-plan/MiniMax-M3` |
+| Translation and simple or intermediate work | GLM | `zai-coding-plan/glm-5.2` |
+| Product, architecture, strategy, and complex creative work | Claude | `claude-agent/claude-opus-4-8` |
+| Review, security, difficult engineering, and precise technical writing | Codex | `openai/gpt-5.6-sol` |
 
-O plugin mostra o modo, o worker e o perfil efetivos na interface. Exemplo:
+These routes express a cost and capability preference. They do not grant or
+remove tools.
+
+## How one message flows
 
 ```text
-llm-router
-Adaptive -> claude-agent/claude-opus-4-8 | Native
+user message in the router
+  -> OpenCode chat.message hook
+  -> read session routing mode and execution profile
+  -> local route --classify --json
+  -> Ollama Plano-Orchestrator-4B
+  -> auto, adaptive, or pinned selects the destination
+  -> replace agent/model on the same message
+  -> MiniMax, GLM, Claude Agent SDK, or Codex executes
+  -> response appears in the current session
 ```
 
-Se a seleção falhar, a mensagem permanece no router e a execução é interrompida. Um turno incompatível com o transporte do destino termina com erro explícito. O modelo local configurado no router serve como sentinela: se o plugin não carregar, ele informa a falha de configuração e não executa o pedido.
+There is no coordinator turn after the worker responds. In `pinned` mode, the
+stored worker is reused without calling the classifier again.
 
-## Classificador local
+Before an OpenCode compaction, the same local model performs a separate,
+bounded summarization job over an already sanitized transcript. The resulting
+checkpoint is versioned and bound to one compaction ID. A failed or invalid
+summary falls back to the active conversation tail and produces a visible
+warning.
 
-A saída humana mostra a decisão:
+## Requirements
+
+- macOS or Linux;
+- OpenCode 1.18.4;
+- Node.js 22.22.2, 24.15.0, or a newer supported release, plus `pnpm`;
+- Python 3.11 or newer through `uv`, for benchmarks and Python tests;
+- Ollama with the configured local classifier;
+- Claude Code installed and authenticated;
+- `curl`, `jq`, `trash`, and a POSIX shell;
+- OpenAI authenticated in OpenCode;
+- `MINIMAX_API_KEY` and `ZAI_API_KEY` in the environment that starts OpenCode.
+
+Windows has not been validated. See [compatibility](docs/compatibility.md) for
+the tested and untested surfaces.
+
+## Quick start
+
+Clone the repository:
 
 ```bash
-./route "otimiza essa query lenta"
+git clone https://github.com/everton-dgn/llm-router.git
+cd llm-router
 ```
 
-```text
-rota: codex -> GPT-5.6 Sol (xhigh)
-```
-
-A integração usa um contrato JSON fechado e versionado:
+Install the repository tooling. This also installs the versioned Git hooks:
 
 ```bash
-./route --classify --json "traduza este parágrafo para inglês"
+corepack enable
+pnpm install --frozen-lockfile
 ```
 
-```json
-{"schema_version":1,"intent":"translation_simple_brainstorm_docs_or_intermediate_work","route":"glm"}
-```
-
-Erros também contêm `schema_version` e um objeto `error` com `code` e `message`. O classificador usa `/api/chat` do Ollama com `think:false` e restringe a saída por JSON Schema. Resposta vazia, rota desconhecida e JSON inválido encerram a chamada sem fallback silencioso.
-
-Consulte todos os argumentos com:
+Install the local classifier:
 
 ```bash
-./route --help
+ollama pull hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M
 ```
 
-## Matriz de rotas
-
-| Intenção | Rota | Destino no OpenCode | Uso principal |
-| --- | --- | --- | --- |
-| `literal_read_only_no_writing` | `minimax` | `minimax-coding-plan/MiniMax-M3` | Contagem, listagem, busca, extração e formatação literal |
-| `translation_simple_brainstorm_docs_or_intermediate_work` | `glm` | `zai-coding-plan/glm-5.2` | Tradução e trabalho simples ou intermediário |
-| `complex_creative_product_or_architecture` | `claude` | `claude-agent/claude-opus-4-8` | Arquitetura, produto, estratégia e criação complexa |
-| `review_security_hard_engineering_or_technical_writing` | `codex` | `openai/gpt-5.6-sol` | Engenharia difícil, revisão, segurança e texto técnico |
-
-As rotas expressam preferência de custo e capacidade. Elas não retiram ferramentas do modelo. O perfil de execução aplica permissões de forma independente:
-
-- `native` não acrescenta restrições do llm-router;
-- `restricted` aplica regras e limites configuráveis;
-- `full` adiciona `allow` explícito para todas as ferramentas.
-
-O bundle usa `native` como padrão. Consulte a [matriz modo x perfil](docs/execution-policies.md#matriz-modo-x-perfil) e os [exemplos de política](docs/execution-policies.md#exemplo-global-tudo-nativo-claude-restrito).
-
-Os workers existem porque o OpenCode associa modelo e prompt a um agente. Eles ficam como executores `subagent`; `router` permanece como agente principal do composer. O plugin altera `output.message.agent` e `output.message.model` apenas para executar a mensagem.
-
-O estado usa a chave `llm-router.routing.state` na metadata da sessão. Ela contém o `sessionID` proprietário, o modo, a rota atual, os turnos e o cooldown. Retomar a sessão preserva a decisão. Um fork recebe outro `sessionID`, mantém o histórico clonado e faz uma decisão de roteamento independente.
-
-Comportamento dos modos:
-
-- `auto` aplica a classificação de cada mensagem;
-- `adaptive` sobe de rota imediatamente e exige confirmação para reduzir;
-- `pinned` mantém o primeiro worker da sessão.
-
-Os parâmetros padrão do `adaptive` são `minimumTurnsBeforeSwitch=2`, `downgradeConfirmations=2` e `switchCooldownTurns=1`. Consulte [modos de roteamento](docs/routing-modes.md).
-
-No OpenCode 1.18.4, o cliente legado entregue ao plugin não expõe todas as operações necessárias. O helper de compatibilidade reutiliza o `fetch` in-process para criar o cliente v2 usado em `session.get`, `session.update`, `session.switchAgent` e `session.context`. Ele não chama modelos e não abre outro listener HTTP. A dependência de `_client.getConfig()` fica isolada até o OpenCode entregar um cliente v2 público ao plugin.
-
-## Claude via Agent SDK oficial
-
-Claude Opus 4.8 usa o provider local `claude-agent`. Esse provider implementa o contrato `LanguageModelV3` esperado pelo OpenCode e chama `query()` de `@anthropic-ai/claude-agent-sdk`. A opção `pathToClaudeCodeExecutable` aponta para o executável já instalado na máquina, evitando depender do binário opcional empacotado pelo SDK.
-
-Autentique o Claude Code pelo fluxo oficial:
+Authenticate Claude Code:
 
 ```bash
 claude auth login
 claude auth status
 ```
 
-O adapter não lê, copia nem persiste tokens. A autenticação continua sob responsabilidade do executável `claude`, do mesmo modo que numa execução direta do Claude Code. O processo interno do SDK recebe uma lista permitida de variáveis de runtime, proxy, TLS e autenticação `ANTHROPIC_` ou `CLAUDE_`. Variáveis dos providers GLM e MiniMax e funções exportadas pelo shell ficam fora desse ambiente.
-
-O SDK roda com as ferramentas padrão do Claude Code. No perfil `native`, usa `permissionMode: "auto"` sem regras adicionais do llm-router. Nos demais perfis, o plugin traduz `allow`, `ask` e `deny` para `permissionProfile` e `canUseTool`. Uma consulta `ask` sem callback, cancelada, expirada ou com erro termina em negação.
-
-`safe-mode`, fontes de configuração vazias, MCP estrito e Chrome desabilitado impedem que plugins, hooks, skills ou servidores MCP locais alterem o contrato. Leitura, edição, Bash e as demais ferramentas internas continuam disponíveis conforme o perfil efetivo. A sessão do SDK não é persistida porque o OpenCode permanece como fonte da conversa. Timeout e cancelamento abortam e fecham a consulta.
-
-Antes de chamar o SDK, o plugin consulta `v2.session.context` e usa somente a projeção ativa do OpenCode. Texto visível de `user` e `assistant`, anexos suportados e resultados concluídos de `task` ou `agent` podem entrar. Mensagens posteriores ao ID atual, texto sintético, raciocínio e histórico arbitrário de tools ficam fora.
-
-Claude aceita `text/plain`, `application/pdf`, GIF, JPEG, PNG e WebP. O adapter valida MIME, base64, protocolo e orçamento antes de chamar o SDK. Menções `@agent` são executadas em sessões filhas do OpenCode e substituídas pelo resultado concluído antes da chamada ao Claude. Consulte [anexos, menções e subtasks](docs/claude.md#anexos).
-
-O contexto ativo é limitado antes da serialização. A mensagem atual sempre permanece; a cauda anterior é escolhida de trás para frente dentro do orçamento, com aviso do provider quando mensagens antigas forem descartadas. O guardião de transporte aceita até 2 MiB e reserva 4 KiB para a instrução e o envelope JSON. Esses bytes não são apresentados como estimativa de tokens. Se a mensagem atual sozinha exceder o orçamento, a chamada falha explicitamente.
-
-Antes de cada compactação, `route --summarize --json` recebe pela entrada padrão apenas a transcrição permitida. O resultado precisa seguir um esquema fechado, respeitar um tamanho máximo e ser vinculado posteriormente a exatamente um novo `compaction.id`. O checkpoint fica em `llm-router.claude.checkpoint` na metadata da sessão. Em compactações seguintes, o checkpoint validado anterior entra como recapitulação factual junto com a nova cauda. `summary` e `recent` produzidos pelo OpenCode nunca são reutilizados. Em caso de falha de geração, vínculo ambíguo ou metadata inválida, o sistema usa somente a cauda ativa e mostra o motivo na interface.
-
-O Agent SDK não oferece uma opção equivalente a `maxOutputTokens`. Quando o OpenCode envia esse campo, o provider devolve um aviso `unsupported` e preserva o uso e o `stop_reason` informados pelo SDK. A proteção de transporte usa `maxOutputBytes`, com padrão de 4 MiB. Quando a saída excede esse limite, o provider encerra a consulta com erro explícito.
-
-No perfil `restricted`, `max_steps` também é enviado ao Agent SDK como `maxTurns`, além da contagem feita pelo hook. `max_tool_calls` cobre ferramentas internas do Claude pelo callback, e `max_child_depth` cobre `Task`, `Agent` e menções explícitas do OpenCode.
-
-Depois da instalação, confira o destino sem imprimir credenciais:
+Preview the OpenCode bundle installation:
 
 ```bash
-opencode models claude-agent
+opencode_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+bash opencode/install.sh --config-dir "$opencode_config_dir" --dry-run
 ```
 
-## Instalação
-
-### Requisitos
-
-- OpenCode instalado.
-- Claude Code instalado e autenticado.
-- Ollama em execução com o modelo do classificador.
-- `curl`, `jq`, `node` e `trash` disponíveis no `PATH`.
-- `script` disponível quando a versão do Claude truncar `--help` fora de um TTY.
-- OpenAI autenticado no OpenCode.
-- `MINIMAX_API_KEY` e `ZAI_API_KEY` no processo que inicia o OpenCode.
-
-Baixe o classificador:
+Install it:
 
 ```bash
-ollama pull hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M
+bash opencode/install.sh --config-dir "$opencode_config_dir"
+pnpm --dir "$opencode_config_dir" install --no-optional
 ```
 
-Faça um preflight sem alterar a configuração:
+The installer does not run a package manager. It merges the router-owned
+providers, agents, commands, and defaults into an existing `opencode.jsonc`
+while preserving comments and unrelated settings. Every changed managed file
+is backed up under `/tmp/claude-backups/<timestamp>/`; the user's policy file
+is preserved, and repeated identical installations are a no-op.
 
-```bash
-bash opencode/install.sh --dry-run
-```
-
-Instale o bundle:
-
-```bash
-bash opencode/install.sh
-```
-
-Opções:
-
-```text
---config-dir PATH
---backup-root PATH
---router-path PATH
---claude-path PATH
---dry-run
-```
-
-O instalador:
-
-1. Renderiza os caminhos absolutos de `route`, do provider local e do executável `claude`.
-2. Valida todos os destinos antes da primeira substituição.
-3. Preserva dependências e scripts já presentes em `package.json`, exceto dependências aposentadas.
-4. Fixa no `package.json` as versões do plugin, do SDK do OpenCode e do Claude Agent SDK.
-5. Copia cada arquivo alterado para `/tmp/claude-backups/AAAAMMDD_HHMMSS/`.
-6. Envia tools, plugins e bibliotecas do orquestrador antigo para a lixeira.
-7. Instala defaults e schema da política, preservando `llm-router.policy.json` criado pelo usuário.
-8. Mantém reinstalações idênticas sem novo backup.
-
-O instalador não executa gerenciador de pacotes. Instale as dependências da configuração com `pnpm install --no-optional` para usar o executável indicado por `--claude-path` sem baixar o binário opcional do Agent SDK.
-
-Por padrão, o destino é `$XDG_CONFIG_HOME/opencode` quando essa variável existe. Nos demais casos, usa `~/.config/opencode`.
-
-## Providers
-
-| Provider | Modelo | Autenticação |
-| --- | --- | --- |
-| `ollama` | Plano-Orchestrator-4B local | Serviço em `127.0.0.1:11434` |
-| `minimax-coding-plan` | MiniMax M3 | `MINIMAX_API_KEY` |
-| `zai-coding-plan` | GLM 5.2 | `ZAI_API_KEY` |
-| `claude-agent` | Claude Opus 4.8 | Login mantido pelo executável oficial do Claude Code |
-| `openai` | GPT-5.6 Sol | Login do OpenCode |
-| `router-control` | Controle determinístico | Sem autenticação e sem chamada de LLM |
-
-`github-copilot` e `opencode-go` ficam em `disabled_providers`.
-
-Evite publicar a saída de `opencode debug config`, pois ela pode expandir valores de ambiente. Para conferir cada agente sem revelar tokens, use:
-
-```bash
-opencode debug agent router
-opencode debug agent minimax
-opencode debug agent glm
-opencode debug agent claude
-opencode debug agent codex
-```
-
-## Uso no OpenCode
-
-Inicie o OpenCode no projeto em que deseja trabalhar:
+Start OpenCode in the project where you want to work:
 
 ```bash
 opencode .
 ```
 
-O padrão usa `router` com modo `adaptive` e perfil `native`. Consulte ou mude o estado com:
+The default session uses `adaptive + native`.
+
+## Session commands
 
 ```text
 /router-status
@@ -261,13 +176,105 @@ O padrão usa `router` com modo `adaptive` e perfil `native`. Consulte ou mude o
 /router-full
 ```
 
-Os comandos de modo preservam o perfil. Os comandos de perfil preservam o modo. Veja exemplos completos no [início rápido](docs/quick-start.md#comandos-da-sessão).
+Routing commands preserve the current execution profile. Profile commands
+preserve the current routing mode. The control provider handles these commands
+locally without calling an LLM.
 
-## Benchmark offline
+## Claude Agent SDK integration
 
-O benchmark de qualidade usa `benchmark_config.json` e `BenchmarkExecutor`. Os executores externos single-shot reproduzem as rodadas históricas e ficam fora do runtime do OpenCode.
+The local `claude-agent` provider implements the `LanguageModelV3` contract
+expected by OpenCode and calls `query()` from the official
+`@anthropic-ai/claude-agent-sdk`.
 
-Valide o dataset e os executores sem consumir chamadas:
+It points at the Claude Code executable already installed on the machine. The
+adapter does not load credentials from files or persist them. It filters the
+parent environment and passes allowed Claude or Anthropic authentication
+variables to the Claude Code subprocess. OpenCode remains the source of
+conversation history, while the adapter projects only approved user and
+assistant text, supported attachments, completed task results, and the
+validated compaction checkpoint.
+
+Supported attachments are plain text, PDF, GIF, JPEG, PNG, and WebP. Agent
+mentions run as OpenCode child sessions and their completed results are inserted
+before Claude receives the message.
+
+Read [Claude via Agent SDK](docs/claude.md) for the context, attachment,
+permission, and transport limits.
+
+## Privacy and cost
+
+The classifier and compaction summarizer run through the configured local Ollama
+service. The selected worker still receives the approved message context through
+its own provider, so its normal provider privacy and billing terms apply.
+
+Do not publish `opencode debug config`; it may expand environment values. Use
+the agent-specific debug commands documented in
+[privacy and costs](docs/privacy-and-costs.md).
+
+## Documentation
+
+| Document | Purpose |
+| --- | --- |
+| [Documentation index](docs/README.md) | Complete map |
+| [Quick start](docs/quick-start.md) | Installation and first session |
+| [Routing modes](docs/routing-modes.md) | Mode state, context, resume, and fork |
+| [Execution policies](docs/execution-policies.md) | Permissions, profiles, and configuration |
+| [Claude Agent SDK](docs/claude.md) | Context, attachments, tools, and authentication |
+| [Compatibility](docs/compatibility.md) | Version and operating-system contract |
+| [Privacy and costs](docs/privacy-and-costs.md) | Data boundaries and provider billing |
+| [Uninstall and rollback](docs/uninstall.md) | Restore or remove the installed bundle |
+| [Development](docs/development.md) | Local validation and contribution workflow |
+| [Troubleshooting](docs/troubleshooting.md) | Diagnostics and safe recovery |
+| [Release](docs/RELEASE.md) | Changelog, SemVer, tags, and GitHub Releases |
+| [Public repository checklist](docs/publication-checklist.md) | Visibility and security publication gates |
+| [Benchmark](BENCHMARK.md) | Offline methodology, results, and limitations |
+
+## Development
+
+The runtime bundle has its own pinned dependencies under `opencode/`. Root
+scripts cover repository validation and release tooling.
+
+Install repository tooling. This also installs the local Lefthook hooks:
+
+```bash
+pnpm install --frozen-lockfile
+```
+
+Run local validation:
+
+```bash
+pnpm test
+```
+
+Run the live Ollama routing contract separately:
+
+```bash
+pnpm test:integration
+```
+
+The underlying suites can also be run directly:
+
+```bash
+bash tests/smoke.sh
+bash tests/routing-eval.sh
+bash tests/opencode-bundle.sh
+node --test tests/*.test.mjs
+uv run --no-project --no-python-downloads python -m unittest \
+  tests/test_stage_verifier.py tests/test_quality_eval.py
+```
+
+The routing evaluation calls the local Ollama classifier. `pnpm test` matches CI
+and does not require provider credentials or a running Ollama service.
+Lefthook runs Commitlint for commit messages, selects focused tests from staged
+files before a commit, and runs the deterministic gate before a push.
+
+## Offline benchmark
+
+`quality_eval.py` and `qeval/` reproduce the offline single-shot benchmark
+runner. They are not installed into OpenCode and do not participate in message
+routing.
+
+Validate the benchmark configuration without provider calls:
 
 ```bash
 uv run --no-project --no-python-downloads python quality_eval.py \
@@ -277,29 +284,14 @@ uv run --no-project --no-python-downloads python quality_eval.py \
   --validate-only
 ```
 
-Remova `--validate-only` para executar. Consulte métricas, limitações e hashes em [BENCHMARK.md](BENCHMARK.md).
+The published benchmark includes methodology and artifact hashes. Raw provider
+outputs and private mappings are intentionally excluded.
 
-O classificador foi escolhido em benchmark local com 192 prompts rotulados:
+## Contributing
 
-| Modelo | Acurácia | Latência mediana | RAM |
-| --- | ---: | ---: | ---: |
-| Plano-Orchestrator-4B | 92,2% (177/192) | cerca de 843 ms | 2,5 GB |
-| Mellum2-12B-A2.5B | 87,0% (167/192) | cerca de 862 ms | 8,1 GB |
-| Arch-Router-1.5B | 80,2% (154/192) | cerca de 594 ms | 1,0 GB |
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a change. Security issues
+must follow [SECURITY.md](SECURITY.md).
 
-## Componentes experimentais
+## License
 
-`stage_verifier.py`, `quality_eval.py` e `qeval/` continuam versionados para os benchmarks e experimentos determinísticos. Eles não são instalados no OpenCode e não participam do handoff de produção.
-
-## Testes
-
-```bash
-bash tests/smoke.sh
-bash tests/routing-eval.sh
-bash tests/opencode-bundle.sh
-node --test tests/router-handoff.test.mjs tests/execution-policy.test.mjs tests/router-control.test.mjs tests/claude-agent.test.mjs tests/claude-agent-provider.test.mjs tests/repo-query.test.mjs
-uv run --no-project --no-python-downloads python -m unittest tests/test_stage_verifier.py
-uv run --no-project --no-python-downloads python -m unittest tests/test_quality_eval.py
-```
-
-`tests/router-handoff.test.mjs` cobre os quatro destinos e os modos `auto`, `adaptive` e `pinned`. `tests/execution-policy.test.mjs` cobre precedência, assignments, perfis, limites e a regra de que projetos só restringem. `tests/router-control.test.mjs` cobre comandos locais, permissões, limites e menções em sessões filhas. `tests/claude-agent.test.mjs` cobre opções do SDK, ferramentas, permissões, ambiente, cancelamento e deadline. `tests/claude-agent-provider.test.mjs` cobre `LanguageModelV3`, contexto v2, anexos, checkpoints, stream, uso e limites. `tests/smoke.sh` cobre o classificador e o sumarizador local. `tests/opencode-bundle.sh` cobre instalação, upgrade, backup e idempotência.
+Licensed under the [Apache License 2.0](LICENSE).

@@ -1,4 +1,4 @@
-"""Fontes Python executadas no sandbox para graders de behavior e mutantes."""
+"""Python sources executed in the sandbox for behavior and mutant graders."""
 
 from __future__ import annotations
 

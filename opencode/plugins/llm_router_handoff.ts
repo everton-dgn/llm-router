@@ -18,6 +18,7 @@ import {
   resolveExecutionPolicy,
 } from "../lib/execution_policy.mjs"
 import { createOpenCodeV2ClientFromLegacyTransport } from "../lib/opencode_transport.mjs"
+import { assertClassifierRequestSize } from "../lib/route_contract.mjs"
 import { createRouterControlRuntime } from "../lib/router_control.mjs"
 import { updateSessionMetadata } from "../lib/session_metadata.mjs"
 
@@ -76,6 +77,7 @@ export default async function llmRouterHandoff({ client, directory }) {
   })
 
   async function classify(request) {
+    assertClassifierRequestSize(request)
     const child = Bun.spawn([ROUTER_PATH, "--classify", "--json", "--", request], {
       cwd: directory,
       stdout: "pipe",
@@ -287,7 +289,7 @@ export default async function llmRouterHandoff({ client, directory }) {
         await checkpoints.afterCompaction({ sessionID })
       } catch {
         await checkpointNotice({
-          message: "O vínculo do checkpoint local do Claude foi adiado; a próxima mensagem tentará validá-lo novamente.",
+          message: "Local Claude checkpoint binding was deferred; the next message will try to validate it again.",
         })
       }
     },

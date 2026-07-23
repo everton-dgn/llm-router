@@ -1,0 +1,41 @@
+{
+  "name": "llm-router",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local multi-model router for OpenCode",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/everton-dgn/llm-router.git"
+  },
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
+  "packageManager": "pnpm@11.15.1",
+  "scripts": {
+    "commitlint": "commitlint",
+    "hooks:check": "lefthook validate && commitlint --print-config json >/dev/null",
+    "hooks:install": "lefthook install",
+    "postinstall": "if [ -e .git ] && [ -z \"${CI:-}\" ]; then lefthook install; fi",
+    "test": "pnpm test:release && pnpm test:shell && pnpm test:node && pnpm test:python",
+    "test:release": "node --test \"scripts/*.test.mjs\"",
+    "test:shell": "bash tests/smoke.sh && bash tests/opencode-bundle.sh",
+    "test:integration": "bash tests/routing-eval.sh",
+    "test:all": "pnpm test && pnpm test:integration",
+    "test:node": "node --test tests/router-handoff.test.mjs tests/execution-policy.test.mjs tests/router-control.test.mjs tests/claude-agent.test.mjs tests/claude-agent-provider.test.mjs tests/repo-query.test.mjs tests/documentation.test.mjs",
+    "test:python": "uv run --no-project --no-python-downloads python -m unittest tests/test_stage_verifier.py tests/test_quality_eval.py",
+    "release:preflight": "node scripts/release-preflight.mjs",
+    "release:next": "pnpm release:preflight && node scripts/set-release-version.mjs --mode auto --print",
+    "release:check": "pnpm test:all",
+    "release:push": "node scripts/push-current-release-tag.mjs",
+    "release:auto": "node scripts/run-auto-release.mjs"
+  },
+  "dependencies": {
+    "jsonc-parser": "3.3.1"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "21.2.1",
+    "@commitlint/config-conventional": "21.2.0",
+    "lefthook": "2.1.10"
+  }
+}

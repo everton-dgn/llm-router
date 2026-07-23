@@ -27,6 +27,7 @@ const LEGACY_AGENT_MODES = Object.freeze({
 })
 const MAX_AGENT_MENTIONS = 4
 const MAX_AGENT_RESULT_BYTES = 256 * 1024
+const MAX_TRACKED_SESSIONS = 1024
 
 function responseData(response) {
   if (
@@ -151,6 +152,21 @@ export function createRouterControlRuntime({
   const activeTurns = new Map()
   const pendingPermissions = new Map()
 
+  function activateTurn(sessionID, key, turn) {
+    const previousKey = activeTurns.get(sessionID)
+    if (previousKey && previousKey !== key) turns.delete(previousKey)
+    turns.set(key, turn)
+    activeTurns.delete(sessionID)
+    activeTurns.set(sessionID, key)
+
+    while (activeTurns.size > MAX_TRACKED_SESSIONS) {
+      const oldestSessionID = activeTurns.keys().next().value
+      const oldestKey = activeTurns.get(oldestSessionID)
+      activeTurns.delete(oldestSessionID)
+      if (oldestKey) turns.delete(oldestKey)
+    }
+  }
+
   async function getSession(sessionID) {
     const session = responseData(await sessions.get(
       { sessionID, directory },
@@ -217,8 +233,7 @@ export function createRouterControlRuntime({
     const turn = existing?.policy === policy
       ? existing
       : { policy, steps: 0, toolCalls: 0 }
-    turns.set(key, turn)
-    activeTurns.set(sessionID, key)
+    activateTurn(sessionID, key, turn)
     return turn
   }
 
@@ -451,8 +466,7 @@ export function createRouterControlRuntime({
       const activeKey = activeTurns.get(input.sessionID)
       turn = activeKey ? turns.get(activeKey) : undefined
       if (turn) {
-        turns.set(key, turn)
-        activeTurns.set(input.sessionID, key)
+        activateTurn(input.sessionID, key, turn)
       }
     }
     if (!turn) return

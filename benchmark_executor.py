@@ -50,7 +50,7 @@ def expand_env_string(value: str) -> str:
     def replace(match: re.Match[str]) -> str:
         name = match.group(1)
         if name not in os.environ:
-            raise ConfigError(f"variavel de ambiente obrigatoria ausente: {name}")
+            raise ConfigError(f"missing required environment variable: {name}")
         return os.environ[name]
 
     return ENV_PATTERN.sub(replace, value)
@@ -91,7 +91,7 @@ def parse_json_object(value: str) -> dict[str, Any]:
             continue
         if isinstance(parsed, dict):
             return parsed
-    raise ValueError("saida nao contem objeto JSON valido")
+    raise ValueError("output does not contain a valid JSON object")
 
 
 def cleanup_temp_file(path: str | None) -> str | None:
@@ -99,7 +99,7 @@ def cleanup_temp_file(path: str | None) -> str | None:
         return None
     trash = shutil.which("trash")
     if not trash:
-        return f"trash nao encontrado; arquivo temporario preservado em {path}"
+        return f"trash not found; temporary file preserved at {path}"
     result = subprocess.run(
         [trash, path],
         stdout=subprocess.DEVNULL,
@@ -109,7 +109,7 @@ def cleanup_temp_file(path: str | None) -> str | None:
     )
     if result.returncode != 0:
         detail = result.stderr.strip() or f"exit code {result.returncode}"
-        return f"trash falhou para {path}: {detail}"
+        return f"trash failed for {path}: {detail}"
     return None
 
 
@@ -135,18 +135,18 @@ def normalize_output(output_format: str, stdout: str, output_file: str | None) -
         payload = parse_json_object(stdout)
         result = payload.get("result")
         if not isinstance(result, str):
-            raise ValueError("saida claude_json sem campo result textual")
+            raise ValueError("claude_json output does not contain a textual result field")
         return result.strip()
     if output_format == "codex_last_message":
         if not output_file:
-            raise ValueError("codex_last_message exige {output_file} no argv")
+            raise ValueError("codex_last_message requires {output_file} in argv")
         try:
             return Path(output_file).read_text(encoding="utf-8").strip()
         except OSError as error:
             raise ValueError(
-                f"nao foi possivel ler a ultima mensagem do Codex: {error}"
+                f"could not read the final Codex message: {error}"
             ) from error
-    raise ValueError(f"output_format desconhecido: {output_format}")
+    raise ValueError(f"unknown output_format: {output_format}")
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -154,11 +154,11 @@ def load_config(path: Path) -> dict[str, Any]:
         with path.open(encoding="utf-8") as stream:
             config = json.load(stream)
     except OSError as error:
-        raise ConfigError(f"nao foi possivel ler config: {error}") from error
+        raise ConfigError(f"could not read config: {error}") from error
     except json.JSONDecodeError as error:
-        raise ConfigError(f"config JSON invalido: {error}") from error
+        raise ConfigError(f"invalid JSON config: {error}") from error
     if not isinstance(config, dict):
-        raise ConfigError("config precisa ser um objeto JSON")
+        raise ConfigError("config must be a JSON object")
     return config
 
 
@@ -173,34 +173,34 @@ class BenchmarkExecutor:
     @staticmethod
     def _require_dict(value: Any, path: str) -> dict[str, Any]:
         if not isinstance(value, dict):
-            raise ConfigError(f"{path} precisa ser um objeto")
+            raise ConfigError(f"{path} must be an object")
         return value
 
     @staticmethod
     def _require_string(value: Any, path: str) -> str:
         if not isinstance(value, str) or not value:
-            raise ConfigError(f"{path} precisa ser uma string nao vazia")
+            raise ConfigError(f"{path} must be a non-empty string")
         return value
 
     @staticmethod
     def _positive_number(value: Any, path: str) -> float:
         if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
-            raise ConfigError(f"{path} precisa ser um numero positivo")
+            raise ConfigError(f"{path} must be a positive number")
         return float(value)
 
     @staticmethod
     def _load_routes(routes: Any) -> dict[str, dict[str, Any]]:
         if not isinstance(routes, list) or not routes:
-            raise ConfigError("routes precisa ser uma lista nao vazia")
+            raise ConfigError("routes must be a non-empty list")
         result: dict[str, dict[str, Any]] = {}
         for route in routes:
             if not isinstance(route, dict):
-                raise ConfigError("cada item de routes precisa ser um objeto")
+                raise ConfigError("each routes item must be an object")
             name = route.get("name")
             if not isinstance(name, str) or not name:
-                raise ConfigError("routes[].name precisa ser uma string nao vazia")
+                raise ConfigError("routes[].name must be a non-empty string")
             if name in result:
-                raise ConfigError(f"rota duplicada: {name}")
+                raise ConfigError(f"duplicate route: {name}")
             result[name] = route
         return result
 
@@ -227,17 +227,17 @@ class BenchmarkExecutor:
         env = os.environ.copy()
         for name, value in raw_env.items():
             if not isinstance(name, str) or not name:
-                raise ConfigError(f"nome invalido em {path}")
+                raise ConfigError(f"invalid name in {path}")
             if isinstance(value, str):
                 env[name] = expand_env_string(value)
                 continue
             if isinstance(value, dict) and isinstance(value.get("from_env"), str):
                 source = value["from_env"]
                 if source not in os.environ or not os.environ[source]:
-                    raise ConfigError(f"variavel de ambiente obrigatoria ausente: {source}")
+                    raise ConfigError(f"missing required environment variable: {source}")
                 env[name] = os.environ[source]
                 continue
-            raise ConfigError(f"valor de ambiente invalido para {name}")
+            raise ConfigError(f"invalid environment value for {name}")
         return env
 
     def _resolve_env(self, headless: dict[str, Any]) -> dict[str, str]:
@@ -253,7 +253,7 @@ class BenchmarkExecutor:
         if not isinstance(raw_argv, list) or not raw_argv or not all(
             isinstance(item, str) for item in raw_argv
         ):
-            raise ConfigError("headless.argv precisa ser uma lista nao vazia de strings")
+            raise ConfigError("headless.argv must be a non-empty list of strings")
         values = {
             "cwd": str(process_cwd),
             "project_root": str(self.project_root),
@@ -277,9 +277,9 @@ class BenchmarkExecutor:
         if effort_policy is None:
             return {}
         if role != "worker":
-            raise ConfigError("headless.effort_policy so pode ser usado pelo worker")
+            raise ConfigError("headless.effort_policy can only be used by the worker")
         if effort_policy != "claude_dynamic":
-            raise ConfigError(f"headless.effort_policy desconhecida: {effort_policy}")
+            raise ConfigError(f"unknown headless.effort_policy: {effort_policy}")
         return {"effort": select_claude_effort(prompt)}
 
     def execute_model(self, route_name: str, role: str, prompt: str) -> ProcessResult:
@@ -287,7 +287,7 @@ class BenchmarkExecutor:
         output_file: str | None = None
         try:
             if route_name not in self.routes:
-                raise ConfigError(f"rota desconhecida: {route_name}")
+                raise ConfigError(f"unknown route: {route_name}")
             route = self.routes[route_name]
             headless = self._require_dict(
                 route.get("headless"), f"routes[{route_name}].headless"
@@ -308,7 +308,7 @@ class BenchmarkExecutor:
             if needs_output_file:
                 if not shutil.which("trash"):
                     raise ConfigError(
-                        "trash e obrigatorio para limpar a saida temporaria do Codex"
+                        "trash is required to clean up Codex temporary output"
                     )
                 descriptor, output_file = tempfile.mkstemp(
                     prefix="llm-router-", suffix=".out"
@@ -388,4 +388,4 @@ class BenchmarkExecutor:
         finally:
             cleanup_error = cleanup_temp_file(output_file)
             if cleanup_error:
-                print(f"aviso: {cleanup_error}", file=sys.stderr)
+                print(f"warning: {cleanup_error}", file=sys.stderr)

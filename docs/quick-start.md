@@ -1,43 +1,55 @@
-# Início rápido
+# Quick start
 
-## Requisitos
+## Requirements
 
-- OpenCode instalado.
-- Claude Code instalado e autenticado.
-- Ollama em execução.
-- O modelo local `hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M` disponível no Ollama.
-- OpenAI autenticado no OpenCode.
-- `MINIMAX_API_KEY` e `ZAI_API_KEY` no ambiente que inicia o OpenCode.
-- `curl`, `jq`, `node`, `pnpm` e `trash` no `PATH`.
+- OpenCode installed.
+- Claude Code installed and authenticated.
+- Ollama running.
+- The local `hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M` model
+  available in Ollama.
+- OpenAI authenticated in OpenCode.
+- `MINIMAX_API_KEY` and `ZAI_API_KEY` in the environment that starts OpenCode.
+- `curl`, `jq`, `node`, `pnpm`, and `trash` in `PATH`.
 
-Baixe o classificador local:
+Pull the local classifier:
 
 ```bash
 ollama pull hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M
 ```
 
-Autentique o Claude Code:
+Authenticate Claude Code:
 
 ```bash
 claude auth login
 claude auth status
 ```
 
-## Instalação
+## Installation
 
-Confira o que será alterado:
-
-```bash
-bash opencode/install.sh --dry-run
-```
-
-Instale o bundle:
+Install the repository tooling. The root `postinstall` script installs the
+versioned Lefthook configuration in a Git checkout and skips hook installation
+in CI:
 
 ```bash
-bash opencode/install.sh
+corepack enable
+pnpm install --frozen-lockfile
 ```
 
-O instalador aceita:
+Preview the changes:
+
+```bash
+opencode_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+bash opencode/install.sh --config-dir "$opencode_config_dir" --dry-run
+```
+
+Install the bundle:
+
+```bash
+bash opencode/install.sh --config-dir "$opencode_config_dir"
+pnpm --dir "$opencode_config_dir" install --no-optional
+```
+
+The installer accepts:
 
 ```text
 --config-dir PATH
@@ -47,93 +59,109 @@ O instalador aceita:
 --dry-run
 ```
 
-Por padrão, a configuração fica em `$XDG_CONFIG_HOME/opencode`. Sem `XDG_CONFIG_HOME`, o destino é `~/.config/opencode`.
+By default, the configuration is installed in `$XDG_CONFIG_HOME/opencode`.
+When `XDG_CONFIG_HOME` is unset, the destination is `~/.config/opencode`.
 
-O instalador não executa um gerenciador de pacotes. Instale as dependências da configuração depois da cópia:
+The installer does not run a package manager. The second command uses the same
+`opencode_config_dir`, including when installation targets a custom directory.
+`--no-optional` makes the Agent SDK use the executable provided through
+`--claude-path` instead of downloading another Claude Code binary.
 
-```bash
-cd "${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
-pnpm install --no-optional
-```
+When `opencode.jsonc` already exists, the installer updates only the
+router-owned model, default agent, providers, commands, and agents. Comments,
+custom providers, custom agents, commands, and unrelated settings remain in
+place. Files at retired llm-router paths are sent to Trash only when their
+content matches a known legacy implementation; an unrecognized file is
+preserved and reported.
 
-`--no-optional` faz o Agent SDK usar o executável informado por `--claude-path`, sem baixar outro binário do Claude Code.
+## First use
 
-## Primeiro uso
-
-Abra o projeto:
+Open the project:
 
 ```bash
 opencode .
 ```
 
-O agente principal é `router`. Consulte o estado da sessão:
+The primary agent is `router`. Check the session status:
 
 ```text
 /router-status
 ```
 
-Escolha o modo e o perfil antes do pedido, quando quiser sair dos padrões:
+Choose the mode and profile before the request when you want to override the
+defaults:
 
 ```text
 /router-adaptive
 /router-native
 ```
 
-Depois envie uma tarefa normal:
+Then send a normal task:
 
 ```text
-revise a estratégia de cache e corrija o problema encontrado
+review the cache strategy and fix the problem you find
 ```
 
-O classificador local só escolhe a rota. O worker selecionado executa o pedido na mesma mensagem e na mesma sessão.
+The local classifier only selects the route. The selected worker executes the
+request in the same message and session.
 
-## Comandos da sessão
+## Session commands
 
-| Comando | Efeito |
+| Command | Effect |
 | --- | --- |
-| `/router-auto` | Classifica e aplica a rota em cada mensagem |
-| `/router-adaptive` | Classifica cada mensagem e evita trocas desnecessárias |
-| `/router-pinned` | Fixa o primeiro worker selecionado enquanto esse modo está ativo |
-| `/router-native` | Remove restrições adicionais do llm-router |
-| `/router-restricted` | Aplica permissões e limites do perfil restrito |
-| `/router-full` | Autoriza explicitamente todas as ferramentas do perfil |
-| `/router-status` | Mostra modo e perfil base da sessão |
+| `/router-auto` | Classifies and applies a route to every message |
+| `/router-adaptive` | Classifies every message and avoids unnecessary switches |
+| `/router-pinned` | Keeps the first selected worker while this mode is active |
+| `/router-native` | Removes additional llm-router restrictions |
+| `/router-restricted` | Applies the restricted profile's permissions and limits |
+| `/router-full` | Explicitly allows every tool in the profile |
+| `/router-status` | Shows the session's base mode and profile |
 
-Os comandos de modo e de perfil alteram eixos diferentes. Usar `/router-pinned` preserva o perfil atual. Usar `/router-restricted` preserva o modo atual.
+Mode and profile commands change separate axes. Using `/router-pinned` preserves
+the current profile. Using `/router-restricted` preserves the current mode.
 
-Os sete comandos usam o provider local `router-control` e respondem sem chamar Ollama, Claude, GLM, MiniMax ou OpenAI. Os comandos de modo e perfil atualizam a metadata; `/router-status` apenas lê o estado. O uso reportado pelo provider é zero. Exemplo:
+All seven commands use the local `router-control` provider and respond without
+calling Ollama, Claude, GLM, MiniMax, or OpenAI. Mode and profile commands
+update metadata; `/router-status` only reads state. The provider reports zero
+usage. For example:
 
 ```text
 Router status. mode: adaptive | profile: native
 ```
 
-Um override exato de modelo pode produzir outro perfil no próximo handoff. Nesse caso, o aviso da mensagem mostra o perfil efetivo junto com o worker.
+An exact model override may produce a different profile on the next handoff. In
+that case, the message notice shows the effective profile alongside the worker.
 
-## Atualização
+## Updating
 
-Execute primeiro o dry-run:
+Run the dry run first:
 
 ```bash
 bash opencode/install.sh --dry-run
 ```
 
-Depois aplique:
+Then apply the update:
 
 ```bash
 bash opencode/install.sh
 ```
 
-Arquivos gerenciados que mudaram recebem backup em `/tmp/claude-backups/AAAAMMDD_HHMMSS/`. Na primeira instalação, o instalador cria `llm-router.policy.json` a partir dos defaults. Atualizações preservam esse arquivo sem sobrescrevê-lo. Consulte [políticas de execução](execution-policies.md#arquivos-e-precedência) para os dois locais de configuração.
+Changed managed files are backed up under
+`/tmp/claude-backups/AAAAMMDD_HHMMSS/`. On the first installation, the
+installer creates `llm-router.policy.json` from the defaults. Updates preserve
+this file without overwriting it. See
+[execution policies](execution-policies.md#files-and-precedence) for both
+configuration locations.
 
-## Verificação sem expor credenciais
+## Verification without exposing credentials
 
-Confira os providers:
+Inspect the providers:
 
 ```bash
 opencode models claude-agent
 ```
 
-Confira os agentes individualmente:
+Inspect each agent individually:
 
 ```bash
 opencode debug agent router
@@ -143,11 +171,12 @@ opencode debug agent claude
 opencode debug agent codex
 ```
 
-Evite publicar `opencode debug config`, pois a saída pode expandir valores do ambiente.
+Do not publish `opencode debug config`, because its output may expand
+environment values.
 
-## Próximos passos
+## Next steps
 
-- [Escolher o modo de roteamento](routing-modes.md)
-- [Escolher o perfil de execução](execution-policies.md)
-- [Entender o transporte do Claude](claude.md)
-- [Diagnosticar falhas](troubleshooting.md)
+- [Choose a routing mode](routing-modes.md)
+- [Choose an execution profile](execution-policies.md)
+- [Understand the Claude transport](claude.md)
+- [Diagnose failures](troubleshooting.md)

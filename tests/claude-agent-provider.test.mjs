@@ -954,7 +954,7 @@ test("persists a failed checkpoint and visibly falls back to the active tail", a
     messages: context,
   }), undefined)
   assert.equal(notices.at(-1).code, "checkpoint_tail_fallback")
-  assert.equal(notices.at(-1).message.includes("cauda ativa"), true)
+  assert.equal(notices.at(-1).message.includes("active tail"), true)
 })
 
 test("bounds remembered active-tail fallback warnings", async () => {

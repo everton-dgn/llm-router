@@ -1,4 +1,4 @@
-"""Work items, manifesto de execução e contagem de chamadas físicas."""
+"""Work items, execution manifest, and physical call counting."""
 
 from __future__ import annotations
 
@@ -88,14 +88,14 @@ def build_execution_manifest(
             }
         )
     if len({slot["key"] for slot in slots}) != len(slots):
-        raise EvaluationError("manifesto contém chaves de slot duplicadas")
+        raise EvaluationError("manifest contains duplicate slot keys")
     if len(set(physical_call_keys)) != len(physical_call_keys):
-        raise EvaluationError("manifesto contém chaves de chamada física duplicadas")
+        raise EvaluationError("manifest contains duplicate physical call keys")
     expected_calls = planned_call_count(
         routes, dataset["cases"], repetitions, selection
     )
     if len(physical_call_keys) != expected_calls:
-        raise EvaluationError("manifesto diverge da contagem de chamadas físicas")
+        raise EvaluationError("manifest differs from the physical call count")
 
     config_hash = fingerprint._config_sha256(config_path, config)
     dataset_hash = _sha256_json(dataset)

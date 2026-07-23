@@ -1,18 +1,21 @@
-# Políticas de execução
+# Execution policies
 
-O perfil controla ferramentas e limites. Ele não escolhe o modelo e não muda o modo de roteamento.
+The profile controls tools and limits. It does not select the model or change
+the routing mode.
 
-## Perfis
+## Profiles
 
-| Perfil | Regras adicionadas pelo llm-router | Uso indicado |
+| Profile | Rules added by llm-router | Recommended use |
 | --- | --- | --- |
-| `native` | Nenhuma | Uso normal do provider e das permissões configuradas no OpenCode |
-| `restricted` | Regras `allow`, `ask` e `deny`, mais limites | Modelos pequenos, loops longos e tarefas com risco operacional |
-| `full` | `*` com `allow` explícito | Sessões supervisionadas que precisam de todas as ferramentas |
+| `native` | None | Normal provider behavior with the permissions configured in OpenCode |
+| `restricted` | `allow`, `ask`, and `deny` rules, plus limits | Small models, long loops, and tasks with operational risk |
+| `full` | `*` with an explicit `allow` action | Supervised sessions that need every tool |
 
-O bundle distribuído usa `native` como padrão para todos os agentes e modelos. Restrições passam a existir quando o usuário escolhe `restricted` ou configura uma regra específica.
+The distributed bundle uses `native` by default for every agent and model.
+Restrictions apply when the user selects `restricted` or configures a specific
+rule.
 
-Ative o perfil da sessão:
+Activate the session profile:
 
 ```text
 /router-native
@@ -20,29 +23,31 @@ Ative o perfil da sessão:
 /router-full
 ```
 
-`full` amplia poder de forma explícita. Use apenas quando o ambiente e o pedido justificarem.
+`full` explicitly expands access. Use it only when the environment and request
+justify that access.
 
-## Matriz modo x perfil
+## Mode and profile matrix
 
-Todas as combinações são válidas:
+Every combination is valid:
 
-| Combinação | Comportamento |
+| Combination | Behavior |
 | --- | --- |
-| `auto + native` | Troca a cada mensagem e usa permissões nativas |
-| `auto + restricted` | Troca a cada mensagem e aplica os limites restritos ao worker escolhido |
-| `auto + full` | Troca a cada mensagem com autorização ampla |
-| `adaptive + native` | Evita trocas desnecessárias e usa permissões nativas |
-| `adaptive + restricted` | Controla custo e reduz risco de ferramentas, indicado para uso geral com modelos menores |
-| `adaptive + full` | Mantém histerese de modelo, mas libera ferramentas |
-| `pinned + native` | Fixa o worker e preserva o comportamento nativo |
-| `pinned + restricted` | Fixa o worker com limites, indicado para loops previsíveis |
-| `pinned + full` | Fixa o worker e libera ferramentas, indicado somente com supervisão |
+| `auto + native` | Switches on every message and uses native permissions |
+| `auto + restricted` | Switches on every message and applies restricted limits to the selected worker |
+| `auto + full` | Switches on every message with broad authorization |
+| `adaptive + native` | Avoids unnecessary switches and uses native permissions |
+| `adaptive + restricted` | Controls cost and reduces tool risk, recommended for general use with smaller models |
+| `adaptive + full` | Preserves model hysteresis while allowing every tool |
+| `pinned + native` | Pins the worker and preserves native behavior |
+| `pinned + restricted` | Pins the worker with limits, recommended for predictable loops |
+| `pinned + full` | Pins the worker and allows every tool, recommended only with supervision |
 
-Mudar o modo preserva o perfil. Mudar o perfil preserva o modo.
+Changing the mode preserves the profile. Changing the profile preserves the
+mode.
 
-## Formato das permissões
+## Permission format
 
-As regras usam o vocabulário do OpenCode:
+Rules use the OpenCode vocabulary:
 
 ```json
 {
@@ -52,15 +57,17 @@ As regras usam o vocabulário do OpenCode:
 }
 ```
 
-As ações aceitas são:
+Accepted actions are:
 
-| Ação | Resultado |
+| Action | Result |
 | --- | --- |
-| `allow` | Autoriza a operação correspondente |
-| `ask` | Exige decisão do host ou da interface |
-| `deny` | Bloqueia a operação |
+| `allow` | Authorizes the corresponding operation |
+| `ask` | Requires a decision from the host or interface |
+| `deny` | Blocks the operation |
 
-O perfil `restricted` distribuído começa com `ask`, permite consultas locais comuns e nega `external_directory` e `doom_loop`. Os limites padrão são:
+The distributed `restricted` profile starts with `ask`, allows common local
+queries, and denies `external_directory` and `doom_loop`. Its default limits
+are:
 
 ```json
 {
@@ -70,57 +77,71 @@ O perfil `restricted` distribuído começa com `ask`, permite consultas locais c
 }
 ```
 
-Faixas validadas pelo runtime:
+Ranges validated by the runtime:
 
-| Limite | Mínimo | Máximo |
+| Limit | Minimum | Maximum |
 | --- | ---: | ---: |
 | `max_steps` | 1 | 10000 |
 | `max_tool_calls` | 1 | 100000 |
 | `max_child_depth` | 0 | 1 |
 
-Os limites são aplicados durante a execução:
+Limits are enforced during execution:
 
-| Campo | Fiscalização |
+| Field | Enforcement |
 | --- | --- |
-| `max_steps` | Conta chamadas de `chat.params`; no Claude também define `maxTurns` no Agent SDK |
-| `max_tool_calls` | Conta tools do OpenCode e ferramentas internas do Claude pelo callback |
-| `max_child_depth` | Percorre a cadeia `parentID` antes de `task`, `agent` ou uma menção `@agent` |
+| `max_steps` | Counts `chat.params` calls; for Claude, it also sets `maxTurns` in the Agent SDK |
+| `max_tool_calls` | Counts OpenCode tools and Claude internal tools through the callback |
+| `max_child_depth` | Traverses the `parentID` chain before `task`, `agent`, or an `@agent` mention |
 
-Ultrapassar um limite interrompe a operação com erro explícito. No callback do Claude, a mesma violação vira uma negação controlada para a ferramenta.
+Exceeding a limit stops the operation with an explicit error. In the Claude
+callback, the same violation becomes a controlled tool denial.
 
-## Arquivos e precedência
+## Files and precedence
 
-A política efetiva é composta nesta ordem:
+The effective policy is composed in this order:
 
-1. Defaults versionados do bundle em [`opencode/llm-router.policy.defaults.json`](../opencode/llm-router.policy.defaults.json).
-2. Configuração global do usuário em `$CONFIG_DIR/llm-router.policy.json`.
-3. Configuração do projeto em `.opencode/llm-router.policy.json`.
-4. Override explícito da sessão feito pelos comandos `/router-native`, `/router-restricted` ou `/router-full`.
+1. Versioned bundle defaults in [`opencode/llm-router.policy.defaults.json`](../opencode/llm-router.policy.defaults.json).
+2. Global user configuration in `$CONFIG_DIR/llm-router.policy.json`.
+3. Project configuration in `.opencode/llm-router.policy.json`.
+4. Explicit session override set by `/router-native`, `/router-restricted`, or `/router-full`.
 
-`$CONFIG_DIR` é o diretório de configuração do OpenCode. O padrão é `$XDG_CONFIG_HOME/opencode` ou `~/.config/opencode`.
+`$CONFIG_DIR` is the OpenCode configuration directory. It defaults to
+`$XDG_CONFIG_HOME/opencode` or `~/.config/opencode`.
 
-A configuração global pode ampliar ou restringir. A configuração do projeto só pode reduzir permissões, escolher `restricted` a partir de `native` ou `full` e diminuir limites. Uma tentativa de ampliar encerra a carga com erro. Essa regra impede que um repositório habilite ferramentas por conta própria.
+The global configuration can expand or restrict access. The project
+configuration can only reduce permissions, select `restricted` from `native`
+or `full`, and lower limits. An attempt to expand access aborts loading with an
+error. This rule prevents a repository from enabling tools on its own.
 
-O override explícito da sessão pode ampliar porque ele representa uma escolha direta do usuário.
+The explicit session override can expand access because it represents a direct
+user choice.
 
-O instalador gerencia `llm-router.policy.defaults.json` e `llm-router.policy.schema.json`. Ele cria `$CONFIG_DIR/llm-router.policy.json` somente quando o arquivo ainda não existe. Reinstalações e upgrades imprimem `preserved` e mantêm a política do usuário intacta.
+The installer manages `llm-router.policy.defaults.json` and
+`llm-router.policy.schema.json`. It creates
+`$CONFIG_DIR/llm-router.policy.json` only when the file does not exist.
+Reinstallations and upgrades print `preserved` and keep the user policy
+unchanged.
 
-## Seleção por agente e modelo
+## Selection by agent and model
 
-A resolução segue:
+Resolution follows:
 
 ```text
 defaultProfile
-  -> assignment exato do agent
-  -> override exato provider/model
-  -> override explícito da sessão
+  -> exact agent assignment
+  -> exact provider/model override
+  -> explicit session override
 ```
 
-O modelo usa uma chave exata, como `openai/gpt-5.6-sol`. Wildcards em `models` são rejeitados.
+The model uses an exact key such as `openai/gpt-5.6-sol`. Wildcards in
+`models` are rejected.
 
-Os defaults distribuídos declaram os quatro modelos como `native`. Por isso, uma política persistente que queira mudar todos eles precisa listar os quatro IDs exatos. Um comando de sessão tem precedência sobre todos e muda o perfil efetivo sem repetir essa lista.
+The distributed defaults declare all four models as `native`. A persistent
+policy that changes every model must therefore list all four exact IDs. A
+session command has precedence over them and changes the effective profile
+without repeating that list.
 
-O assignment aceita uma string curta:
+An assignment accepts a short string:
 
 ```json
 {
@@ -130,7 +151,7 @@ O assignment aceita uma string curta:
 }
 ```
 
-Também aceita regras e limites próprios:
+It also accepts custom rules and limits:
 
 ```json
 {
@@ -150,9 +171,9 @@ Também aceita regras e limites próprios:
 }
 ```
 
-## Exemplo global: tudo nativo, Claude restrito
+## Global example: native by default, restricted Claude
 
-Arquivo `$CONFIG_DIR/llm-router.policy.json`:
+File `$CONFIG_DIR/llm-router.policy.json`:
 
 ```json
 {
@@ -171,7 +192,7 @@ Arquivo `$CONFIG_DIR/llm-router.policy.json`:
 }
 ```
 
-## Exemplo global: liberar tudo por padrão
+## Global example: allow everything by default
 
 ```json
 {
@@ -186,11 +207,11 @@ Arquivo `$CONFIG_DIR/llm-router.policy.json`:
 }
 ```
 
-Uma sessão ainda pode usar `/router-restricted` para reduzir o poder temporariamente.
+A session can still use `/router-restricted` to reduce access temporarily.
 
-## Exemplo de projeto: loop read-only
+## Project example: read-only loop
 
-Arquivo `.opencode/llm-router.policy.json`:
+File `.opencode/llm-router.policy.json`:
 
 ```json
 {
@@ -219,11 +240,13 @@ Arquivo `.opencode/llm-router.policy.json`:
 }
 ```
 
-Esse projeto pode reduzir os limites globais. Ele não pode trocar `restricted` por `full`, aumentar `max_steps` ou converter uma regra `deny` em `allow`.
+This project can lower global limits. It cannot change `restricted` to `full`,
+increase `max_steps`, or convert a `deny` rule into `allow`.
 
-## Exemplo de projeto inválido
+## Invalid project example
 
-Se a política efetiva global já usa `restricted`, este arquivo é rejeitado:
+If the effective global policy already uses `restricted`, this file is
+rejected:
 
 ```json
 {
@@ -234,31 +257,41 @@ Se a política efetiva global já usa `restricted`, este arquivo é rejeitado:
 }
 ```
 
-O mesmo vale para um projeto que tenta elevar um limite ou liberar uma permissão negada.
+The same applies to a project that tries to raise a limit or allow a denied
+permission.
 
-## OpenCode e Claude SDK
+## OpenCode and Claude SDK
 
-GLM, MiniMax e Codex executam as regras pela superfície de permissões do OpenCode.
+GLM, MiniMax, and Codex enforce the rules through the OpenCode permission
+surface.
 
-Claude usa ferramentas internas do Claude Code. No perfil `restricted`, o plugin configura um `permissionProfile` que consulta o host e fornece um callback ao `canUseTool` do Agent SDK. Esse callback converte nomes como `Bash`, `Read`, `Edit` e `Task` para as ações `bash`, `read`, `edit` e `task` do OpenCode. Comando, path, pattern, query, URL ou prompt entram como recursos da solicitação.
+Claude uses Claude Code internal tools. In the `restricted` profile, the plugin
+configures a `permissionProfile` that queries the host and provides a callback
+to the Agent SDK `canUseTool`. This callback maps names such as `Bash`, `Read`,
+`Edit`, and `Task` to the OpenCode actions `bash`, `read`, `edit`, and `task`.
+The command, path, pattern, query, URL, or prompt becomes the request resource.
 
-O mapeamento preserva `allow`, `ask` e `deny`:
+The mapping preserves `allow`, `ask`, and `deny`:
 
-- `allow` autoriza a ferramenta no callback.
-- `deny` devolve uma negação ao SDK.
-- `ask` consulta o host; ausência de callback, erro, cancelamento ou timeout termina em negação.
+- `allow` authorizes the tool in the callback.
+- `deny` returns a denial to the SDK.
+- `ask` queries the host; a missing callback, error, cancellation, or timeout
+  results in a denial.
 
-O OpenCode avalia os patterns da política da sessão. O timeout efetivo padrão de aprovação do Claude é 30 segundos.
+OpenCode evaluates the session policy patterns. Claude's default effective
+approval timeout is 30 seconds.
 
-Consulte os detalhes em [Claude via Agent SDK](claude.md#permissões-do-claude).
+See [Claude via Agent SDK](claude.md#claude-permissions) for details.
 
 ## Schema
 
-O schema completo fica em [`opencode/llm-router.policy.schema.json`](../opencode/llm-router.policy.schema.json). Ele valida:
+The complete schema is available at
+[`opencode/llm-router.policy.schema.json`](../opencode/llm-router.policy.schema.json).
+It validates:
 
-- versão do formato;
-- nomes dos três perfis;
-- seletores exatos de agentes e modelos;
-- regras `allow`, `ask` e `deny`;
-- limites inteiros e suas faixas;
-- ausência de chaves desconhecidas.
+- the format version;
+- the three profile names;
+- exact agent and model selectors;
+- `allow`, `ask`, and `deny` rules;
+- integer limits and their ranges;
+- the absence of unknown keys.

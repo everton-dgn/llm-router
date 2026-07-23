@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/everton-dgn/llm-router/security/advisories/new
+    about: Report vulnerabilities privately. Do not disclose them in an issue.
+  - name: Support guide
+    url: https://github.com/everton-dgn/llm-router/blob/main/SUPPORT.md
+    about: Choose the correct support channel before opening an issue.

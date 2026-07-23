@@ -1,5 +1,19 @@
 const allowedRoutes = new Set(["minimax", "glm", "claude", "codex"])
 const allowedKeys = new Set(["schema_version", "intent", "route"])
+export const MAX_CLASSIFIER_REQUEST_BYTES = 128 * 1024
+
+export function assertClassifierRequestSize(request) {
+  if (typeof request !== "string" || request.length === 0) {
+    throw new Error("llm-router classifier request must be non-empty text")
+  }
+  const size = Buffer.byteLength(request, "utf8")
+  if (size > MAX_CLASSIFIER_REQUEST_BYTES) {
+    throw new Error(
+      `llm-router classifier request exceeds ${MAX_CLASSIFIER_REQUEST_BYTES} UTF-8 bytes`,
+    )
+  }
+  return size
+}
 
 export function parseClassifierResult(raw) {
   let value

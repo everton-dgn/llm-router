@@ -44,6 +44,15 @@ assert_not_contains() {
   fi
 }
 
+file_mode() {
+  local target=$1
+  if stat -c '%a' "$target" >/dev/null 2>&1; then
+    stat -c '%a' "$target"
+  else
+    stat -f '%Lp' "$target"
+  fi
+}
+
 write_compatible_claude() {
   local target=$1
   printf '%s\n' \
@@ -289,6 +298,16 @@ const parsed = contract.parseClassifierResult(JSON.stringify({
   route: "minimax",
 }))
 if (parsed.route !== "minimax") throw new Error("valid classifier result was not parsed")
+if (contract.assertClassifierRequestSize("small request") !== 13) {
+  throw new Error("classifier request size was not measured in UTF-8 bytes")
+}
+let oversizedRequestRejected = false
+try {
+  contract.assertClassifierRequestSize("x".repeat(contract.MAX_CLASSIFIER_REQUEST_BYTES + 1))
+} catch (error) {
+  oversizedRequestRejected = /exceeds/.test(String(error))
+}
+if (!oversizedRequestRejected) throw new Error("oversized classifier request was accepted")
 
 for (const invalid of [
   "not-json",
@@ -353,17 +372,31 @@ mkdir -p "$CONFIG_DIR/tools" "$CONFIG_DIR/plugins" "$CONFIG_DIR/lib" "$CONFIG_DI
 printf '%s\n' '{"previous":true}' | tee "$CONFIG_DIR/opencode.jsonc" >/dev/null
 printf '%s\n' '{"private":true,"dependencies":{"user-package":"7.0.0","@anthropic-ai/claude-agent-sdk":"0.3.100","@opencode-ai/plugin":"0.1.0","@opencode-ai/sdk":"0.1.0"},"scripts":{"keep":"true"}}' | tee "$CONFIG_DIR/package.json" >/dev/null
 printf '%s\n' 'stale helper' | tee "$CONFIG_DIR/lib/claude_agent.mjs" >/dev/null
-for legacy in \
-  "$CONFIG_DIR/tools/llm_route.ts" \
-  "$CONFIG_DIR/tools/claude_agent.ts" \
-  "$CONFIG_DIR/tools/stage_prepare.ts" \
-  "$CONFIG_DIR/tools/stage_verify.ts" \
-  "$CONFIG_DIR/plugins/llm_router_prompt_guard.ts" \
-  "$CONFIG_DIR/plugins/llm_router_prompt_guard.js" \
-  "$CONFIG_DIR/lib/prompt_guard.mjs" \
-  "$CONFIG_DIR/lib/stage_tools.mjs"; do
-  printf '%s\n' legacy | tee "$legacy" >/dev/null
-done
+printf '%s\n' 'requireRouterRequest parseClassifierResult' \
+  | tee "$CONFIG_DIR/tools/llm_route.ts" >/dev/null
+printf '%s\n' 'runClaudeAgentQuery claude-agent-sdk' \
+  | tee "$CONFIG_DIR/tools/claude_agent.ts" >/dev/null
+printf '%s\n' 'prepareStagePayload runStageVerifier' \
+  | tee "$CONFIG_DIR/tools/stage_prepare.ts" >/dev/null
+printf '%s\n' 'verifyStagePayload runStageVerifier' \
+  | tee "$CONFIG_DIR/tools/stage_verify.ts" >/dev/null
+printf '%s\n' \
+  'import { createRouterPromptGuard } from "../lib/prompt_guard.mjs"' \
+  '' \
+  'export default async function llmRouterPromptGuard() {' \
+  '  return createRouterPromptGuard()' \
+  '}' \
+  | tee "$CONFIG_DIR/plugins/llm_router_prompt_guard.ts" >/dev/null
+printf '%s\n' 'createRouterPromptGuard prompt_guard' \
+  | tee "$CONFIG_DIR/plugins/llm_router_prompt_guard.js" >/dev/null
+printf '%s\n' 'llm-router.prompt-guard.store.v1 createRouterPromptGuard' \
+  | tee "$CONFIG_DIR/lib/prompt_guard.mjs" >/dev/null
+printf '%s\n' 'prepareStagePayload runStageVerifier' \
+  | tee "$CONFIG_DIR/lib/stage_tools.mjs" >/dev/null
+printf '%s\n' 'const OPENCODE_PATH = "/custom/opencode"' \
+  'const description = "Run a delegated stage"' \
+  'custom user tool' \
+  | tee "$CONFIG_DIR/tools/delegate_task.ts" >/dev/null
 BEFORE_DRY_RUN=$(shasum -a 256 "$CONFIG_DIR/opencode.jsonc" "$CONFIG_DIR/package.json")
 
 DRY_RUN_OUTPUT=$(bash "$INSTALLER" \
@@ -376,8 +409,9 @@ DRY_RUN_OUTPUT=$(bash "$INSTALLER" \
 AFTER_DRY_RUN=$(shasum -a 256 "$CONFIG_DIR/opencode.jsonc" "$CONFIG_DIR/package.json")
 [[ "$BEFORE_DRY_RUN" == "$AFTER_DRY_RUN" ]] || fail "dry-run modified target files"
 [[ -e "$CONFIG_DIR/tools/llm_route.ts" ]] || fail "dry-run retired llm_route"
+[[ -e "$CONFIG_DIR/plugins/llm_router_prompt_guard.ts" ]] || fail "dry-run retired prompt guard"
 [[ ! -e "$BACKUP_ROOT" ]] || fail "dry-run created a backup directory"
-[[ "$DRY_RUN_OUTPUT" == *"would retire $CONFIG_DIR/tools/llm_route.ts (with backup)"* ]] || fail "dry-run did not report llm_route retirement"
+[[ "$DRY_RUN_OUTPUT" == *"would retire $CONFIG_DIR/plugins/llm_router_prompt_guard.ts (with backup)"* ]] || fail "dry-run did not report prompt guard retirement"
 
 FIRST_OUTPUT=$(bash "$INSTALLER" \
   --config-dir "$CONFIG_DIR" \
@@ -386,6 +420,7 @@ FIRST_OUTPUT=$(bash "$INSTALLER" \
   --claude-path "$CLAUDE_PATH")
 
 assert_contains "$CONFIG_DIR/plugins/llm_router_handoff.ts" "const ROUTER_PATH = \"$REPO_ROOT/route\""
+assert_contains "$CONFIG_DIR/tools/delegate_task.ts" 'custom user tool'
 cmp -s "$REPO_ROOT/opencode/lib/direct_handoff.mjs" "$CONFIG_DIR/lib/direct_handoff.mjs" || fail "installed handoff helper differs"
 cmp -s "$REPO_ROOT/opencode/lib/adaptive_routing.mjs" "$CONFIG_DIR/lib/adaptive_routing.mjs" || fail "installed adaptive routing helper differs"
 cmp -s "$REPO_ROOT/opencode/lib/execution_policy.mjs" "$CONFIG_DIR/lib/execution_policy.mjs" || fail "installed execution policy helper differs"
@@ -405,22 +440,25 @@ jq -e --arg provider "file://$CONFIG_DIR/providers/claude_agent_provider.mjs" --
   and .provider["router-control"].npm == $control
   and .provider["claude-agent"].options.claudePath == $claude
   and .provider["claude-agent"].models["claude-opus-4-8"].limit == {"context":200000,"output":32000}
+  and .previous == true
   and .default_agent == "router"
   and .agent.router.mode == "primary"
   and .agent["router-auto"].mode == "subagent"
   and .agent["router-manual"].mode == "subagent"
   and .agent.claude.model == "claude-agent/claude-opus-4-8"
 ' "$CONFIG_DIR/opencode.jsonc" >/dev/null || fail "installed Claude provider config is invalid"
-for legacy in \
+[[ ! -e "$CONFIG_DIR/plugins/llm_router_prompt_guard.ts" ]] \
+  || fail "known legacy prompt guard was not retired"
+for preserved in \
   "$CONFIG_DIR/tools/llm_route.ts" \
   "$CONFIG_DIR/tools/claude_agent.ts" \
   "$CONFIG_DIR/tools/stage_prepare.ts" \
   "$CONFIG_DIR/tools/stage_verify.ts" \
-  "$CONFIG_DIR/plugins/llm_router_prompt_guard.ts" \
   "$CONFIG_DIR/plugins/llm_router_prompt_guard.js" \
   "$CONFIG_DIR/lib/prompt_guard.mjs" \
-  "$CONFIG_DIR/lib/stage_tools.mjs"; do
-  [[ ! -e "$legacy" ]] || fail "legacy file was not retired: $legacy"
+  "$CONFIG_DIR/lib/stage_tools.mjs" \
+  "$CONFIG_DIR/tools/delegate_task.ts"; do
+  [[ -e "$preserved" ]] || fail "unrecognized legacy-path file was retired: $preserved"
 done
 
 jq -e '.dependencies["user-package"] == "7.0.0"' "$CONFIG_DIR/package.json" >/dev/null || fail "package merge removed user dependency"
@@ -432,11 +470,11 @@ jq -e '.dependencies["@anthropic-ai/claude-agent-sdk"] == "0.3.216"' "$CONFIG_DI
 printf '%s\n' '{"schemaVersion":1,"defaultProfile":"full"}' | tee "$CONFIG_DIR/llm-router.policy.json" >/dev/null
 
 BACKUP_CONFIG=$(find "$BACKUP_ROOT" -type f -name opencode.jsonc -print)
-BACKUP_ROUTE=$(find "$BACKUP_ROOT" -type f -name llm_route.ts -print)
+BACKUP_ROUTE=$(find "$BACKUP_ROOT" -type f -name llm_router_prompt_guard.ts -print)
 [[ -n "$BACKUP_CONFIG" ]] || fail "changed config was not backed up"
-[[ -n "$BACKUP_ROUTE" ]] || fail "retired route tool was not backed up"
-[[ "$(stat -f '%Lp' "$BACKUP_ROOT")" == "700" ]] || fail "backup root permissions are not 0700"
-[[ "$(stat -f '%Lp' "$BACKUP_CONFIG")" == "600" ]] || fail "backup file permissions are not 0600"
+[[ -n "$BACKUP_ROUTE" ]] || fail "retired prompt guard was not backed up"
+[[ "$(file_mode "$BACKUP_ROOT")" == "700" ]] || fail "backup root permissions are not 0700"
+[[ "$(file_mode "$BACKUP_CONFIG")" == "600" ]] || fail "backup file permissions are not 0600"
 BACKUP_COUNT_BEFORE=$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -print | wc -l | tr -d ' ')
 
 SECOND_OUTPUT=$(bash "$INSTALLER" \

@@ -1,4 +1,4 @@
-"""Normalização e validação de datasets, rotas e seleção."""
+"""Normalize and validate datasets, routes, and selections."""
 
 from __future__ import annotations
 
@@ -14,19 +14,19 @@ from qeval.errors import EvaluationError
 
 def _non_empty_string(value: Any, path: str) -> str:
     if not isinstance(value, str) or not value:
-        raise EvaluationError(f"{path} precisa ser uma string não vazia")
+        raise EvaluationError(f"{path} must be a non-empty string")
     return value
 
 
 def _positive_int(value: Any, path: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
-        raise EvaluationError(f"{path} precisa ser um inteiro positivo")
+        raise EvaluationError(f"{path} must be a positive integer")
     return value
 
 
 def _positive_or_zero_int(value: Any, path: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-        raise EvaluationError(f"{path} precisa ser um inteiro maior ou igual a zero")
+        raise EvaluationError(f"{path} must be an integer greater than or equal to zero")
     return value
 
 
@@ -36,7 +36,7 @@ def _finite_number(value: Any, path: str) -> float:
         or isinstance(value, bool)
         or not math.isfinite(float(value))
     ):
-        raise EvaluationError(f"{path} precisa ser um número finito")
+        raise EvaluationError(f"{path} must be a finite number")
     return float(value)
 
 
@@ -44,27 +44,27 @@ def _safe_relative_path(value: Any, path: str) -> str:
     raw = _non_empty_string(value, path)
     candidate = Path(raw)
     if candidate == Path(".") or candidate.is_absolute() or ".." in candidate.parts:
-        raise EvaluationError(f"{path} precisa apontar para um caminho relativo seguro")
+        raise EvaluationError(f"{path} must point to a safe relative path")
     return raw
 
 
 def _assertion_type(assertion: dict[str, Any], path: str) -> str:
     if assertion.get("type") == "python_hidden_tests" or "python_hidden_tests" in assertion:
         raise EvaluationError(
-            f"{path}.type python_hidden_tests foi removido; use python_behavior"
+            f"{path}.type python_hidden_tests was removed; use python_behavior"
         )
     explicit = assertion.get("type")
     compact = [name for name in constants.ASSERTION_TYPES if name in assertion]
     if explicit is not None:
         kind = _non_empty_string(explicit, f"{path}.type")
         if compact and any(name != kind for name in compact):
-            raise EvaluationError(f"{path} mistura tipos de assertion")
+            raise EvaluationError(f"{path} mixes assertion types")
     elif len(compact) == 1:
         kind = compact[0]
     else:
-        raise EvaluationError(f"{path} precisa declarar exatamente um tipo de assertion")
+        raise EvaluationError(f"{path} must declare exactly one assertion type")
     if kind not in constants.ASSERTION_TYPES:
-        raise EvaluationError(f"{path}.type desconhecido: {kind}")
+        raise EvaluationError(f"unknown {path}.type: {kind}")
     return kind
 
 
@@ -74,23 +74,23 @@ def _normalized_sandboxed_command_argv(value: Any, path: str) -> list[str]:
         or not value
         or not all(isinstance(item, str) for item in value)
     ):
-        raise EvaluationError(f"{path} precisa ser uma lista não vazia de strings")
+        raise EvaluationError(f"{path} must be a non-empty list of strings")
     argv = list(value)
     if argv[: len(constants.SANDBOXED_COMMAND_PREFIX)] != constants.SANDBOXED_COMMAND_PREFIX:
         raise EvaluationError(
-            f"{path} está desabilitado fora do prefixo seguro "
+            f"{path} is disabled outside the safe prefix "
             "uv run --no-project --no-python-downloads python"
         )
     payload = argv[len(constants.SANDBOXED_COMMAND_PREFIX) :]
     if len(payload) == 1:
         script = _safe_relative_path(payload[0], f"{path}[5]")
         if Path(script).suffix != ".py":
-            raise EvaluationError(f"{path} aceita somente um script Python relativo ou -c")
+            raise EvaluationError(f"{path} accepts only a relative Python script or -c")
     elif len(payload) == 2 and payload[0] == "-c":
         _non_empty_string(payload[1], f"{path}[6]")
     else:
         raise EvaluationError(
-            f"{path} aceita somente um script Python relativo ou -c após o prefixo seguro"
+            f"{path} accepts only a relative Python script or -c after the safe prefix"
         )
     return argv
 
@@ -104,7 +104,7 @@ def _safe_python_symbol_path(value: Any, path: str) -> str:
         for segment in segments
     ):
         raise EvaluationError(
-            f"{path} precisa conter somente identificadores Python sem acesso dunder"
+            f"{path} must contain only Python identifiers without dunder access"
         )
     return raw
 
@@ -113,13 +113,13 @@ def _json_serializable_value(value: Any, path: str) -> Any:
     try:
         json.dumps(value, ensure_ascii=False, allow_nan=False)
     except (TypeError, ValueError) as error:
-        raise EvaluationError(f"{path} precisa ser serializável como JSON") from error
+        raise EvaluationError(f"{path} must be JSON-serializable") from error
     return value
 
 
 def _normalized_assertion(assertion: Any, path: str) -> dict[str, Any]:
     if not isinstance(assertion, dict):
-        raise EvaluationError(f"{path} precisa ser um objeto")
+        raise EvaluationError(f"{path} must be an object")
     result = dict(assertion)
     kind = _assertion_type(result, path)
     compact_payload = result.get(kind)
@@ -130,11 +130,11 @@ def _normalized_assertion(assertion: Any, path: str) -> dict[str, Any]:
         elif kind in {"output_regex", "output_not_regex"}:
             result.setdefault("pattern", compact_payload)
         elif kind in {"file_regex", "file_not_regex"}:
-            raise EvaluationError(f"{path}.{kind} precisa ser um objeto")
+            raise EvaluationError(f"{path}.{kind} must be an object")
         elif kind == "command":
             result.setdefault("argv", compact_payload)
         elif kind not in {"output_json_equals", "output_json_one_of"}:
-            raise EvaluationError(f"{path}.{kind} precisa ser um objeto")
+            raise EvaluationError(f"{path}.{kind} must be an object")
     result["type"] = kind
 
     weight = result.get("weight", 1)
@@ -144,25 +144,25 @@ def _normalized_assertion(assertion: Any, path: str) -> dict[str, Any]:
         or not math.isfinite(float(weight))
         or weight <= 0
     ):
-        raise EvaluationError(f"{path}.weight precisa ser um número positivo e finito")
+        raise EvaluationError(f"{path}.weight must be a positive finite number")
     result["weight"] = float(weight)
     critical = result.get("critical", False)
     if not isinstance(critical, bool):
-        raise EvaluationError(f"{path}.critical precisa ser booleano")
+        raise EvaluationError(f"{path}.critical must be a boolean")
     result["critical"] = critical
     if "turn" in result:
         turn = result["turn"]
         if not isinstance(turn, int) or isinstance(turn, bool) or turn not in {1, 2}:
-            raise EvaluationError(f"{path}.turn precisa ser 1 ou 2")
+            raise EvaluationError(f"{path}.turn must be 1 or 2")
 
     if kind in {"output_json_equals", "output_json_one_of"}:
         result["path"] = _non_empty_string(result.get("path"), f"{path}.path")
         if "expected" not in result:
-            raise EvaluationError(f"{path}.expected é obrigatório")
+            raise EvaluationError(f"{path}.expected is required")
         if kind == "output_json_one_of" and (
             not isinstance(result["expected"], list) or not result["expected"]
         ):
-            raise EvaluationError(f"{path}.expected precisa ser uma lista não vazia")
+            raise EvaluationError(f"{path}.expected must be a non-empty list")
     elif kind in {"output_regex", "output_not_regex"}:
         result["pattern"] = _non_empty_string(result.get("pattern"), f"{path}.pattern")
     elif kind in {"file_regex", "file_not_regex"}:
@@ -177,13 +177,13 @@ def _normalized_assertion(assertion: Any, path: str) -> dict[str, Any]:
         result["minimum"] = _positive_or_zero_int(result.get("minimum"), f"{path}.minimum")
         result["maximum"] = _positive_or_zero_int(result.get("maximum"), f"{path}.maximum")
         if result["minimum"] > result["maximum"]:
-            raise EvaluationError(f"{path}.minimum precisa ser menor ou igual a maximum")
+            raise EvaluationError(f"{path}.minimum must be less than or equal to maximum")
     elif kind in {"output_regex_count"}:
         result["pattern"] = _non_empty_string(result.get("pattern"), f"{path}.pattern")
         result["minimum"] = _positive_or_zero_int(result.get("minimum"), f"{path}.minimum")
         result["maximum"] = _positive_or_zero_int(result.get("maximum"), f"{path}.maximum")
         if result["minimum"] > result["maximum"]:
-            raise EvaluationError(f"{path}.minimum precisa ser menor ou igual a maximum")
+            raise EvaluationError(f"{path}.minimum must be less than or equal to maximum")
     elif kind in {
         "output_character_count_range",
         "output_json_length_range",
@@ -194,7 +194,7 @@ def _normalized_assertion(assertion: Any, path: str) -> dict[str, Any]:
         result["minimum"] = _finite_number(result.get("minimum"), f"{path}.minimum")
         result["maximum"] = _finite_number(result.get("maximum"), f"{path}.maximum")
         if result["minimum"] > result["maximum"]:
-            raise EvaluationError(f"{path}.minimum precisa ser menor ou igual a maximum")
+            raise EvaluationError(f"{path}.minimum must be less than or equal to maximum")
     elif kind == "output_json_length":
         result["path"] = _non_empty_string(result.get("path"), f"{path}.path")
         result["expected"] = _positive_or_zero_int(result.get("expected"), f"{path}.expected")
@@ -215,7 +215,7 @@ def _normalized_assertion(assertion: Any, path: str) -> dict[str, Any]:
         result["path"] = _non_empty_string(result.get("path"), f"{path}.path")
         allowed = result.get("allowed")
         if not isinstance(allowed, list) or not allowed:
-            raise EvaluationError(f"{path}.allowed precisa ser uma lista não vazia")
+            raise EvaluationError(f"{path}.allowed must be a non-empty list")
         result["allowed"] = allowed
     elif kind == "output_json_all_match":
         result["path"] = _non_empty_string(result.get("path"), f"{path}.path")
@@ -225,7 +225,7 @@ def _normalized_assertion(assertion: Any, path: str) -> dict[str, Any]:
             or not required_keys
             or not all(isinstance(item, str) and item for item in required_keys)
         ):
-            raise EvaluationError(f"{path}.required_keys precisa ser uma lista de strings")
+            raise EvaluationError(f"{path}.required_keys must be a list of strings")
         result["required_keys"] = required_keys
     elif kind == "output_json_all_non_empty":
         result["path"] = _non_empty_string(result.get("path"), f"{path}.path")
@@ -235,7 +235,7 @@ def _normalized_assertion(assertion: Any, path: str) -> dict[str, Any]:
             or not required_keys
             or not all(isinstance(item, str) and item for item in required_keys)
         ):
-            raise EvaluationError(f"{path}.required_keys precisa ser uma lista de strings")
+            raise EvaluationError(f"{path}.required_keys must be a list of strings")
         result["required_keys"] = required_keys
     elif kind in {"output_all_patterns", "output_json_all_patterns"}:
         if kind == "output_json_all_patterns":
@@ -246,7 +246,7 @@ def _normalized_assertion(assertion: Any, path: str) -> dict[str, Any]:
             or not patterns
             or not all(isinstance(item, str) and item for item in patterns)
         ):
-            raise EvaluationError(f"{path}.patterns precisa ser uma lista de strings")
+            raise EvaluationError(f"{path}.patterns must be a list of strings")
         result["patterns"] = patterns
     elif kind == "output_json_ends_with_path":
         result["text_path"] = _non_empty_string(
@@ -257,7 +257,7 @@ def _normalized_assertion(assertion: Any, path: str) -> dict[str, Any]:
         )
         require_non_empty = result.get("require_non_empty", False)
         if not isinstance(require_non_empty, bool):
-            raise EvaluationError(f"{path}.require_non_empty precisa ser booleano")
+            raise EvaluationError(f"{path}.require_non_empty must be a boolean")
         result["require_non_empty"] = require_non_empty
     elif kind == "output_json_last_item_regex":
         result["path"] = _non_empty_string(result.get("path"), f"{path}.path")
@@ -269,7 +269,7 @@ def _normalized_assertion(assertion: Any, path: str) -> dict[str, Any]:
             or not paths
             or not all(isinstance(item, str) and item for item in paths)
         ):
-            raise EvaluationError(f"{path}.paths precisa ser uma lista de strings")
+            raise EvaluationError(f"{path}.paths must be a list of strings")
         result["paths"] = paths
         if kind == "output_each_regex":
             result["pattern"] = _non_empty_string(result.get("pattern"), f"{path}.pattern")
@@ -280,37 +280,37 @@ def _normalized_assertion(assertion: Any, path: str) -> dict[str, Any]:
     elif kind == "python_behavior":
         raw_probes = result.get("probes")
         if not isinstance(raw_probes, list) or not raw_probes:
-            raise EvaluationError(f"{path}.probes precisa ser uma lista não vazia")
+            raise EvaluationError(f"{path}.probes must be a non-empty list")
         probes: list[dict[str, Any]] = []
         probe_ids: set[str] = set()
         for probe_index, raw_probe in enumerate(raw_probes):
             probe_path = f"{path}.probes[{probe_index}]"
             if not isinstance(raw_probe, dict):
-                raise EvaluationError(f"{probe_path} precisa ser um objeto")
+                raise EvaluationError(f"{probe_path} must be an object")
             probe_id = _non_empty_string(raw_probe.get("id"), f"{probe_path}.id")
             if probe_id in probe_ids:
-                raise EvaluationError(f"{path}.probes possui id duplicado: {probe_id}")
+                raise EvaluationError(f"{path}.probes has a duplicate id: {probe_id}")
             probe_ids.add(probe_id)
             args = raw_probe.get("args", [])
             kwargs = raw_probe.get("kwargs", {})
             if not isinstance(args, list):
-                raise EvaluationError(f"{probe_path}.args precisa ser uma lista")
+                raise EvaluationError(f"{probe_path}.args must be a list")
             if not isinstance(kwargs, dict) or not all(
                 isinstance(key, str) for key in kwargs
             ):
                 raise EvaluationError(
-                    f"{probe_path}.kwargs precisa ser um objeto com chaves string"
+                    f"{probe_path}.kwargs must be an object with string keys"
                 )
             has_return = "expected_return" in raw_probe
             has_type = "expected_type" in raw_probe
             has_exception = "expected_exception" in raw_probe
             if has_exception and (has_return or has_type):
                 raise EvaluationError(
-                    f"{probe_path} não pode combinar expected_exception com retorno ou tipo"
+                    f"{probe_path} cannot combine expected_exception with a return value or type"
                 )
             if not has_exception and not (has_return or has_type):
                 raise EvaluationError(
-                    f"{probe_path} precisa declarar expected_return, expected_type ou expected_exception"
+                    f"{probe_path} must declare expected_return, expected_type, or expected_exception"
                 )
             probe: dict[str, Any] = {
                 "id": probe_id,
@@ -340,7 +340,7 @@ def _normalized_assertion(assertion: Any, path: str) -> dict[str, Any]:
         timeout = result.get("timeout_seconds", 10)
         result["timeout_seconds"] = _finite_number(timeout, f"{path}.timeout_seconds")
         if result["timeout_seconds"] <= 0 or result["timeout_seconds"] > 30:
-            raise EvaluationError(f"{path}.timeout_seconds precisa estar entre 0 e 30")
+            raise EvaluationError(f"{path}.timeout_seconds must be between 0 and 30")
     elif kind == "python_test_mutants":
         result["test_file"] = _safe_relative_path(
             result.get("test_file"), f"{path}.test_file"
@@ -350,16 +350,16 @@ def _normalized_assertion(assertion: Any, path: str) -> dict[str, Any]:
         )
         raw_mutants = result.get("mutants")
         if not isinstance(raw_mutants, list) or not raw_mutants:
-            raise EvaluationError(f"{path}.mutants precisa ser uma lista não vazia")
+            raise EvaluationError(f"{path}.mutants must be a non-empty list")
         mutants: list[dict[str, str]] = []
         mutant_ids: set[str] = set()
         for mutant_index, raw_mutant in enumerate(raw_mutants):
             mutant_path = f"{path}.mutants[{mutant_index}]"
             if not isinstance(raw_mutant, dict):
-                raise EvaluationError(f"{mutant_path} precisa ser um objeto")
+                raise EvaluationError(f"{mutant_path} must be an object")
             mutant_id = _non_empty_string(raw_mutant.get("id"), f"{mutant_path}.id")
             if mutant_id in mutant_ids:
-                raise EvaluationError(f"{path} possui mutant id duplicado: {mutant_id}")
+                raise EvaluationError(f"{path} has a duplicate mutant id: {mutant_id}")
             mutant_ids.add(mutant_id)
             mutants.append(
                 {
@@ -373,18 +373,18 @@ def _normalized_assertion(assertion: Any, path: str) -> dict[str, Any]:
         timeout = result.get("timeout_seconds", 10)
         result["timeout_seconds"] = _finite_number(timeout, f"{path}.timeout_seconds")
         if result["timeout_seconds"] <= 0 or result["timeout_seconds"] > 30:
-            raise EvaluationError(f"{path}.timeout_seconds precisa estar entre 0 e 30")
+            raise EvaluationError(f"{path}.timeout_seconds must be between 0 and 30")
     elif kind == "command":
         result["argv"] = _normalized_sandboxed_command_argv(
             result.get("argv"), f"{path}.argv"
         )
         expected_exit = result.get("expected_exit", 0)
         if not isinstance(expected_exit, int) or isinstance(expected_exit, bool):
-            raise EvaluationError(f"{path}.expected_exit precisa ser um inteiro")
+            raise EvaluationError(f"{path}.expected_exit must be an integer")
         timeout = result.get("timeout_seconds", 30)
         timeout = _finite_number(timeout, f"{path}.timeout_seconds")
         if timeout <= 0 or timeout > 30:
-            raise EvaluationError(f"{path}.timeout_seconds precisa estar entre 0 e 30")
+            raise EvaluationError(f"{path}.timeout_seconds must be between 0 and 30")
         result["expected_exit"] = expected_exit
         result["timeout_seconds"] = timeout
     return result
@@ -394,7 +394,7 @@ def _normalized_human_evaluation(value: Any, path: str) -> dict[str, Any] | None
     if value is None:
         return None
     if not isinstance(value, dict):
-        raise EvaluationError(f"{path} precisa ser um objeto")
+        raise EvaluationError(f"{path} must be an object")
     result: dict[str, Any] = {}
     for key in (
         "blind",
@@ -404,11 +404,11 @@ def _normalized_human_evaluation(value: Any, path: str) -> dict[str, Any] | None
     ):
         raw_flag = value.get(key)
         if not isinstance(raw_flag, bool):
-            raise EvaluationError(f"{path}.{key} precisa ser booleano")
+            raise EvaluationError(f"{path}.{key} must be a boolean")
         result[key] = raw_flag
     raw_scale = value.get("dimension_scale")
     if not isinstance(raw_scale, dict):
-        raise EvaluationError(f"{path}.dimension_scale precisa ser um objeto")
+        raise EvaluationError(f"{path}.dimension_scale must be an object")
     minimum = _finite_number(
         raw_scale.get("minimum"), f"{path}.dimension_scale.minimum"
     )
@@ -417,7 +417,7 @@ def _normalized_human_evaluation(value: Any, path: str) -> dict[str, Any] | None
     )
     if minimum >= maximum:
         raise EvaluationError(
-            f"{path}.dimension_scale.minimum precisa ser menor que maximum"
+            f"{path}.dimension_scale.minimum must be less than maximum"
         )
     result["dimension_scale"] = {"minimum": minimum, "maximum": maximum}
     return result
@@ -435,21 +435,21 @@ def _normalized_human_rubric(
         raw_scale = value.get("scale")
         instructions = value.get("instructions")
     else:
-        raise EvaluationError(f"{path} precisa ser um objeto ou uma lista")
+        raise EvaluationError(f"{path} must be an object or a list")
     if not isinstance(raw_criteria, list) or not raw_criteria:
-        raise EvaluationError(f"{path}.criteria precisa ser uma lista não vazia")
+        raise EvaluationError(f"{path}.criteria must be a non-empty list")
     criteria: list[dict[str, Any]] = []
     criterion_ids: set[str] = set()
     for index, raw_criterion in enumerate(raw_criteria):
         criterion_path = f"{path}.criteria[{index}]"
         if not isinstance(raw_criterion, dict):
-            raise EvaluationError(f"{criterion_path} precisa ser um objeto")
+            raise EvaluationError(f"{criterion_path} must be an object")
         criterion_id = _non_empty_string(
             raw_criterion.get("id", raw_criterion.get("dimension")),
             f"{criterion_path}.id",
         )
         if criterion_id in criterion_ids:
-            raise EvaluationError(f"{path} possui critério duplicado: {criterion_id}")
+            raise EvaluationError(f"{path} has a duplicate criterion: {criterion_id}")
         criterion_ids.add(criterion_id)
         criteria.append(
             {
@@ -461,17 +461,17 @@ def _normalized_human_rubric(
             }
         )
         if criteria[-1]["weight"] <= 0:
-            raise EvaluationError(f"{criterion_path}.weight precisa ser positivo")
+            raise EvaluationError(f"{criterion_path}.weight must be positive")
     weight_sum = sum(criterion["weight"] for criterion in criteria)
     if not math.isclose(weight_sum, 100.0, abs_tol=1e-6):
-        raise EvaluationError(f"{path}.criteria precisa totalizar peso 100")
+        raise EvaluationError(f"{path}.criteria weights must total 100")
 
     if not isinstance(raw_scale, dict):
-        raise EvaluationError(f"{path}.scale precisa ser um objeto")
+        raise EvaluationError(f"{path}.scale must be an object")
     scale_min = _finite_number(raw_scale.get("min"), f"{path}.scale.min")
     scale_max = _finite_number(raw_scale.get("max"), f"{path}.scale.max")
     if scale_min >= scale_max:
-        raise EvaluationError(f"{path}.scale.min precisa ser menor que scale.max")
+        raise EvaluationError(f"{path}.scale.min must be less than scale.max")
     result: dict[str, Any] = {
         "criteria": criteria,
         "scale": {"min": scale_min, "max": scale_max},
@@ -486,11 +486,11 @@ def _normalized_human_rubric(
 def validate_dataset(raw: Any) -> dict[str, Any]:
     """Validate and normalize a version 1 or version 2 quality dataset."""
     if not isinstance(raw, dict):
-        raise EvaluationError("dataset precisa ser um objeto JSON")
+        raise EvaluationError("dataset must be a JSON object")
     dataset_version = raw.get("version")
     if dataset_version not in constants.SUPPORTED_DATASET_VERSIONS:
         supported = ", ".join(str(version) for version in sorted(constants.SUPPORTED_DATASET_VERSIONS))
-        raise EvaluationError(f"dataset.version precisa ser um destes valores: {supported}")
+        raise EvaluationError(f"dataset.version must be one of these values: {supported}")
     raw_canary = raw.get("canary")
     canary = (
         _non_empty_string(raw_canary, "dataset.canary") if raw_canary is not None else None
@@ -513,17 +513,17 @@ def validate_dataset(raw: Any) -> dict[str, Any]:
     )
     raw_cases = raw.get("cases")
     if not isinstance(raw_cases, list) or not raw_cases:
-        raise EvaluationError("dataset.cases precisa ser uma lista não vazia")
+        raise EvaluationError("dataset.cases must be a non-empty list")
 
     case_ids: set[str] = set()
     cases: list[dict[str, Any]] = []
     for case_index, raw_case in enumerate(raw_cases):
         case_path = f"dataset.cases[{case_index}]"
         if not isinstance(raw_case, dict):
-            raise EvaluationError(f"{case_path} precisa ser um objeto")
+            raise EvaluationError(f"{case_path} must be an object")
         case_id = _non_empty_string(raw_case.get("id"), f"{case_path}.id")
         if case_id in case_ids:
-            raise EvaluationError(f"case id duplicado: {case_id}")
+            raise EvaluationError(f"duplicate case id: {case_id}")
         case_ids.add(case_id)
         category = _non_empty_string(raw_case.get("category"), f"{case_path}.category")
         raw_case_canary = raw_case.get("canary")
@@ -544,7 +544,7 @@ def validate_dataset(raw: Any) -> dict[str, Any]:
             if difficulty not in constants.DIFFICULTIES:
                 allowed = ", ".join(sorted(constants.DIFFICULTIES))
                 raise EvaluationError(
-                    f"{case_path}.difficulty precisa ser um destes valores: {allowed}"
+                    f"{case_path}.difficulty must be one of these values: {allowed}"
                 )
             evaluation_mode = _non_empty_string(
                 raw_case.get("evaluation_mode"), f"{case_path}.evaluation_mode"
@@ -552,25 +552,25 @@ def validate_dataset(raw: Any) -> dict[str, Any]:
             if evaluation_mode not in constants.EVALUATION_MODES:
                 allowed = ", ".join(sorted(constants.EVALUATION_MODES))
                 raise EvaluationError(
-                    f"{case_path}.evaluation_mode precisa ser um destes valores: {allowed}"
+                    f"{case_path}.evaluation_mode must be one of these values: {allowed}"
                 )
             has_prompt = "prompt" in raw_case
             has_turns = "turns" in raw_case
             if has_prompt == has_turns:
                 raise EvaluationError(
-                    f"{case_path} precisa declarar exatamente um entre prompt e turns"
+                    f"{case_path} must declare exactly one of prompt and turns"
                 )
             if has_prompt:
                 turns = [_non_empty_string(raw_case.get("prompt"), f"{case_path}.prompt")]
             else:
                 raw_turns = raw_case.get("turns")
                 if not isinstance(raw_turns, list) or len(raw_turns) not in {1, 2}:
-                    raise EvaluationError(f"{case_path}.turns precisa conter 1 ou 2 turnos")
+                    raise EvaluationError(f"{case_path}.turns must contain 1 or 2 turns")
                 turns = []
                 for turn_index, raw_turn in enumerate(raw_turns):
                     turn_path = f"{case_path}.turns[{turn_index}]"
                     if not isinstance(raw_turn, dict):
-                        raise EvaluationError(f"{turn_path} precisa ser um objeto")
+                        raise EvaluationError(f"{turn_path} must be an object")
                     turn_value = raw_turn.get("user", raw_turn.get("prompt"))
                     turns.append(_non_empty_string(turn_value, f"{turn_path}.prompt"))
             raw_human_rubric = raw_case.get("human_rubric")
@@ -593,21 +593,21 @@ def validate_dataset(raw: Any) -> dict[str, Any]:
         prompt = turns[0]
         role = raw_case.get("role", "judge")
         if role not in {"judge", "worker"}:
-            raise EvaluationError(f"{case_path}.role precisa ser judge ou worker")
+            raise EvaluationError(f"{case_path}.role must be judge or worker")
         raw_files = raw_case.get("files", {})
         if not isinstance(raw_files, dict):
-            raise EvaluationError(f"{case_path}.files precisa ser um objeto")
+            raise EvaluationError(f"{case_path}.files must be an object")
         files: dict[str, str] = {}
         for file_path, content in raw_files.items():
             normalized_path = _safe_relative_path(file_path, f"{case_path}.files")
             if not isinstance(content, str):
-                raise EvaluationError(f"{case_path}.files[{file_path}] precisa ser uma string")
+                raise EvaluationError(f"{case_path}.files[{file_path}] must be a string")
             files[normalized_path] = content
         raw_allowed_files = raw_case.get("allowed_files", [])
         if not isinstance(raw_allowed_files, list) or not all(
             isinstance(item, str) for item in raw_allowed_files
         ):
-            raise EvaluationError(f"{case_path}.allowed_files precisa ser uma lista de strings")
+            raise EvaluationError(f"{case_path}.allowed_files must be a list of strings")
         allowed_files = [
             _safe_relative_path(item, f"{case_path}.allowed_files[{allowed_index}]")
             for allowed_index, item in enumerate(raw_allowed_files)
@@ -615,8 +615,8 @@ def validate_dataset(raw: Any) -> dict[str, Any]:
         raw_assertions = raw_case.get("assertions", [])
         assertions_required = dataset_version == 1 or evaluation_mode in {"objective", "hybrid"}
         if not isinstance(raw_assertions, list) or (assertions_required and not raw_assertions):
-            requirement = "uma lista não vazia" if assertions_required else "uma lista"
-            raise EvaluationError(f"{case_path}.assertions precisa ser {requirement}")
+            requirement = "a non-empty list" if assertions_required else "a list"
+            raise EvaluationError(f"{case_path}.assertions must be {requirement}")
         assertions = [
             _normalized_assertion(item, f"{case_path}.assertions[{assertion_index}]")
             for assertion_index, item in enumerate(raw_assertions)
@@ -651,9 +651,9 @@ def load_dataset(path: Path) -> dict[str, Any]:
         with path.open(encoding="utf-8") as stream:
             raw = json.load(stream)
     except OSError as error:
-        raise EvaluationError(f"não foi possível ler dataset: {error}") from error
+        raise EvaluationError(f"could not read dataset: {error}") from error
     except json.JSONDecodeError as error:
-        raise EvaluationError(f"dataset JSON inválido: {error}") from error
+        raise EvaluationError(f"invalid dataset JSON: {error}") from error
     return validate_dataset(raw)
 
 
@@ -662,29 +662,29 @@ def validate_routes(
 ) -> list[str]:
     raw_routes = config.get("routes")
     if not isinstance(raw_routes, list) or not raw_routes:
-        raise EvaluationError("config.routes precisa ser uma lista não vazia")
+        raise EvaluationError("config.routes must be a non-empty list")
     if requested is not None:
         if not requested:
-            raise EvaluationError("--routes precisa conter ao menos uma rota")
+            raise EvaluationError("--routes must contain at least one route")
         if len(set(requested)) != len(requested):
-            raise EvaluationError("--routes contém rota duplicada")
+            raise EvaluationError("--routes contains a duplicate route")
     requested_names = set(requested or [])
     roles_to_validate = {"worker"} if required_roles is None else required_roles
     available: list[str] = []
     for index, route in enumerate(raw_routes):
         if not isinstance(route, dict):
-            raise EvaluationError(f"config.routes[{index}] precisa ser um objeto")
+            raise EvaluationError(f"config.routes[{index}] must be an object")
         name = _non_empty_string(route.get("name"), f"config.routes[{index}].name")
         if name in available:
-            raise EvaluationError(f"rota duplicada na config: {name}")
+            raise EvaluationError(f"duplicate route in config: {name}")
         headless = route.get("headless")
         if not isinstance(headless, dict):
-            raise EvaluationError(f"rota {name} não possui routes[].headless")
+            raise EvaluationError(f"route {name} has no routes[].headless")
         if requested is None or name in requested_names:
             for role in roles_to_validate:
                 if not isinstance(headless.get(role), dict):
                     raise EvaluationError(
-                        f"rota {name} não possui routes[].headless.{role}"
+                        f"route {name} has no routes[].headless.{role}"
                     )
         available.append(name)
     if requested is None:
@@ -692,7 +692,7 @@ def validate_routes(
     selected: list[str] = []
     for name in requested:
         if name not in available:
-            raise EvaluationError(f"rota desconhecida em --routes: {name}")
+            raise EvaluationError(f"unknown route in --routes: {name}")
         selected.append(name)
     return selected
 
@@ -702,7 +702,7 @@ def parse_routes(value: str | None) -> list[str] | None:
         return None
     routes = [item.strip() for item in value.split(",")]
     if not routes or any(not item for item in routes):
-        raise EvaluationError("--routes precisa ser uma lista CSV de nomes não vazios")
+        raise EvaluationError("--routes must be a CSV list of non-empty names")
     return routes
 
 
@@ -710,15 +710,15 @@ def validate_selection(
     raw: Any, dataset: dict[str, Any], routes: list[str]
 ) -> dict[str, list[str]]:
     if not isinstance(raw, dict) or raw.get("version") != 1:
-        raise EvaluationError("seleção precisa ser um objeto com version=1")
+        raise EvaluationError("selection must be an object with version=1")
     raw_cases = raw.get("cases")
     if not isinstance(raw_cases, dict) or not raw_cases:
-        raise EvaluationError("selection.cases precisa ser um objeto não vazio")
+        raise EvaluationError("selection.cases must be a non-empty object")
     known_cases = {case["id"] for case in dataset["cases"]}
     unknown_cases = sorted(set(raw_cases) - known_cases)
     if unknown_cases:
         raise EvaluationError(
-            f"seleção contém casos desconhecidos: {', '.join(unknown_cases)}"
+            f"selection contains unknown cases: {', '.join(unknown_cases)}"
         )
     normalized: dict[str, list[str]] = {}
     for case_id, selected_routes in raw_cases.items():
@@ -728,14 +728,14 @@ def validate_selection(
             or not all(isinstance(route, str) and route for route in selected_routes)
         ):
             raise EvaluationError(
-                f"selection.cases.{case_id} precisa ser uma lista não vazia de rotas"
+                f"selection.cases.{case_id} must be a non-empty list of routes"
             )
         if len(set(selected_routes)) != len(selected_routes):
-            raise EvaluationError(f"selection.cases.{case_id} contém rotas duplicadas")
+            raise EvaluationError(f"selection.cases.{case_id} contains duplicate routes")
         unknown_routes = sorted(set(selected_routes) - set(routes))
         if unknown_routes:
             raise EvaluationError(
-                f"selection.cases.{case_id} contém rotas indisponíveis: "
+                f"selection.cases.{case_id} contains unavailable routes: "
                 f"{', '.join(unknown_routes)}"
             )
         normalized[case_id] = [route for route in routes if route in selected_routes]
@@ -749,7 +749,7 @@ def load_selection(
         with path.open(encoding="utf-8") as stream:
             raw = json.load(stream)
     except OSError as error:
-        raise EvaluationError(f"não foi possível ler seleção: {error}") from error
+        raise EvaluationError(f"could not read selection: {error}") from error
     except json.JSONDecodeError as error:
-        raise EvaluationError(f"seleção JSON inválida: {error}") from error
+        raise EvaluationError(f"invalid selection JSON: {error}") from error
     return validate_selection(raw, dataset, routes)
