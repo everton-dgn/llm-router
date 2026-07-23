@@ -17,7 +17,7 @@ directory are maintained in English.
 | [Uninstall and rollback](uninstall.md) | Restore a backup or remove the installed bundle | English |
 | [Development](development.md) | Repository setup, validation, and contribution workflow | English |
 | [Release](RELEASE.md) | Changelog, SemVer, tags, and GitHub Releases | English |
-| [Public repository checklist](publication-checklist.md) | Visibility, security channel, and launch gates | English |
+| [Public repository checklist](publication-checklist.md) | Repository controls, security reporting, and publication maintenance | English |
 | [Benchmark](../BENCHMARK.md) | Offline methodology, results, and limitations | English |
 
 ## Mental model

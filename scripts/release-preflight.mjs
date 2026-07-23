@@ -77,50 +77,6 @@ export function assertReleaseSourceReady({ runGit = runGitCommand } = {}) {
   return state
 }
 
-export function assertReleasePushReady({
-  expectedSubject,
-  runGit = runGitCommand
-}) {
-  const state = inspectReleaseCheckout(runGit)
-  const parent = requireGitOutput(
-    runGit,
-    ['rev-parse', '--verify', 'HEAD^1^{commit}'],
-    'the release commit parent'
-  )
-  if (parent !== state.advertisedMain) {
-    throw new Error(
-      `Release commit must be directly based on origin/main ${state.advertisedMain}`
-    )
-  }
-  const subject = requireGitOutput(
-    runGit,
-    ['log', '-1', '--format=%s'],
-    'the release commit subject'
-  )
-  if (subject !== expectedSubject) {
-    throw new Error(`Unexpected release commit subject: ${subject}`)
-  }
-  const changedFiles = runGit([
-    'diff-tree',
-    '--no-commit-id',
-    '--name-only',
-    '-r',
-    'HEAD'
-  ])
-    .split(/\r?\n/u)
-    .map(file => file.trim())
-    .filter(Boolean)
-  if (
-    changedFiles.length !== 1 ||
-    changedFiles[0] !== 'package.json'
-  ) {
-    throw new Error(
-      `Release commit must change only package.json, received: ${changedFiles.join(', ') || 'no files'}`
-    )
-  }
-  return state
-}
-
 export function parseGitHubRepository(remoteUrl) {
   const match = String(remoteUrl)
     .trim()
@@ -132,6 +88,7 @@ export function parseGitHubRepository(remoteUrl) {
 }
 
 export function assertRemoteCiSuccess({
+  expectedRunId,
   head,
   runGh = runGhCommand,
   runGit = runGitCommand
@@ -154,12 +111,21 @@ export function assertRemoteCiSuccess({
       `repos/${repository}/actions/workflows/ci.yml/runs?head_sha=${head}&status=completed&per_page=100`
     ])
   )
+  const normalizedRunId =
+    expectedRunId === undefined ? null : String(expectedRunId)
+  if (
+    normalizedRunId !== null &&
+    !/^[1-9]\d*$/u.test(normalizedRunId)
+  ) {
+    throw new Error(`Cannot verify invalid CI run ID ${normalizedRunId}`)
+  }
   const successfulRun = response.workflow_runs?.find(
     run =>
       run.head_sha === head &&
       run.head_branch === 'main' &&
       ['push', 'workflow_dispatch'].includes(run.event) &&
-      run.conclusion === 'success'
+      run.conclusion === 'success' &&
+      (normalizedRunId === null || String(run.id) === normalizedRunId)
   )
   if (!successfulRun) {
     throw new Error(

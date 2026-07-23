@@ -102,24 +102,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
-          enable-cache: true
-
-      - name: Install Linux system dependencies
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes jq trash-cli
-          mkdir -p "$RUNNER_TEMP/bin"
-          ln -s "$(command -v trash-put)" "$RUNNER_TEMP/bin/trash"
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-
-      - name: Install macOS system dependencies
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          brew install jq trash
-          echo "$(brew --prefix trash)/bin" >> "$GITHUB_PATH"
+          enable-cache: false
 
       - name: Install pinned OpenCode dependencies
         shell: bash

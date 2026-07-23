@@ -17,7 +17,6 @@ from qeval.filesystem import (
     _audit_files,
     _snapshot_files,
     _write_fixture,
-    trash_directory,
 )
 from qeval.textutil import _truncate_capture
 
@@ -181,14 +180,6 @@ def _execute_work_item(
     except (OSError, UnicodeError) as error:
         process_details["stderr"] = _truncate_capture(str(error))
         assertion_results = _failed_assertions(case["assertions"], str(error))
-    finally:
-        cleanup_error = trash_directory(fixture)
-
-    if cleanup_error:
-        status = "process_error"
-        score = 0.0
-        process_details["cleanup_error"] = cleanup_error
-        assertion_results = _failed_assertions(case["assertions"], cleanup_error)
 
     critical_failure = any(
         item.get("critical", False) and not item["passed"] for item in assertion_results

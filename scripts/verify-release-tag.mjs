@@ -6,8 +6,9 @@ import {
   assertRemoteCiSuccess
 } from './release-preflight.mjs'
 import {
+  assertReleaseChangedFiles,
   assertReleasePayload
-} from './push-current-release-tag.mjs'
+} from './release-payload.mjs'
 import {
   normalizeReleaseTag
 } from './release-version-utils.mjs'
@@ -64,70 +65,136 @@ export function verifyPublishedReleaseTag({
     )
   }
 
+  const tagLineage = requireGitOutput(
+    runGit,
+    ['rev-list', '--parents', '-n', '1', tagCommit],
+    'the release tag commit lineage'
+  ).split(/\s+/u)
+  if (tagLineage[0] !== tagCommit || ![2, 3].includes(tagLineage.length)) {
+    throw new Error(
+      `Release tag ${normalizedTag} must point to a release commit or normal merge commit`
+    )
+  }
+  const isMergeRelease = tagLineage.length === 3
+  const base = tagLineage[1]
+  const releaseHead = isMergeRelease ? tagLineage[2] : tagCommit
+  const releaseLineage = isMergeRelease
+    ? requireGitOutput(
+        runGit,
+        ['rev-list', '--parents', '-n', '1', releaseHead],
+        'the release branch commit lineage'
+      ).split(/\s+/u)
+    : tagLineage
+  if (releaseLineage.length !== 2 || releaseLineage[0] !== releaseHead) {
+    throw new Error('Release branch must contain exactly one release commit')
+  }
+  const source = releaseLineage[1]
+  if (isMergeRelease) {
+    const sourceBase = requireGitOutput(
+      runGit,
+      ['merge-base', source, base],
+      'the merge base of the release source and release base'
+    )
+    if (sourceBase !== source) {
+      throw new Error('Release source must be an ancestor of the merge base')
+    }
+  }
+
   const subject = requireGitOutput(
     runGit,
-    ['log', '-1', '--format=%s', tagCommit],
+    ['log', '-1', '--format=%s', releaseHead],
     'the release commit subject'
   )
   if (subject !== `chore(release): cut ${normalizedTag}`) {
     throw new Error(`Unexpected release commit subject: ${subject}`)
   }
-  const changedFiles = runGit([
-    'diff-tree',
-    '--no-commit-id',
+  const releaseFiles = runGit([
+    'diff',
     '--name-only',
-    '-r',
-    tagCommit
+    source,
+    releaseHead
   ])
     .split(/\r?\n/u)
     .map(file => file.trim())
     .filter(Boolean)
-  if (changedFiles.length !== 1 || changedFiles[0] !== 'package.json') {
+  assertReleaseChangedFiles(releaseFiles)
+  if (isMergeRelease) {
+    const mergeFiles = runGit([
+      'diff',
+      '--name-only',
+      base,
+      tagCommit
+    ])
+      .split(/\r?\n/u)
+      .map(file => file.trim())
+      .filter(Boolean)
+    assertReleaseChangedFiles(mergeFiles)
+  }
+
+  const releaseManifestText = requireGitOutput(
+    runGit,
+    ['show', `${releaseHead}:package.json`],
+    'the release branch package.json'
+  )
+  const sourceManifestText = requireGitOutput(
+    runGit,
+    ['show', `${source}:package.json`],
+    'the release source package.json'
+  )
+  const releaseChangelog = requireGitOutput(
+    runGit,
+    ['show', `${releaseHead}:CHANGELOG.md`],
+    'the release branch changelog'
+  )
+  const releaseVersion = assertReleasePayload({
+    changelog: releaseChangelog,
+    currentManifest: JSON.parse(releaseManifestText),
+    previousManifest: JSON.parse(sourceManifestText)
+  })
+  if (`v${releaseVersion}` !== normalizedTag) {
     throw new Error(
-      `Release commit must change only package.json, received: ${changedFiles.join(', ') || 'no files'}`
+      `Release tag ${normalizedTag} does not match package.json version ${releaseVersion}`
     )
   }
 
-  const parent = requireGitOutput(
-    runGit,
-    ['rev-parse', '--verify', `${tagCommit}^1^{commit}`],
-    'the release commit parent'
-  )
-  const currentManifest = JSON.parse(
-    requireGitOutput(
+  if (isMergeRelease) {
+    const mergeManifestText = requireGitOutput(
       runGit,
       ['show', `${tagCommit}:package.json`],
-      'the release package.json'
+      'the merged release package.json'
     )
-  )
-  const previousManifest = JSON.parse(
-    requireGitOutput(
+    const baseManifestText = requireGitOutput(
       runGit,
-      ['show', `${parent}:package.json`],
-      'the source package.json'
+      ['show', `${base}:package.json`],
+      'the release base package.json'
     )
-  )
-  const changelog = requireGitOutput(
-    runGit,
-    ['show', `${tagCommit}:CHANGELOG.md`],
-    'the release changelog'
-  )
-  const version = assertReleasePayload({
-    changelog,
-    currentManifest,
-    previousManifest
-  })
-  if (`v${version}` !== normalizedTag) {
-    throw new Error(
-      `Release tag ${normalizedTag} does not match package.json version ${version}`
+    const mergeChangelog = requireGitOutput(
+      runGit,
+      ['show', `${tagCommit}:CHANGELOG.md`],
+      'the merged release changelog'
     )
+    if (
+      mergeManifestText !== releaseManifestText ||
+      mergeChangelog !== releaseChangelog
+    ) {
+      throw new Error(
+        'Merged release payload must match the validated release branch'
+      )
+    }
+    assertReleasePayload({
+      changelog: mergeChangelog,
+      currentManifest: JSON.parse(mergeManifestText),
+      previousManifest: JSON.parse(baseManifestText)
+    })
   }
 
-  const ci = assertCi({ head: parent, runGit })
+  const ci = assertCi({ head: base, runGit })
   return {
-    parent,
+    parent: base,
+    releaseHead,
     repository: ci.repository,
     runId: ci.runId,
+    source,
     tag: normalizedTag,
     tagCommit
   }
@@ -156,7 +223,7 @@ if (isMainModule) {
       console.log(result.tagCommit)
     } else {
       console.log(
-        `Verified ${result.tag} at ${result.tagCommit} with source CI run ${result.runId}.`
+        `Verified ${result.tag} at ${result.tagCommit} with base CI run ${result.runId}.`
       )
     }
   } catch (error) {

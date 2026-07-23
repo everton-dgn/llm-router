@@ -5,7 +5,8 @@ import {
   buildChangelogEntry,
   cancelRevertedPairs,
   collectIgnoredCommits,
-  deriveBumpFromCommits
+  deriveBumpFromCommits,
+  sanitizeReleaseNoteText
 } from './derive-bump-from-commits.mjs'
 
 test('derives SemVer precedence from Conventional Commits', () => {
@@ -82,4 +83,72 @@ test('places dependency updates in the Fixed section', () => {
     entry,
     /### Fixed\n- \*\*deps:\*\* Update runtime dependency/
   )
+})
+
+test('neutralizes active Markdown, mentions, references, and HTML', () => {
+  const entry = buildChangelogEntry({
+    date: '2026-07-23',
+    messages: [
+      'feat(ui** @octocat <b>): add [trusted](https://evil.example) @team <img src=x> `safe()` www.evil.test #42'
+    ],
+    version: '0.2.0'
+  })
+
+  assert.equal(
+    entry,
+    [
+      '## 0.2.0 - 2026-07-23',
+      '',
+      '### Added',
+      '- **ui\\*\\* &#64;octocat &lt;b&gt;:** Add \\[trusted\\](`https://evil.example`) &#64;team &lt;img src=x&gt; `safe()` `www.evil.test` &#35;42',
+      ''
+    ].join('\n')
+  )
+})
+
+test('applies the same sanitization to BREAKING CHANGE footer text', () => {
+  const entry = buildChangelogEntry({
+    date: '2026-07-23',
+    messages: [
+      'refactor(api): replace contract\n\nBREAKING CHANGE: read [guide](https://evil.example) @maintainers <script>alert(1)</script> and keep `client.call()`'
+    ],
+    version: '1.0.0'
+  })
+
+  assert.equal(
+    entry,
+    [
+      '## 1.0.0 - 2026-07-23',
+      '',
+      '### Changed',
+      '- **Breaking (api):** Replace contract',
+      '  read \\[guide\\](`https://evil.example`) &#64;maintainers &lt;script&gt;alert(1)&lt;/script&gt; and keep `client.call()`',
+      ''
+    ].join('\n')
+  )
+  assert.doesNotMatch(entry, /\]\(https?:\/\//)
+  assert.doesNotMatch(entry, /@maintainers|<script>/)
+})
+
+test('preserves valid backtick spans while sanitizing surrounding text', () => {
+  assert.equal(
+    sanitizeReleaseNoteText(
+      'use ``a `nested` value`` with @owner and https://example.test'
+    ),
+    'use ``a `nested` value`` with &#64;owner and `https://example.test`'
+  )
+})
+
+test('keeps ordinary prose readable and neutralizes unmatched backticks', () => {
+  assert.equal(
+    sanitizeReleaseNoteText(
+      'fix route-parser: preserve foo/bar, version 1.2.3 and unmatched `code'
+    ),
+    'fix route-parser: preserve foo/bar, version 1.2.3 and unmatched &#96;code'
+  )
+  assert.equal(sanitizeReleaseNoteText('- nested item'), '\\- nested item')
+  assert.equal(sanitizeReleaseNoteText('1. nested item'), '1\\. nested item')
+  assert.equal(sanitizeReleaseNoteText('# fake heading'), '\\# fake heading')
+  assert.equal(sanitizeReleaseNoteText('---'), '\\---')
+  assert.equal(sanitizeReleaseNoteText('==='), '\\===')
 })

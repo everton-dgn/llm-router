@@ -23,6 +23,15 @@ const recognizedNonReleaseTypes = new Set([
   'ci'
 ])
 const dependencyScopes = new Set(['deps', 'deps-dev'])
+const escapedMarkdownPunctuation = new Set([
+  '\\',
+  '*',
+  '[',
+  ']',
+  '_',
+  '|',
+  '~'
+])
 
 function isDependencyUpdate(commit) {
   return (
@@ -175,6 +184,92 @@ function capitalize(text) {
   return text ? text[0].toUpperCase() + text.slice(1) : text
 }
 
+function findClosingBacktickRun(text, start, runLength) {
+  let cursor = start
+  while (cursor < text.length) {
+    const candidate = text.indexOf('`', cursor)
+    if (candidate === -1) {
+      return -1
+    }
+    let candidateLength = 1
+    while (text[candidate + candidateLength] === '`') {
+      candidateLength += 1
+    }
+    if (candidateLength === runLength) {
+      return candidate
+    }
+    cursor = candidate + candidateLength
+  }
+  return -1
+}
+
+function sanitizePlainReleaseNoteText(text) {
+  const urlPattern = /\b(?:https?:\/\/|www\.)[^\s<>()\[\]`]+/giu
+  const parts = []
+  let cursor = 0
+
+  function escapeMarkdown(value) {
+    return Array.from(value, character =>
+      escapedMarkdownPunctuation.has(character)
+        ? `\\${character}`
+        : character
+    )
+      .join('')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replace(/#(?=\d)/gu, '&#35;')
+      .replace(/@(?=[\p{L}\p{N}_-])/gu, '&#64;')
+      .replace(/^#(?=\s)/u, '\\#')
+      .replace(/^-(?=-)/u, '\\-')
+      .replace(/^=(?==)/u, '\\=')
+      .replace(/^([+-])(?=\s)/u, '\\$1')
+      .replace(/^(\d+)\.(?=\s)/u, '$1\\.')
+  }
+
+  for (const match of text.matchAll(urlPattern)) {
+    const index = match.index ?? 0
+    parts.push(escapeMarkdown(text.slice(cursor, index)))
+    parts.push(`\`${match[0]}\``)
+    cursor = index + match[0].length
+  }
+  parts.push(escapeMarkdown(text.slice(cursor)))
+  return parts.join('')
+}
+
+export function sanitizeReleaseNoteText(value) {
+  const text = String(value)
+  const parts = []
+  let cursor = 0
+
+  while (cursor < text.length) {
+    const opening = text.indexOf('`', cursor)
+    if (opening === -1) {
+      parts.push(sanitizePlainReleaseNoteText(text.slice(cursor)))
+      break
+    }
+    parts.push(sanitizePlainReleaseNoteText(text.slice(cursor, opening)))
+    let runLength = 1
+    while (text[opening + runLength] === '`') {
+      runLength += 1
+    }
+    const closing = findClosingBacktickRun(
+      text,
+      opening + runLength,
+      runLength
+    )
+    if (closing === -1) {
+      parts.push('&#96;'.repeat(runLength))
+      cursor = opening + runLength
+      continue
+    }
+    parts.push(text.slice(opening, closing + runLength))
+    cursor = closing + runLength
+  }
+
+  return parts.join('')
+}
+
 export function buildChangelogEntry({ version, date, messages }) {
   const sections = new Map(changelogSectionOrder.map(name => [name, []]))
 
@@ -185,15 +280,19 @@ export function buildChangelogEntry({ version, date, messages }) {
     let prefix = ''
     if (commit.breaking) {
       prefix = commit.scope
-        ? `**Breaking (${commit.scope}):** `
+        ? `**Breaking (${sanitizeReleaseNoteText(commit.scope)}):** `
         : '**Breaking:** '
     } else if (commit.scope) {
-      prefix = `**${commit.scope}:** `
+      prefix = `**${sanitizeReleaseNoteText(commit.scope)}:** `
     }
-    const lines = [`- ${prefix}${capitalize(commit.description)}`]
+    const lines = [
+      `- ${prefix}${sanitizeReleaseNoteText(capitalize(commit.description))}`
+    ]
     if (commit.breakingDescription) {
       lines.push(
-        ...commit.breakingDescription.split('\n').map(line => `  ${line}`)
+        ...commit.breakingDescription
+          .split('\n')
+          .map(line => `  ${sanitizeReleaseNoteText(line)}`)
       )
     }
     sections.get(section).push(lines.join('\n'))

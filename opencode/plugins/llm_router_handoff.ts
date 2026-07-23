@@ -21,10 +21,12 @@ import { createOpenCodeV2ClientFromLegacyTransport } from "../lib/opencode_trans
 import { assertClassifierRequestSize } from "../lib/route_contract.mjs"
 import { createRouterControlRuntime } from "../lib/router_control.mjs"
 import { updateSessionMetadata } from "../lib/session_metadata.mjs"
+import { createOpenCodeUninstaller } from "../lib/uninstall.mjs"
 
 const ROUTER_PATH = __LLM_ROUTER_PATH_LITERAL__
 const ROUTER_TIMEOUT_MS = 120_000
 const CHECKPOINT_TIMEOUT_MS = 30_000
+const CONFIG_DIR = fileURLToPath(new URL("..", import.meta.url))
 const POLICY_DEFAULTS_PATH = fileURLToPath(
   new URL("../llm-router.policy.defaults.json", import.meta.url),
 )
@@ -47,6 +49,7 @@ export default async function llmRouterHandoff({ client, directory }) {
     createV2Client: createOpencodeClient,
     directory,
   })
+  const uninstaller = await createOpenCodeUninstaller({ configDir: CONFIG_DIR })
 
   async function showRouterToast({ mode, profile, target, control = false }) {
     const destination = target
@@ -73,6 +76,7 @@ export default async function llmRouterHandoff({ client, directory }) {
       projectPath: join(directory, ".opencode", "llm-router.policy.json"),
     }),
     resolvePolicy: resolveExecutionPolicy,
+    uninstall: (argumentsText) => uninstaller.execute(argumentsText),
     notify: showRouterToast,
   })
 

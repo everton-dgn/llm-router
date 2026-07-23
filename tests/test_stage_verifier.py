@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -33,28 +32,6 @@ class StageVerifierTests(unittest.TestCase):
         (self.project / "tracked.txt").write_text("before\n", encoding="utf-8")
         self._git("add", "tracked.txt")
         self._git("commit", "-q", "-m", "initial")
-
-    def tearDown(self) -> None:
-        for baseline_id in self.baselines:
-            baseline = _baseline_directory(baseline_id)
-            if baseline.exists():
-                self._trash(baseline)
-        if self.project.exists():
-            self._trash(self.project)
-        if self.artifacts.exists():
-            self._trash(self.artifacts)
-
-    def _trash(self, path: Path) -> None:
-        trash = shutil.which("trash")
-        self.assertIsNotNone(trash)
-        result = subprocess.run(
-            [str(trash), str(path)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
 
     def _git(self, *argv: str) -> subprocess.CompletedProcess[str]:
         result = subprocess.run(
@@ -111,9 +88,9 @@ class StageVerifierTests(unittest.TestCase):
         self.assertEqual(mode_changed["mode"], 0o600)
         self.assertNotEqual(content_changed["sha256"], mode_changed["sha256"])
 
-        self._trash(path)
-        path.mkdir()
-        type_changed = _working_fingerprint(path)
+        directory = self.project / "directory"
+        directory.mkdir()
+        type_changed = _working_fingerprint(directory)
         self.assertEqual(type_changed["type"], "directory")
         self.assertNotEqual(mode_changed["sha256"], type_changed["sha256"])
 
@@ -125,7 +102,12 @@ class StageVerifierTests(unittest.TestCase):
         self.assertEqual((baseline_directory / "baseline.json").stat().st_mode & 0o777, 0o600)
         result = verify({"baseline_id": prepared["baseline_id"]})
         self.assertEqual(result["status"], "no_changes")
-        self.assertFalse(_baseline_directory(str(prepared["baseline_id"])).exists())
+        self.assertTrue(baseline_directory.is_dir())
+        self.assertTrue((baseline_directory / "baseline.json").is_file())
+        consumed = baseline_directory / stage_verifier.BASELINE_CONSUMED_NAME
+        self.assertTrue(consumed.is_file())
+        self.assertEqual(consumed.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(consumed.stat().st_size, 0)
         with self.assertRaisesRegex(StageVerifierError, "already consumed"):
             verify({"baseline_id": prepared["baseline_id"]})
 

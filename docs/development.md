@@ -19,7 +19,7 @@
 - Node.js 22.22.2 or 24.15.0, both validated in CI;
 - pnpm through Corepack;
 - Python 3.11 or newer through `uv`;
-- Bash, `jq`, and `trash`.
+- Bash and `jq`.
 
 Install repository tooling and Git hooks, then install the OpenCode bundle
 dependencies:
@@ -122,9 +122,13 @@ test(scope): test-only change
 chore(scope): maintenance
 ```
 
-The local release scripts derive SemVer from commits since the latest stable
-`v*` tag. Read [RELEASE.md](RELEASE.md) before preparing a changelog entry or
-cutting a release.
+The automatic release workflow derives SemVer and changelog entries from
+commits since the latest stable `v*` tag after CI succeeds on `main`. Local
+release commands are read-only checks. The workflow creates a release PR,
+merges it with a normal merge commit, and places the annotated version tag on
+that merge commit. Squash and rebase are not supported. Read
+[RELEASE.md](RELEASE.md) for the permission, concurrency, failure, and recovery
+contracts.
 
 ## Pull requests
 

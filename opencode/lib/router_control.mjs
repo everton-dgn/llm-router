@@ -141,6 +141,7 @@ export function createRouterControlRuntime({
   v2SessionClient,
   loadPolicy,
   resolvePolicy,
+  uninstall,
   notify = async () => {},
   permissionTimeoutMs = 120_000,
 }) {
@@ -245,6 +246,18 @@ export function createRouterControlRuntime({
   }
 
   async function commandBefore(input, output) {
+    if (input.command === "router-uninstall") {
+      if (typeof uninstall !== "function") {
+        throw new Error("OpenCode uninstaller is unavailable")
+      }
+      const text = await uninstall(input.arguments ?? "")
+      if (typeof text !== "string") {
+        throw new TypeError("OpenCode uninstaller must return a text response")
+      }
+      output.parts.splice(0, output.parts.length, { type: "text", text })
+      return
+    }
+
     const isStatus = input.command === "router-status"
     const nextMode = ROUTING_COMMANDS[input.command]
     const nextProfile = PROFILE_COMMANDS[input.command]
@@ -260,10 +273,10 @@ export function createRouterControlRuntime({
     const effective = await resolveFor({ sessionID: input.sessionID })
     if (!isStatus) await applyPermissions(input.sessionID, effective.policy)
     const profile = state.profileOverride ?? effective.policy.profile
-    output.parts = [{
+    output.parts.splice(0, output.parts.length, {
       type: "text",
       text: `${isStatus ? "Router status" : "Router control applied"}. mode: ${state.mode} | profile: ${profile}`,
-    }]
+    })
     await notify({ mode: state.mode, profile, control: true })
   }
 

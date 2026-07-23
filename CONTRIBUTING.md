@@ -21,7 +21,6 @@ The current development and CI baseline is:
 - `uv`
 - Bash
 - `jq`
-- `trash`
 
 Install repository tooling. The root `postinstall` script configures Lefthook
 when the checkout contains `.git`:

@@ -2,15 +2,13 @@
 
 ## Supported versions
 
-The project has not published its first stable release. Until then, security
-fixes target the current `main` branch. After releases begin, the latest
-published release and `main` will receive security fixes. Older releases may
+The current stable line and `main` receive security fixes. Older releases may
 require an upgrade.
 
 | Version | Supported |
 | --- | --- |
+| `1.0.x` | Yes |
 | `main` | Yes |
-| Latest published release | Yes |
 | Older releases | No |
 
 ## Reporting a vulnerability

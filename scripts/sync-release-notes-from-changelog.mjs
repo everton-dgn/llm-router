@@ -1,5 +1,4 @@
 import { execFileSync as nodeExecFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -151,7 +150,11 @@ export function syncReleaseNotes(
   const args = parseArgs(argv)
   const source =
     changelog ??
-    readFileSync(path.resolve(process.cwd(), 'CHANGELOG.md'), 'utf8')
+    execFileSync(
+      'git',
+      ['show', `${args.expectedCommit}:CHANGELOG.md`],
+      { encoding: 'utf8' }
+    )
   const entries = parseChangelog(source)
   const tag = args.tag ? normalizeReleaseTag(args.tag) : entries[0].tag
   const entry = entries.find(candidate => candidate.tag === tag)

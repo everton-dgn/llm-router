@@ -6,10 +6,8 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import signal
 import subprocess
-import sys
 import tempfile
 import time
 from dataclasses import dataclass
@@ -92,25 +90,6 @@ def parse_json_object(value: str) -> dict[str, Any]:
         if isinstance(parsed, dict):
             return parsed
     raise ValueError("output does not contain a valid JSON object")
-
-
-def cleanup_temp_file(path: str | None) -> str | None:
-    if not path or not os.path.exists(path):
-        return None
-    trash = shutil.which("trash")
-    if not trash:
-        return f"trash not found; temporary file preserved at {path}"
-    result = subprocess.run(
-        [trash, path],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        detail = result.stderr.strip() or f"exit code {result.returncode}"
-        return f"trash failed for {path}: {detail}"
-    return None
 
 
 def stop_process_group(process: subprocess.Popen[str]) -> tuple[str, str]:
@@ -306,10 +285,6 @@ class BenchmarkExecutor:
                 and any("{output_file}" in str(item) for item in raw_argv)
             )
             if needs_output_file:
-                if not shutil.which("trash"):
-                    raise ConfigError(
-                        "trash is required to clean up Codex temporary output"
-                    )
                 descriptor, output_file = tempfile.mkstemp(
                     prefix="llm-router-", suffix=".out"
                 )
@@ -385,7 +360,3 @@ class BenchmarkExecutor:
                 str(error),
                 time.monotonic() - started,
             )
-        finally:
-            cleanup_error = cleanup_temp_file(output_file)
-            if cleanup_error:
-                print(f"warning: {cleanup_error}", file=sys.stderr)

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -7,10 +7,8 @@ import {
   collectIgnoredCommits,
   deriveBumpFromCommits
 } from './derive-bump-from-commits.mjs'
-import { assertReleaseSourceReady } from './release-preflight.mjs'
 import {
   computeNextReleaseVersion,
-  parseReleaseVersion,
   resolveAutoBump
 } from './release-version-utils.mjs'
 
@@ -18,26 +16,19 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const packagePath = path.join(rootDir, 'package.json')
 
 function parseArgs(argv) {
-  const result = { mode: '', print: false }
-  for (let index = 0; index < argv.length; index += 1) {
-    if (argv[index] === '--mode') {
-      result.mode = argv[index + 1] ?? ''
-      index += 1
-    } else if (argv[index] === '--print') {
-      result.print = true
-    } else {
-      throw new Error(
-        'Usage: node scripts/set-release-version.mjs --mode <auto|patch|minor|major> [--print]'
-      )
-    }
+  if (
+    argv.length !== 3 ||
+    argv[0] !== '--mode' ||
+    argv[1] !== 'auto' ||
+    argv[2] !== '--print'
+  ) {
+    throw new Error(
+      'Usage: node scripts/set-release-version.mjs --mode auto --print'
+    )
   }
-  if (!['auto', 'patch', 'minor', 'major'].includes(result.mode)) {
-    throw new Error('Release mode must be auto, patch, minor or major')
-  }
-  return result
 }
 
-function tryLatestStableTag() {
+export function tryLatestStableTag() {
   const tags = execFileSync(
     'git',
     ['tag', '--merged', 'HEAD', '--list', 'v*', '--sort=-version:refname'],
@@ -72,7 +63,6 @@ export function deriveAutomaticVersion({
   baselineTag,
   messages
 }) {
-  parseReleaseVersion(currentVersion)
   if (baselineTag) {
     const taggedVersion = baselineTag.replace(/^v/, '')
     if (taggedVersion !== currentVersion) {
@@ -90,7 +80,9 @@ export function deriveAutomaticVersion({
   if (derivedBump === null) {
     return { bump: null, version: null }
   }
-  const bump = resolveAutoBump(derivedBump, currentVersion)
+  const bump = baselineTag
+    ? resolveAutoBump(derivedBump, currentVersion)
+    : 'major'
   return {
     bump,
     version: computeNextReleaseVersion(currentVersion, bump)
@@ -125,48 +117,36 @@ function remoteTagExists(tag) {
   }
 }
 
-export function runSetReleaseVersion(
+export function runReleaseVersionPreview(
   argv = process.argv.slice(2),
   {
-    assertReady = assertReleaseSourceReady,
     getBaselineTag = tryLatestStableTag,
     getMessages = collectCommitMessages,
     hasLocalTag = tagExists,
     hasRemoteTag = remoteTagExists
   } = {}
 ) {
-  const args = parseArgs(argv)
+  parseArgs(argv)
   const manifest = JSON.parse(readFileSync(packagePath, 'utf8'))
   const currentVersion = String(manifest.version ?? '').trim()
-  parseReleaseVersion(currentVersion)
-
-  let mode = args.mode
-  let nextVersion = ''
-  if (mode === 'auto') {
-    const baselineTag = getBaselineTag()
-    const messages = getMessages({ baselineTag })
-    const ignored = collectIgnoredCommits(messages)
-    if (ignored.length > 0) {
-      process.stderr.write(
-        `Warning: ignored non-conventional commits since ${baselineTag || 'repository start'}:\n${ignored.map(subject => `- ${subject}`).join('\n')}\n`
-      )
-    }
-    const derived = deriveAutomaticVersion({
-      currentVersion,
-      baselineTag,
-      messages
-    })
-    if (derived.version === null) {
-      process.stdout.write(args.print ? 'none\n' : 'No release to cut.\n')
-      return null
-    }
-    nextVersion = derived.version
-    mode = derived.bump
-  } else if (args.print) {
-    throw new Error('--print is supported only with --mode auto')
-  } else {
-    nextVersion = computeNextReleaseVersion(currentVersion, mode)
+  const baselineTag = getBaselineTag()
+  const messages = getMessages({ baselineTag })
+  const ignored = collectIgnoredCommits(messages)
+  if (ignored.length > 0) {
+    process.stderr.write(
+      `Warning: ignored non-conventional commits since ${baselineTag || 'repository start'}:\n${ignored.map(subject => `- ${subject}`).join('\n')}\n`
+    )
   }
+  const derived = deriveAutomaticVersion({
+    currentVersion,
+    baselineTag,
+    messages
+  })
+  if (derived.version === null) {
+    process.stdout.write('none\n')
+    return null
+  }
+  const nextVersion = derived.version
 
   const tag = `v${nextVersion}`
   if (hasLocalTag(tag)) {
@@ -175,41 +155,8 @@ export function runSetReleaseVersion(
   if (hasRemoteTag(tag)) {
     throw new Error(`Release tag ${tag} already exists on origin`)
   }
-  if (args.print) {
-    process.stdout.write(`${nextVersion}\n`)
-    return nextVersion
-  }
-
-  assertReady()
-  manifest.version = nextVersion
-  writeFileSync(packagePath, `${JSON.stringify(manifest, null, 2)}\n`)
-  execFileSync('git', ['add', 'package.json'], {
-    cwd: rootDir,
-    stdio: 'inherit'
-  })
-  execFileSync(
-    'git',
-    ['commit', '-m', `chore(release): cut v${nextVersion}`],
-    { cwd: rootDir, stdio: 'inherit' }
-  )
-  execFileSync('git', ['tag', '-a', `v${nextVersion}`, '-m', `v${nextVersion}`], {
-    cwd: rootDir,
-    stdio: 'inherit'
-  })
+  process.stdout.write(`${nextVersion}\n`)
   return nextVersion
-}
-
-export function assertDirectInvocationIsReadOnly(argv) {
-  if (
-    argv.length !== 3 ||
-    argv[0] !== '--mode' ||
-    argv[1] !== 'auto' ||
-    argv[2] !== '--print'
-  ) {
-    throw new Error(
-      'Direct version mutation is unsupported. Use pnpm release:auto.'
-    )
-  }
 }
 
 const isMainModule = process.argv[1]
@@ -217,6 +164,5 @@ const isMainModule = process.argv[1]
   : false
 
 if (isMainModule) {
-  assertDirectInvocationIsReadOnly(process.argv.slice(2))
-  runSetReleaseVersion()
+  runReleaseVersionPreview()
 }

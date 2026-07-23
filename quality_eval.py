@@ -46,7 +46,6 @@ from qeval.filesystem import (
     _audit_files,
     _snapshot_files,
     _write_fixture,
-    trash_directory,
 )
 from qeval.fingerprint import (
     _attach_execution_profile,

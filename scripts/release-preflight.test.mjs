@@ -3,7 +3,6 @@ import test from 'node:test'
 
 import {
   assertRemoteCiSuccess,
-  assertReleasePushReady,
   assertReleaseSourceReady,
   parseGitHubRepository
 } from './release-preflight.mjs'
@@ -14,10 +13,7 @@ const gitRunner =
     branch = 'main',
     head = advertised,
     originMain = advertised,
-    parent = advertised,
-    status = '',
-    subject = 'chore(release): cut v0.1.0',
-    changedFiles = 'package.json'
+    status = ''
   } = {}) =>
   args => {
     const command = args.join(' ')
@@ -27,14 +23,6 @@ const gitRunner =
     if (command === 'rev-parse --verify origin/main^{commit}') return originMain
     if (command === 'ls-remote --exit-code --heads origin refs/heads/main') {
       return `${advertised}\trefs/heads/main`
-    }
-    if (command === 'rev-parse --verify HEAD^1^{commit}') return parent
-    if (command === 'log -1 --format=%s') return subject
-    if (
-      command ===
-      'diff-tree --no-commit-id --name-only -r HEAD'
-    ) {
-      return changedFiles
     }
     throw new Error(`Unexpected git call: ${command}`)
   }
@@ -66,43 +54,6 @@ test('requires clean main synchronized with the live remote', () => {
   )
 })
 
-test('accepts only the generated release commit above origin/main', () => {
-  const originMain = 'a'.repeat(40)
-  const head = 'b'.repeat(40)
-  assert.equal(
-    assertReleasePushReady({
-      expectedSubject: 'chore(release): cut v0.1.0',
-      runGit: gitRunner({ head, parent: originMain, originMain })
-    }).head,
-    head
-  )
-  assert.throws(
-    () =>
-      assertReleasePushReady({
-        expectedSubject: 'chore(release): cut v0.1.0',
-        runGit: gitRunner({
-          head,
-          originMain,
-          parent: 'c'.repeat(40)
-        })
-      }),
-    /directly based/
-  )
-  assert.throws(
-    () =>
-      assertReleasePushReady({
-        expectedSubject: 'chore(release): cut v0.1.0',
-        runGit: gitRunner({
-          changedFiles: 'package.json\nopencode/opencode.jsonc',
-          head,
-          originMain,
-          parent: originMain
-        })
-      }),
-    /change only package.json/
-  )
-})
-
 test('requires successful remote CI for the exact main commit', () => {
   const head = 'a'.repeat(40)
   const runGit = args => {
@@ -127,6 +78,46 @@ test('requires successful remote CI for the exact main commit', () => {
     repository: 'everton-dgn/llm-router',
     runId: 123
   })
+  assert.deepEqual(
+    assertRemoteCiSuccess({
+      expectedRunId: '123',
+      head,
+      runGh: () =>
+        JSON.stringify({
+          workflow_runs: [
+            {
+              conclusion: 'success',
+              event: 'push',
+              head_branch: 'main',
+              head_sha: head,
+              id: 456
+            },
+            {
+              conclusion: 'success',
+              event: 'push',
+              head_branch: 'main',
+              head_sha: head,
+              id: 123
+            }
+          ]
+        }),
+      runGit
+    }),
+    {
+      repository: 'everton-dgn/llm-router',
+      runId: 123
+    }
+  )
+  assert.throws(
+    () =>
+      assertRemoteCiSuccess({
+        expectedRunId: '999',
+        head,
+        runGh,
+        runGit
+      }),
+    /needs a successful completed CI/
+  )
   assert.throws(
     () =>
       assertRemoteCiSuccess({

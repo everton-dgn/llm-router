@@ -13,17 +13,17 @@ ADAPTIVE_ROUTING="$REPO_ROOT/opencode/lib/adaptive_routing.mjs"
 EXECUTION_POLICY="$REPO_ROOT/opencode/lib/execution_policy.mjs"
 ROUTER_CONTROL="$REPO_ROOT/opencode/lib/router_control.mjs"
 VERIFICATION_CONFIG="$REPO_ROOT/config.json"
-TRASH_PATH=$(command -v trash || true)
 NODE_PATH=$(command -v node || true)
-[[ -n "$TRASH_PATH" ]] || { printf 'FAIL: trash is required\n' >&2; exit 1; }
 [[ -n "$NODE_PATH" ]] || { printf 'FAIL: node is required\n' >&2; exit 1; }
 
 FIXTURE=$(mktemp -d "${TMPDIR:-/tmp}/llm-router-opencode-test.XXXXXX")
-FIXTURE=$(cd "$FIXTURE" && pwd)
-cleanup() {
-  [[ ! -d "$FIXTURE" ]] || "$TRASH_PATH" "$FIXTURE" >/dev/null 2>&1 || true
+FIXTURE=$(cd "$FIXTURE" && pwd -P)
+preserve_fixture() {
+  [[ ! -d "$FIXTURE" ]] \
+    || mv "$FIXTURE" "$FIXTURE.preserved" >/dev/null 2>&1 \
+    || true
 }
-trap cleanup EXIT
+trap preserve_fixture EXIT
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -152,7 +152,8 @@ jq -e '
   and .provider["claude-agent"].options.claudePath == "__CLAUDE_CODE_PATH__"
   and .provider["claude-agent"].models["claude-opus-4-8"].limit == {"context":200000,"output":32000}
   and .provider["router-control"].npm == "__ROUTER_CONTROL_PROVIDER_URL__"
-  and (.command | keys | sort) == ["router-adaptive", "router-auto", "router-full", "router-native", "router-pinned", "router-restricted", "router-status"]
+  and (.command | keys | sort) == ["router-adaptive", "router-auto", "router-full", "router-native", "router-pinned", "router-restricted", "router-status", "router-uninstall"]
+  and ([.command[] | .subtask] | all(. == false))
   and .agent.codex.model == "openai/gpt-5.6-sol"
   and (.agent | keys | sort) == ["claude", "codex", "glm", "minimax", "router", "router-adaptive", "router-auto", "router-control", "router-manual"]
 ' "$CONFIG_TEMPLATE" >/dev/null || fail "direct handoff config is invalid"
@@ -220,7 +221,7 @@ assert_contains "$REPO_ROOT/opencode/tools/repo_query.ts" 'runRepositoryQuery(ar
 assert_not_contains "$REPO_ROOT/README.md" 'somente a última mensagem do usuário'
 assert_not_contains "$REPO_ROOT/README.md" 'como um teto conservador de bytes UTF-8'
 assert_not_contains "$REPO_ROOT/README.md" 'Instala as dependências pinadas'
-jq -e '.dependencies == {"@anthropic-ai/claude-agent-sdk":"0.3.218","@opencode-ai/plugin":"1.18.4","@opencode-ai/sdk":"1.18.4"}' "$REPO_ROOT/opencode/package.json" >/dev/null || fail "bundle dependencies are not pinned"
+jq -e '.dependencies == {"@anthropic-ai/claude-agent-sdk":"0.3.218","@opencode-ai/plugin":"1.18.4","@opencode-ai/sdk":"1.18.4","jsonc-parser":"3.3.1"}' "$REPO_ROOT/opencode/package.json" >/dev/null || fail "bundle dependencies are not pinned"
 jq -e '
   .verification.rules[]
   | select(.name == "llm-router-opencode-tests")
@@ -232,6 +233,7 @@ jq -e '
     and (.argv | index("tests/execution-policy.test.mjs")) != null
     and (.argv | index("tests/router-control.test.mjs")) != null
     and (.argv | index("tests/repo-query.test.mjs")) != null
+    and (.argv | index("tests/uninstall.test.mjs")) != null
     and (.argv | index("tests/router-prompt-guard.test.mjs")) == null
 ' "$VERIFICATION_CONFIG" >/dev/null || fail "OpenCode verification gate does not run the current Node test suite"
 
@@ -424,6 +426,8 @@ assert_contains "$CONFIG_DIR/tools/delegate_task.ts" 'custom user tool'
 cmp -s "$REPO_ROOT/opencode/lib/direct_handoff.mjs" "$CONFIG_DIR/lib/direct_handoff.mjs" || fail "installed handoff helper differs"
 cmp -s "$REPO_ROOT/opencode/lib/adaptive_routing.mjs" "$CONFIG_DIR/lib/adaptive_routing.mjs" || fail "installed adaptive routing helper differs"
 cmp -s "$REPO_ROOT/opencode/lib/execution_policy.mjs" "$CONFIG_DIR/lib/execution_policy.mjs" || fail "installed execution policy helper differs"
+cmp -s "$REPO_ROOT/opencode/lib/install_state.mjs" "$CONFIG_DIR/lib/install_state.mjs" || fail "installed state helper differs"
+cmp -s "$REPO_ROOT/opencode/lib/uninstall.mjs" "$CONFIG_DIR/lib/uninstall.mjs" || fail "installed uninstall helper differs"
 cmp -s "$REPO_ROOT/opencode/lib/router_control.mjs" "$CONFIG_DIR/lib/router_control.mjs" || fail "installed router control helper differs"
 cmp -s "$REPO_ROOT/opencode/lib/claude_context.mjs" "$CONFIG_DIR/lib/claude_context.mjs" || fail "installed Claude context helper differs"
 cmp -s "$REPO_ROOT/opencode/lib/claude_checkpoint.mjs" "$CONFIG_DIR/lib/claude_checkpoint.mjs" || fail "installed Claude checkpoint helper differs"
@@ -446,6 +450,8 @@ jq -e --arg provider "file://$CONFIG_DIR/providers/claude_agent_provider.mjs" --
   and .agent["router-auto"].mode == "subagent"
   and .agent["router-manual"].mode == "subagent"
   and .agent.claude.model == "claude-agent/claude-opus-4-8"
+  and (.command | keys | sort) == ["router-adaptive", "router-auto", "router-full", "router-native", "router-pinned", "router-restricted", "router-status", "router-uninstall"]
+  and ([.command[] | .subtask] | all(. == false))
 ' "$CONFIG_DIR/opencode.jsonc" >/dev/null || fail "installed Claude provider config is invalid"
 [[ ! -e "$CONFIG_DIR/plugins/llm_router_prompt_guard.ts" ]] \
   || fail "known legacy prompt guard was not retired"
@@ -466,6 +472,53 @@ jq -e '.scripts.keep == "true"' "$CONFIG_DIR/package.json" >/dev/null || fail "p
 jq -e '.dependencies["@opencode-ai/plugin"] == "1.18.4"' "$CONFIG_DIR/package.json" >/dev/null || fail "plugin dependency was not pinned"
 jq -e '.dependencies["@opencode-ai/sdk"] == "1.18.4"' "$CONFIG_DIR/package.json" >/dev/null || fail "OpenCode SDK dependency was not pinned"
 jq -e '.dependencies["@anthropic-ai/claude-agent-sdk"] == "0.3.218"' "$CONFIG_DIR/package.json" >/dev/null || fail "Claude Agent SDK dependency was not pinned"
+jq -e '.dependencies["jsonc-parser"] == "3.3.1"' "$CONFIG_DIR/package.json" >/dev/null || fail "JSONC parser dependency was not pinned"
+
+INSTALL_STATE="$CONFIG_DIR/llm-router.install-state.json"
+[[ -f "$INSTALL_STATE" && ! -L "$INSTALL_STATE" ]] || fail "install state was not created as a regular file"
+[[ "$(file_mode "$CONFIG_DIR")" == "700" ]] || fail "config directory permissions are not 0700"
+[[ "$(file_mode "$CONFIG_DIR/.llm-router-backups")" == "700" ]] || fail "persistent backup root permissions are not 0700"
+[[ "$(file_mode "$INSTALL_STATE")" == "600" ]] || fail "install state permissions are not 0600"
+jq -e --arg config "$CONFIG_DIR" '
+  .schemaVersion == 1
+  and .status == "installed"
+  and .legacy == false
+  and .configDir == $config
+  and (.baselineDir | startswith(".llm-router-backups/install/"))
+  and .sharedBaselines.opencode.existed == true
+  and .sharedBaselines.opencode.backupPath == "shared/opencode.jsonc"
+  and .sharedBaselines.package.existed == true
+  and .sharedBaselines.package.backupPath == "shared/package.json"
+  and any(
+    .managedConfig[];
+    .path == ["agent", "router"] and .installedValue.mode == "primary"
+  )
+  and any(
+    .managedDependencies[];
+    .name == "jsonc-parser" and .installedValue == "3.3.1"
+  )
+  and any(
+    .managedFiles[];
+    .relativePath == "lib/claude_agent.mjs"
+      and .ownership == "replaced"
+      and .original.known == true
+      and .original.existed == true
+      and .original.backupPath == "managed/lib/claude_agent.mjs"
+  )
+  and any(
+    .managedFiles[];
+    .relativePath == "lib/install_state.mjs"
+      and .ownership == "created"
+      and (.installedSha256 | length) == 64
+  )
+' "$INSTALL_STATE" >/dev/null || fail "install state schema or ownership records are invalid"
+STATE_BASELINE=$(jq -r '.baselineDir' "$INSTALL_STATE")
+[[ -f "$CONFIG_DIR/$STATE_BASELINE/$(jq -r '.sharedBaselines.opencode.backupPath' "$INSTALL_STATE")" ]] \
+  || fail "persistent OpenCode config baseline is missing"
+[[ -f "$CONFIG_DIR/$STATE_BASELINE/$(jq -r '.managedFiles[] | select(.relativePath == "lib/claude_agent.mjs") | .original.backupPath' "$INSTALL_STATE")" ]] \
+  || fail "persistent managed-file baseline is missing"
+[[ "$(file_mode "$CONFIG_DIR/$STATE_BASELINE")" == "700" ]] \
+  || fail "persistent install baseline permissions are not 0700"
 
 printf '%s\n' '{"schemaVersion":1,"defaultProfile":"full"}' | tee "$CONFIG_DIR/llm-router.policy.json" >/dev/null
 
@@ -476,6 +529,7 @@ BACKUP_ROUTE=$(find "$BACKUP_ROOT" -type f -name llm_router_prompt_guard.ts -pri
 [[ "$(file_mode "$BACKUP_ROOT")" == "700" ]] || fail "backup root permissions are not 0700"
 [[ "$(file_mode "$BACKUP_CONFIG")" == "600" ]] || fail "backup file permissions are not 0600"
 BACKUP_COUNT_BEFORE=$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -print | wc -l | tr -d ' ')
+STATE_BASELINE_BEFORE=$(jq -r '.baselineDir' "$INSTALL_STATE")
 
 SECOND_OUTPUT=$(bash "$INSTALLER" \
   --config-dir "$CONFIG_DIR" \
@@ -484,10 +538,92 @@ SECOND_OUTPUT=$(bash "$INSTALLER" \
   --claude-path "$CLAUDE_PATH")
 BACKUP_COUNT_AFTER=$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -print | wc -l | tr -d ' ')
 [[ "$BACKUP_COUNT_BEFORE" == "$BACKUP_COUNT_AFTER" ]] || fail "idempotent install created another backup"
+[[ "$(jq -r '.baselineDir' "$INSTALL_STATE")" == "$STATE_BASELINE_BEFORE" ]] \
+  || fail "idempotent install replaced the persistent baseline"
 [[ "$SECOND_OUTPUT" == *"unchanged $CONFIG_DIR/opencode.jsonc"* ]] || fail "idempotent install did not report unchanged config"
 assert_contains "$CONFIG_DIR/llm-router.policy.json" '"defaultProfile":"full"'
 [[ "$SECOND_OUTPUT" == *"preserved $CONFIG_DIR/llm-router.policy.json"* ]] || fail "idempotent install did not preserve user policy"
 [[ "$FIRST_OUTPUT" == *"backup $BACKUP_ROOT/"* ]] || fail "first install did not report its backup"
+
+REINSTALL_CONFIG="$FIXTURE/reinstall-config"
+bash "$INSTALLER" \
+  --config-dir "$REINSTALL_CONFIG" \
+  --backup-root "$FIXTURE/reinstall-backups" \
+  --router-path "$REPO_ROOT/route" \
+  --claude-path "$CLAUDE_PATH" >/dev/null
+printf '%s\n' '{"schemaVersion":1,"defaultProfile":"restricted","userMarker":"keep"}' \
+  | tee "$REINSTALL_CONFIG/llm-router.policy.json" >/dev/null
+ln -s "$REPO_ROOT/opencode/node_modules" "$REINSTALL_CONFIG/node_modules"
+UNINSTALL_OUTPUT=$("$NODE_PATH" --input-type=module - "$REINSTALL_CONFIG" <<'NODE'
+import path from "node:path"
+import { pathToFileURL } from "node:url"
+
+const configDir = process.argv[2]
+const moduleUrl = pathToFileURL(path.join(configDir, "lib/uninstall.mjs")).href
+const { createOpenCodeUninstaller } = await import(moduleUrl)
+const uninstaller = await createOpenCodeUninstaller({
+  configDir,
+  tokenFactory: () => "bundle-reinstall-confirmation",
+})
+const preview = await uninstaller.execute("")
+if (!preview.includes("/router-uninstall bundle-reinstall-confirmation")) {
+  throw new Error("uninstall preview did not return its confirmation token")
+}
+process.stdout.write(await uninstaller.execute("bundle-reinstall-confirmation"))
+NODE
+)
+[[ "$UNINSTALL_OUTPUT" == *"without calling an LLM"* ]] \
+  || fail "installed uninstaller did not complete locally"
+[[ ! -e "$REINSTALL_CONFIG/llm-router.install-state.json" ]] \
+  || fail "uninstall left the active installation state behind"
+assert_contains "$REINSTALL_CONFIG/llm-router.policy.json" '"userMarker":"keep"'
+[[ ! -e "$REINSTALL_CONFIG/opencode.jsonc" ]] \
+  || fail "uninstall left fresh router control configuration active"
+bash "$INSTALLER" \
+  --config-dir "$REINSTALL_CONFIG" \
+  --backup-root "$FIXTURE/reinstall-backups" \
+  --router-path "$REPO_ROOT/route" \
+  --claude-path "$CLAUDE_PATH" >/dev/null
+jq -e '
+  .schemaVersion == 1
+  and .status == "installed"
+' "$REINSTALL_CONFIG/llm-router.install-state.json" >/dev/null \
+  || fail "reinstall did not recreate an installed state"
+jq -e '
+  .provider["router-control"] != null
+  and .command["router-uninstall"] != null
+' "$REINSTALL_CONFIG/opencode.jsonc" >/dev/null \
+  || fail "reinstall did not restore router control configuration"
+assert_contains "$REINSTALL_CONFIG/llm-router.policy.json" '"userMarker":"keep"'
+
+LEGACY_CONFIG="$FIXTURE/legacy-config"
+mkdir -p "$LEGACY_CONFIG/plugins"
+cp "$CONFIG_DIR/opencode.jsonc" "$LEGACY_CONFIG/opencode.jsonc"
+cp "$CONFIG_DIR/package.json" "$LEGACY_CONFIG/package.json"
+cp "$CONFIG_DIR/plugins/llm_router_handoff.ts" "$LEGACY_CONFIG/plugins/llm_router_handoff.ts"
+bash "$INSTALLER" \
+  --config-dir "$LEGACY_CONFIG" \
+  --backup-root "$FIXTURE/legacy-backups" \
+  --router-path "$REPO_ROOT/route" \
+  --claude-path "$CLAUDE_PATH" >/dev/null
+jq -e '
+  .schemaVersion == 1
+  and .status == "installed"
+  and .legacy == true
+  and any(
+    .managedConfig[];
+    .path == ["agent", "router"]
+      and .original.known == false
+      and .original.existed == false
+  )
+  and any(
+    .managedFiles[];
+    .relativePath == "plugins/llm_router_handoff.ts"
+      and .ownership == "legacy"
+      and .original.known == false
+  )
+' "$LEGACY_CONFIG/llm-router.install-state.json" >/dev/null \
+  || fail "legacy installation without state was not recorded conservatively"
 
 ATOMIC_CONFIG="$FIXTURE/atomic-config"
 mkdir -p "$ATOMIC_CONFIG/plugins"
@@ -518,6 +654,26 @@ assert_contains "$FIXTURE/relative-config/plugins/llm_router_handoff.ts" "const 
 assert_contains "$FIXTURE/relative-config/opencode.jsonc" "file://$RELATIVE_ROOT/relative-config/providers/claude_agent_provider.mjs"
 assert_contains "$FIXTURE/relative-config/opencode.jsonc" "file://$RELATIVE_ROOT/relative-config/providers/router_control_provider.mjs"
 assert_contains "$FIXTURE/relative-config/opencode.jsonc" "$RELATIVE_ROOT/relative-claude"
+
+CANONICAL_ROOT="$FIXTURE/canonical-root"
+ALIASED_ROOT="$FIXTURE/aliased-root"
+mkdir -p "$CANONICAL_ROOT"
+ln -s "$CANONICAL_ROOT" "$ALIASED_ROOT"
+ALIASED_CONFIG="$ALIASED_ROOT/config"
+CANONICAL_CONFIG="$CANONICAL_ROOT/config"
+bash "$INSTALLER" \
+  --config-dir "$ALIASED_CONFIG" \
+  --backup-root "$FIXTURE/aliased-backups" \
+  --router-path "$REPO_ROOT/route" \
+  --claude-path "$CLAUDE_PATH" >/dev/null
+jq -e --arg config "$CANONICAL_CONFIG" '
+  .schemaVersion == 1
+  and .status == "installed"
+  and .configDir == $config
+' "$CANONICAL_CONFIG/llm-router.install-state.json" >/dev/null \
+  || fail "install state did not persist the canonical config directory"
+assert_contains "$CANONICAL_CONFIG/opencode.jsonc" "file://$CANONICAL_CONFIG/providers/claude_agent_provider.mjs"
+assert_contains "$CANONICAL_CONFIG/opencode.jsonc" "file://$CANONICAL_CONFIG/providers/router_control_provider.mjs"
 
 SPECIAL_ROOT="$FIXTURE/special path 'single' \"double\" \\backslash"
 SPECIAL_CONFIG="$SPECIAL_ROOT/config path 'quoted' \"double\" \\backslash"

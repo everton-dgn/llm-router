@@ -128,6 +128,7 @@
             "tests/repo-query.test.mjs",
             "tests/router-control.test.mjs",
             "tests/router-handoff.test.mjs",
+            "tests/uninstall.test.mjs",
             "tests/opencode-bundle.sh"
           ],
           "commands_all": ["bash", "bun", "node", "uv"]
@@ -150,7 +151,8 @@
               "tests/claude-agent-provider.test.mjs",
               "tests/execution-policy.test.mjs",
               "tests/router-control.test.mjs",
-              "tests/repo-query.test.mjs"
+              "tests/repo-query.test.mjs",
+              "tests/uninstall.test.mjs"
             ],
             "cwd": "{project_root}",
             "untrusted_if_changed": [
@@ -159,7 +161,8 @@
               "tests/claude-agent-provider.test.mjs",
               "tests/execution-policy.test.mjs",
               "tests/router-control.test.mjs",
-              "tests/repo-query.test.mjs"
+              "tests/repo-query.test.mjs",
+              "tests/uninstall.test.mjs"
             ],
             "timeout_seconds": 180
           }

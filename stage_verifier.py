@@ -26,6 +26,7 @@ BASELINE_ROOT_NAME = "llm-router-stage-baselines"
 BASELINE_ID_PATTERN = re.compile(r"[0-9a-f]{32}")
 BASELINE_FORMAT = "llm-router-stage-baseline"
 BASELINE_VERSION = 1
+BASELINE_CONSUMED_NAME = "consumed.json"
 DEFAULT_LOG_PATH = Path(tempfile.gettempdir()) / "llm-router-stage-verifier.jsonl"
 SUCCESS_STATUSES = {"prepared", "pass", "no_changes", "no_applicable_gates"}
 SENSITIVE_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".crt"}
@@ -349,28 +350,6 @@ def _write_log(log_path: Path, event: str, **fields: Any) -> None:
         raise StageVerifierError(f"cannot write JSONL log {log_path}: {error}") from error
 
 
-def _trash_path(path: Path) -> None:
-    trash = shutil.which("trash")
-    if not trash:
-        raise StageVerifierError("trash is required for one-shot baseline cleanup")
-    try:
-        result = subprocess.run(
-            [trash, str(path)],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=30,
-            check=False,
-            shell=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise StageVerifierError(f"trash failed for {path}: {error}") from error
-    if result.returncode != 0:
-        detail = result.stderr.strip() or f"exit {result.returncode}"
-        raise StageVerifierError(f"trash failed for {path}: {detail}")
-
-
 def _baseline_root() -> Path:
     root = Path(tempfile.gettempdir()).resolve() / BASELINE_ROOT_NAME
     try:
@@ -395,9 +374,6 @@ def _baseline_directory(baseline_id: str) -> Path:
 
 
 def _write_baseline(payload: dict[str, Any], baseline_id: str) -> None:
-    trash = shutil.which("trash")
-    if not trash:
-        raise StageVerifierError("trash is required before creating a one-shot baseline")
     directory = _baseline_directory(baseline_id)
     path = directory / "baseline.json"
     try:
@@ -406,11 +382,6 @@ def _write_baseline(payload: dict[str, Any], baseline_id: str) -> None:
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             json.dump(payload, stream, sort_keys=True)
     except OSError as error:
-        if directory.exists():
-            try:
-                _trash_path(directory)
-            except StageVerifierError:
-                pass
         raise StageVerifierError(f"cannot write baseline {path}: {error}") from error
 
 
@@ -418,20 +389,27 @@ def _load_and_consume_baseline(id_value: Any) -> dict[str, Any]:
     baseline_id = _require_string(id_value, "baseline_id")
     directory = _baseline_directory(baseline_id)
     path = directory / "baseline.json"
+    consumed_path = directory / BASELINE_CONSUMED_NAME
     try:
         directory_metadata = directory.lstat()
-        file_metadata = path.lstat()
         if not stat.S_ISDIR(directory_metadata.st_mode) or stat.S_ISLNK(directory_metadata.st_mode):
             raise StageVerifierError("baseline directory is not secure")
         if stat.S_IMODE(directory_metadata.st_mode) != 0o700:
             raise StageVerifierError("baseline directory mode must be 0700")
+        if hasattr(os, "getuid") and directory_metadata.st_uid != os.getuid():
+            raise StageVerifierError("baseline has a different owner")
+        try:
+            consumed_path.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            raise StageVerifierError("baseline is missing or was already consumed")
+        file_metadata = path.lstat()
         if not stat.S_ISREG(file_metadata.st_mode) or stat.S_ISLNK(file_metadata.st_mode):
             raise StageVerifierError("baseline file is not a regular file")
         if stat.S_IMODE(file_metadata.st_mode) != 0o600:
             raise StageVerifierError("baseline file mode must be 0600")
-        if hasattr(os, "getuid") and (
-            directory_metadata.st_uid != os.getuid() or file_metadata.st_uid != os.getuid()
-        ):
+        if hasattr(os, "getuid") and file_metadata.st_uid != os.getuid():
             raise StageVerifierError("baseline has a different owner")
         payload = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
@@ -443,7 +421,20 @@ def _load_and_consume_baseline(id_value: Any) -> dict[str, Any]:
         raise StageVerifierError("unsupported baseline format")
     if baseline.get("baseline_id") != baseline_id:
         raise StageVerifierError("baseline_id does not match the stored baseline")
-    _trash_path(directory)
+    try:
+        descriptor = os.open(
+            consumed_path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+    except FileExistsError as error:
+        raise StageVerifierError("baseline is missing or was already consumed") from error
+    except OSError as error:
+        raise StageVerifierError(f"cannot consume baseline: {error}") from error
+    try:
+        os.close(descriptor)
+    except OSError as error:
+        raise StageVerifierError(f"cannot record baseline consumption: {error}") from error
     return baseline
 
 
@@ -482,17 +473,13 @@ def prepare(request: dict[str, Any]) -> dict[str, Any]:
         "dirty_fingerprints": dirty_fingerprints,
     }
     _write_baseline(baseline, baseline_id)
-    try:
-        _write_log(
-            log_path,
-            "baseline_prepared",
-            baseline_id=baseline_id,
-            head=head,
-            dirty_path_count=len(dirty_fingerprints),
-        )
-    except StageVerifierError:
-        _trash_path(_baseline_directory(baseline_id))
-        raise
+    _write_log(
+        log_path,
+        "baseline_prepared",
+        baseline_id=baseline_id,
+        head=head,
+        dirty_path_count=len(dirty_fingerprints),
+    )
     return {
         "status": "prepared",
         "baseline_id": baseline_id,

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { mkdtemp, symlink, writeFile } from "node:fs/promises"
+import { mkdtemp, rename, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import test from "node:test"
@@ -85,7 +85,10 @@ test("inspects repository data while excluding sensitive and escaping files", as
     )
     assert.equal(diffWithUntracked.files.some((item) => item.path === "untracked.txt"), true)
 
-    await execFileAsync("trash", [path.join(workspace, "large.txt")])
+    await rename(
+      path.join(workspace, "large.txt"),
+      path.join(external, "large.txt.moved"),
+    )
     const deletedDiff = await runRepositoryQuery({ action: "diff", path: "large.txt" }, workspace)
     assert.equal(deletedDiff.files.length, 1)
     assert.match(deletedDiff.files[0].diff, /deleted file mode/)
@@ -94,6 +97,7 @@ test("inspects repository data while excluding sensitive and escaping files", as
     assert.equal(log.commits.length, 1)
     assert.equal(log.commits[0].subject, "initial")
   } finally {
-    await execFileAsync("trash", [workspace, external])
+    await rename(workspace, `${workspace}.preserved`)
+    await rename(external, `${external}.preserved`)
   }
 })

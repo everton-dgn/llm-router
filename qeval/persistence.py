@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
-import subprocess
 import tempfile
 from collections import Counter
 from pathlib import Path
@@ -20,24 +18,12 @@ def _atomic_write_json(path: Path, value: dict[str, Any]) -> None:
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
     )
     temporary_path = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            json.dump(value, stream, ensure_ascii=False, indent=2)
-            stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary_path, path)
-    except Exception:
-        if temporary_path.exists():
-            trash = shutil.which("trash")
-            if trash:
-                subprocess.run(
-                    [trash, str(temporary_path)],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    check=False,
-                )
-        raise
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        json.dump(value, stream, ensure_ascii=False, indent=2)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary_path, path)
 
 
 def _load_checkpoint(path: Path) -> dict[str, Any]:

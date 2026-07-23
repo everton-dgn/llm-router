@@ -5,7 +5,9 @@ import { verifyPublishedReleaseTag } from './verify-release-tag.mjs'
 
 const releaseCommit = 'b'.repeat(40)
 const sourceCommit = 'a'.repeat(40)
-const mainCommit = 'c'.repeat(40)
+const baseCommit = 'c'.repeat(40)
+const mergeCommit = 'd'.repeat(40)
+const mainCommit = 'e'.repeat(40)
 const changelog = [
   '# Changelog',
   '',
@@ -18,33 +20,51 @@ const changelog = [
 function releaseGit(overrides = {}) {
   const responses = new Map([
     ['cat-file -t refs/tags/v0.2.0', 'tag'],
-    ['rev-list -n 1 refs/tags/v0.2.0', releaseCommit],
+    ['rev-list -n 1 refs/tags/v0.2.0', mergeCommit],
     [
       'ls-remote --exit-code --heads origin refs/heads/main',
       `${mainCommit}\trefs/heads/main`
     ],
-    [`merge-base ${releaseCommit} ${mainCommit}`, releaseCommit],
+    [`merge-base ${mergeCommit} ${mainCommit}`, mergeCommit],
+    [
+      `rev-list --parents -n 1 ${mergeCommit}`,
+      `${mergeCommit} ${baseCommit} ${releaseCommit}`
+    ],
+    [
+      `rev-list --parents -n 1 ${releaseCommit}`,
+      `${releaseCommit} ${sourceCommit}`
+    ],
+    [`merge-base ${sourceCommit} ${baseCommit}`, sourceCommit],
     [
       `log -1 --format=%s ${releaseCommit}`,
       'chore(release): cut v0.2.0'
     ],
     [
-      `diff-tree --no-commit-id --name-only -r ${releaseCommit}`,
-      'package.json'
+      `diff --name-only ${sourceCommit} ${releaseCommit}`,
+      'CHANGELOG.md\npackage.json'
     ],
     [
-      `rev-parse --verify ${releaseCommit}^1^{commit}`,
-      sourceCommit
+      `diff --name-only ${baseCommit} ${mergeCommit}`,
+      'CHANGELOG.md\npackage.json'
     ],
     [
       `show ${releaseCommit}:package.json`,
       JSON.stringify({ name: 'llm-router', version: '0.2.0' })
     ],
     [
+      `show ${mergeCommit}:package.json`,
+      JSON.stringify({ name: 'llm-router', version: '0.2.0' })
+    ],
+    [
       `show ${sourceCommit}:package.json`,
       JSON.stringify({ name: 'llm-router', version: '0.1.0' })
     ],
-    [`show ${releaseCommit}:CHANGELOG.md`, changelog]
+    [
+      `show ${baseCommit}:package.json`,
+      JSON.stringify({ name: 'llm-router', version: '0.1.0' })
+    ],
+    [`show ${releaseCommit}:CHANGELOG.md`, changelog],
+    [`show ${mergeCommit}:CHANGELOG.md`, changelog]
   ])
   for (const [key, value] of Object.entries(overrides)) responses.set(key, value)
   return args => {
@@ -54,7 +74,7 @@ function releaseGit(overrides = {}) {
   }
 }
 
-test('accepts only the annotated release commit at remote main with source CI', () => {
+test('accepts only the annotated release merge at remote main with base CI', () => {
   const ciHeads = []
   const result = verifyPublishedReleaseTag({
     tag: 'v0.2.0',
@@ -65,13 +85,15 @@ test('accepts only the annotated release commit at remote main with source CI', 
     }
   })
 
-  assert.deepEqual(ciHeads, [sourceCommit])
+  assert.deepEqual(ciHeads, [baseCommit])
   assert.deepEqual(result, {
-    parent: sourceCommit,
+    parent: baseCommit,
+    releaseHead: releaseCommit,
     repository: 'owner/repo',
     runId: 42,
+    source: sourceCommit,
     tag: 'v0.2.0',
-    tagCommit: releaseCommit
+    tagCommit: mergeCommit
   })
 })
 
@@ -92,7 +114,7 @@ test('rejects lightweight tags and tags outside remote main history', () => {
       runGit: releaseGit({
         'ls-remote --exit-code --heads origin refs/heads/main':
           `${sourceCommit}\trefs/heads/main`,
-        [`merge-base ${releaseCommit} ${sourceCommit}`]: sourceCommit
+        [`merge-base ${mergeCommit} ${sourceCommit}`]: sourceCommit
       }),
       assertCi: () => ({ repository: 'owner/repo', runId: 42 })
     }),
@@ -115,11 +137,40 @@ test('rejects release commits with the wrong subject or payload', () => {
     () => verifyPublishedReleaseTag({
       tag: 'v0.2.0',
       runGit: releaseGit({
-        [`diff-tree --no-commit-id --name-only -r ${releaseCommit}`]:
+        [`diff --name-only ${sourceCommit} ${releaseCommit}`]:
           'package.json\nREADME.md'
       }),
       assertCi: () => ({ repository: 'owner/repo', runId: 42 })
     }),
-    /must change only package.json/
+    /may also change CHANGELOG\.md/
+  )
+})
+
+test('rejects merge tags with the wrong second parent or altered merge payload', () => {
+  const unrelatedHead = 'f'.repeat(40)
+  assert.throws(
+    () => verifyPublishedReleaseTag({
+      tag: 'v0.2.0',
+      runGit: releaseGit({
+        [`rev-list --parents -n 1 ${mergeCommit}`]:
+          `${mergeCommit} ${baseCommit} ${unrelatedHead}`,
+        [`rev-list --parents -n 1 ${unrelatedHead}`]:
+          `${unrelatedHead} ${sourceCommit}`,
+        [`log -1 --format=%s ${unrelatedHead}`]: 'chore: unrelated'
+      }),
+      assertCi: () => ({ repository: 'owner/repo', runId: 42 })
+    }),
+    /Unexpected release commit subject/
+  )
+  assert.throws(
+    () => verifyPublishedReleaseTag({
+      tag: 'v0.2.0',
+      runGit: releaseGit({
+        [`show ${mergeCommit}:CHANGELOG.md`]:
+          changelog.replace('Release notes.', 'Altered after validation.')
+      }),
+      assertCi: () => ({ repository: 'owner/repo', runId: 42 })
+    }),
+    /must match the validated release branch/
   )
 })

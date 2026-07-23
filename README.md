@@ -11,8 +11,8 @@ The composer always stays on the primary `router` agent. The plugin changes the
 effective worker for the current message and displays that destination in the
 OpenCode interface.
 
-> Project status: pre-1.0 and under active development. The current integration
-> is pinned to OpenCode 1.18.4. Review the
+> Project status: stable 1.x and under active development. The current
+> integration is pinned to OpenCode 1.18.4. Review the
 > [compatibility contract](docs/compatibility.md) before upgrading OpenCode or
 > the provider SDKs.
 
@@ -100,7 +100,7 @@ warning.
 - Python 3.11 or newer through `uv`, for benchmarks and Python tests;
 - Ollama with the configured local classifier;
 - Claude Code installed and authenticated;
-- `curl`, `jq`, `trash`, and a POSIX shell;
+- `curl`, `jq`, and a POSIX shell;
 - OpenAI authenticated in OpenCode;
 - `MINIMAX_API_KEY` and `ZAI_API_KEY` in the environment that starts OpenCode.
 
@@ -174,11 +174,19 @@ The default session uses `adaptive + native`.
 /router-native
 /router-restricted
 /router-full
+/router-uninstall
 ```
 
 Routing commands preserve the current execution profile. Profile commands
 preserve the current routing mode. The control provider handles these commands
 locally without calling an LLM.
+
+`/router-uninstall` first previews the exact changes and returns a confirmation
+token. Run `/router-uninstall <token>` to apply the preview only while the
+fingerprints of the affected files still match. The command preserves the
+user-created policy, saves shared configuration before editing it, and moves
+bundle files into a timestamped recovery directory. Restart OpenCode after it
+completes. See [uninstall and rollback](docs/uninstall.md) for the full contract.
 
 ## Claude Agent SDK integration
 
@@ -226,7 +234,7 @@ the agent-specific debug commands documented in
 | [Development](docs/development.md) | Local validation and contribution workflow |
 | [Troubleshooting](docs/troubleshooting.md) | Diagnostics and safe recovery |
 | [Release](docs/RELEASE.md) | Changelog, SemVer, tags, and GitHub Releases |
-| [Public repository checklist](docs/publication-checklist.md) | Visibility and security publication gates |
+| [Public repository checklist](docs/publication-checklist.md) | Repository controls, security reporting, and publication maintenance |
 | [Benchmark](BENCHMARK.md) | Offline methodology, results, and limitations |
 
 ## Development
