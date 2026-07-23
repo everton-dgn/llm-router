@@ -220,7 +220,7 @@ assert_contains "$REPO_ROOT/opencode/tools/repo_query.ts" 'runRepositoryQuery(ar
 assert_not_contains "$REPO_ROOT/README.md" 'somente a última mensagem do usuário'
 assert_not_contains "$REPO_ROOT/README.md" 'como um teto conservador de bytes UTF-8'
 assert_not_contains "$REPO_ROOT/README.md" 'Instala as dependências pinadas'
-jq -e '.dependencies == {"@anthropic-ai/claude-agent-sdk":"0.3.216","@opencode-ai/plugin":"1.18.4","@opencode-ai/sdk":"1.18.4"}' "$REPO_ROOT/opencode/package.json" >/dev/null || fail "bundle dependencies are not pinned"
+jq -e '.dependencies == {"@anthropic-ai/claude-agent-sdk":"0.3.218","@opencode-ai/plugin":"1.18.4","@opencode-ai/sdk":"1.18.4"}' "$REPO_ROOT/opencode/package.json" >/dev/null || fail "bundle dependencies are not pinned"
 jq -e '
   .verification.rules[]
   | select(.name == "llm-router-opencode-tests")
@@ -465,7 +465,7 @@ jq -e '.dependencies["user-package"] == "7.0.0"' "$CONFIG_DIR/package.json" >/de
 jq -e '.scripts.keep == "true"' "$CONFIG_DIR/package.json" >/dev/null || fail "package merge removed user script"
 jq -e '.dependencies["@opencode-ai/plugin"] == "1.18.4"' "$CONFIG_DIR/package.json" >/dev/null || fail "plugin dependency was not pinned"
 jq -e '.dependencies["@opencode-ai/sdk"] == "1.18.4"' "$CONFIG_DIR/package.json" >/dev/null || fail "OpenCode SDK dependency was not pinned"
-jq -e '.dependencies["@anthropic-ai/claude-agent-sdk"] == "0.3.216"' "$CONFIG_DIR/package.json" >/dev/null || fail "Claude Agent SDK dependency was not pinned"
+jq -e '.dependencies["@anthropic-ai/claude-agent-sdk"] == "0.3.218"' "$CONFIG_DIR/package.json" >/dev/null || fail "Claude Agent SDK dependency was not pinned"
 
 printf '%s\n' '{"schemaVersion":1,"defaultProfile":"full"}' | tee "$CONFIG_DIR/llm-router.policy.json" >/dev/null
 

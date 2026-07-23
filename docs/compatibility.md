@@ -11,7 +11,8 @@ Treat upgrades to any of these surfaces as compatibility changes.
 | OpenCode | 1.18.4 | Plugin transport and bundle tests |
 | `@opencode-ai/plugin` | 1.18.4 | Pinned in `opencode/package.json` |
 | `@opencode-ai/sdk` | 1.18.4 | Pinned in `opencode/package.json` |
-| `@anthropic-ai/claude-agent-sdk` | 0.3.216 | Pinned in `opencode/package.json` |
+| `@anthropic-ai/claude-agent-sdk` | 0.3.218 | Pinned in `opencode/package.json` |
+| pnpm | 11.16.0 | Pinned in the root `packageManager` field and CI |
 | Node.js | 22.22.2, 24.15.0, or a newer supported release | Package engine, dependency engine, and CI |
 | Python | 3.11 or newer | `uv` unit tests and benchmark validation |
 | macOS | Supported | Local development and installer tests |
@@ -23,7 +24,8 @@ platform matrix above. Executing benchmark assertions that run untrusted Python
 or commands currently requires macOS, `/usr/bin/sandbox-exec`, and the Python
 executable from a full Xcode installation at
 `/Applications/Xcode.app/Contents/Developer/usr/bin/python3`. Configuration
-validation and the Python unit tests do not require that benchmark sandbox.
+validation and the portable Python unit tests do not require that benchmark
+sandbox. Sandbox integration tests run on macOS and are skipped elsewhere.
 
 The Claude Code executable is validated by capabilities instead of a hardcoded
 version. During installation, `opencode/install.sh` reads `claude --help` and
