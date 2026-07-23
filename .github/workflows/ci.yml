@@ -125,7 +125,7 @@ jobs:
         shell: bash
         run: |
           pnpm install --frozen-lockfile
-          pnpm --ignore-workspace --dir opencode install --frozen-lockfile --no-optional
+          pnpm --dir opencode install --frozen-lockfile --no-optional
 
       - name: Run deterministic test gate
         shell: bash
