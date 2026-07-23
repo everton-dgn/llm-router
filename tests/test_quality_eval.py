@@ -50,8 +50,10 @@ from quality_eval import (
 )
 
 requires_benchmark_sandbox = unittest.skipUnless(
-    sys.platform == "darwin" and Path("/usr/bin/sandbox-exec").is_file(),
-    "requires macOS /usr/bin/sandbox-exec",
+    sys.platform == "darwin"
+    and Path("/usr/bin/sandbox-exec").is_file()
+    and quality_eval.SANDBOX_PYTHON.is_file(),
+    "requires the macOS benchmark sandbox and Xcode Python",
 )
 
 
