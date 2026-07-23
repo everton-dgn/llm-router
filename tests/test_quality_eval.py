@@ -49,6 +49,11 @@ from quality_eval import (
     write_anonymous_review_packets,
 )
 
+requires_benchmark_sandbox = unittest.skipUnless(
+    sys.platform == "darwin" and Path("/usr/bin/sandbox-exec").is_file(),
+    "requires macOS /usr/bin/sandbox-exec",
+)
+
 
 def make_dataset(cases: list[dict[str, object]]) -> dict[str, object]:
     return validate_dataset({"version": 1, "cases": cases})
@@ -307,6 +312,7 @@ class AssertionTests(unittest.TestCase):
         if cleanup_error:
             self.fail(cleanup_error)
 
+    @requires_benchmark_sandbox
     def test_weighted_scoring_and_json_code_fence(self) -> None:
         (self.cwd / "result.txt").write_text("done\n", encoding="utf-8")
         (self.cwd / "test_ok.py").write_text("raise SystemExit(0)\n", encoding="utf-8")
@@ -610,6 +616,7 @@ class AssertionTests(unittest.TestCase):
         self.assertEqual(len(results), 8)
         self.assertTrue(all(result["passed"] for result in results))
 
+    @requires_benchmark_sandbox
     def test_python_behavior_runs_fixed_probes_without_public_expected_values(self) -> None:
         (self.cwd / "mathutil.py").write_text(
             "def add(left, right):\n"
@@ -661,6 +668,7 @@ class AssertionTests(unittest.TestCase):
         )
         self.assertNotIn("expected", json.dumps(results, ensure_ascii=False))
 
+    @requires_benchmark_sandbox
     def test_python_behavior_allows_imports_from_the_fixture(self) -> None:
         (self.cwd / "money.py").write_text(
             "def format_usd(cents):\n    return f'${cents / 100:.2f}'\n",
@@ -700,6 +708,7 @@ class AssertionTests(unittest.TestCase):
         self.assertEqual(score, 100.0)
         self.assertTrue(results[0]["passed"])
 
+    @requires_benchmark_sandbox
     def test_python_behavior_expected_secret_never_reaches_child_frames(self) -> None:
         (self.cwd / "probe.py").write_text(
             "import sys\n\n"
@@ -801,6 +810,7 @@ class AssertionTests(unittest.TestCase):
         self.assertEqual(set(captured), {"module", "call", "args", "kwargs"})
         self.assertNotIn("SECRET_CHILD_MARKER", json.dumps(captured))
 
+    @requires_benchmark_sandbox
     def test_python_behavior_blocks_external_file_write(self) -> None:
         external_path = Path("/tmp/llm-router-quality-sandbox-write-probe-20260721.txt")
         self.assertFalse(external_path.exists())
@@ -840,6 +850,7 @@ class AssertionTests(unittest.TestCase):
         self.assertTrue(results[0]["passed"])
         self.assertFalse(external_path.exists())
 
+    @requires_benchmark_sandbox
     def test_python_behavior_blocks_external_file_read(self) -> None:
         external_root = Path(tempfile.mkdtemp(prefix="llm-router-quality-external-"))
         external_path = external_root / "secret.txt"
@@ -925,6 +936,7 @@ class AssertionTests(unittest.TestCase):
                     }
                 )
 
+    @requires_benchmark_sandbox
     def test_python_test_mutants_require_reference_pass_and_kill_all_mutants(self) -> None:
         (self.cwd / "parity.py").write_text(
             "def is_even(value):\n    return value % 2 == 0\n", encoding="utf-8"
@@ -1087,6 +1099,7 @@ class AssertionTests(unittest.TestCase):
                 self.assertFalse(results[0]["passed"])
                 self.assertIn("AST guard", results[0]["error"])
 
+    @requires_benchmark_sandbox
     def test_python_test_mutants_runtime_blocks_concatenated_source_gaming(self) -> None:
         (self.cwd / "parity.py").write_text(
             "def is_even(value):\n    return value % 2 == 0\n", encoding="utf-8"

@@ -24,7 +24,8 @@ platform matrix above. Executing benchmark assertions that run untrusted Python
 or commands currently requires macOS, `/usr/bin/sandbox-exec`, and the Python
 executable from a full Xcode installation at
 `/Applications/Xcode.app/Contents/Developer/usr/bin/python3`. Configuration
-validation and the Python unit tests do not require that benchmark sandbox.
+validation and the portable Python unit tests do not require that benchmark
+sandbox. Sandbox integration tests run on macOS and are skipped elsewhere.
 
 The Claude Code executable is validated by capabilities instead of a hardcoded
 version. During installation, `opencode/install.sh` reads `claude --help` and
