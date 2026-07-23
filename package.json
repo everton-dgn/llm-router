@@ -11,7 +11,7 @@
   "engines": {
     "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   },
-  "packageManager": "pnpm@11.15.1",
+  "packageManager": "pnpm@11.16.0",
   "scripts": {
     "commitlint": "commitlint",
     "hooks:check": "lefthook validate && commitlint --print-config json >/dev/null",
