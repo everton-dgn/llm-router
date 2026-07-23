@@ -117,13 +117,15 @@ jobs:
       - name: Install macOS system dependencies
         if: runner.os == 'macOS'
         shell: bash
-        run: brew install jq trash
+        run: |
+          brew install jq trash
+          echo "$(brew --prefix trash)/bin" >> "$GITHUB_PATH"
 
       - name: Install pinned OpenCode dependencies
         shell: bash
         run: |
           pnpm install --frozen-lockfile
-          pnpm --dir opencode install --frozen-lockfile --no-optional
+          pnpm --ignore-workspace --dir opencode install --frozen-lockfile --no-optional
 
       - name: Run deterministic test gate
         shell: bash
