@@ -1,4 +1,4 @@
-"""Helpers textuais: truncamento, JSON path, regex e serialização/hash."""
+"""Text helpers for truncation, JSON paths, regex, serialization, and hashing."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ def _truncate_capture(value: str | bytes, limit: int = constants.MAX_CAPTURE_CHA
         value = value.decode("utf-8", errors="replace")
     if len(value) <= limit:
         return value
-    return value[:limit] + "\n[conteúdo truncado pelo benchmark]"
+    return value[:limit] + "\n[content truncated by benchmark]"
 
 
 def _json_path_values(value: Any, dotted_path: str) -> list[Any]:
@@ -52,7 +52,7 @@ def _regex_result(pattern: str, value: str) -> bool:
 
 
 def _reject_non_json_constant(value: str) -> None:
-    raise ValueError(f"constante não permitida em JSON estrito: {value}")
+    raise ValueError(f"constant not allowed in strict JSON: {value}")
 
 
 def _sha256_json(value: Any) -> str:

@@ -1,4 +1,4 @@
-"""Executor efetivo do benchmark e fábrica de callable de execução."""
+"""Benchmark executor implementation and execution callable factory."""
 
 from __future__ import annotations
 

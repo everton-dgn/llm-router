@@ -7,11 +7,11 @@ ROUTE_COMMAND="${LLM_ROUTER_ROUTE:-$REPO_DIR/route}"
 MIN_ACCURACY="${ROUTING_EVAL_MIN_ACCURACY:-100}"
 
 [[ -x "$ROUTE_COMMAND" ]] || {
-  printf 'erro: route nao executavel em %s\n' "$ROUTE_COMMAND" >&2
+  printf 'error: route is not executable at %s\n' "$ROUTE_COMMAND" >&2
   exit 2
 }
 if [[ ! "$MIN_ACCURACY" =~ ^[0-9]+$ ]] || (( MIN_ACCURACY < 0 || MIN_ACCURACY > 100 )); then
-  printf 'erro: ROUTING_EVAL_MIN_ACCURACY precisa estar entre 0 e 100\n' >&2
+  printf 'error: ROUTING_EVAL_MIN_ACCURACY must be between 0 and 100\n' >&2
   exit 2
 fi
 
@@ -85,7 +85,7 @@ for row in "${cases[@]}"; do
   expected="${row%%|*}"
   prompt="${row#*|}"
   output="$($ROUTE_COMMAND --classify --json "$prompt" 2>&1)" || {
-    printf 'ERRO esperado=%-7s obtido=falha   %s\n' "$expected" "$prompt"
+    printf 'ERROR expected=%-7s actual=failure %s\n' "$expected" "$prompt"
     total=$((total + 1))
     continue
   }
@@ -95,7 +95,7 @@ for row in "${cases[@]}"; do
     (.route | IN("minimax", "glm", "claude", "codex")) and
     (keys | sort == ["intent", "route", "schema_version"])
   ' <<<"$output" >/dev/null; then
-    printf 'ERRO esperado=%-7s obtido=contrato-invalido %s\n' "$expected" "$prompt"
+    printf 'ERROR expected=%-7s actual=invalid-contract %s\n' "$expected" "$prompt"
     total=$((total + 1))
     continue
   fi
@@ -104,12 +104,12 @@ for row in "${cases[@]}"; do
   if [[ "$selected" == "$expected" ]]; then
     correct=$((correct + 1))
   else
-    printf 'ERRO esperado=%-7s obtido=%-7s %s\n' "$expected" "${selected:-vazio}" "$prompt"
+    printf 'ERROR expected=%-7s actual=%-7s %s\n' "$expected" "${selected:-empty}" "$prompt"
   fi
 done
 
 accuracy=$((100 * correct / total))
-printf 'roteamento: %d/%d (%d%%), minimo=%d%%\n' "$correct" "$total" "$accuracy" "$MIN_ACCURACY"
+printf 'routing: %d/%d (%d%%), minimum=%d%%\n' "$correct" "$total" "$accuracy" "$MIN_ACCURACY"
 (( accuracy >= MIN_ACCURACY )) || exit 1
 
 checkpoint_input='{"schema_version":1,"session_id":"eval-session","source":{"first_message_id":"checkpoint:old","last_message_id":"user-2","previous_compaction_id":"compaction-old","selected_message_count":4},"prior_compaction_ids":["compaction-old"],"messages":[{"role":"assistant","content":"Previous verified checkpoint. Fato anterior: a porta OTLP é 4317. Restrição: não usar serviço remoto."},{"role":"user","content":"Nova decisão: Manual permanece fixo."},{"role":"assistant","content":"Decisão confirmada."},{"role":"user","content":"Pendência: validar compactação."}]}'
@@ -119,13 +119,13 @@ jq -e '
   and (.summary | type == "string" and length > 0)
   and (keys | sort == ["schema_version", "summary"])
 ' <<<"$checkpoint_output" >/dev/null || {
-  printf 'erro: contrato inválido do checkpoint local: %s\n' "$checkpoint_output" >&2
+  printf 'error: invalid local checkpoint contract: %s\n' "$checkpoint_output" >&2
   exit 1
 }
 checkpoint_summary=$(jq -r '.summary' <<<"$checkpoint_output")
 for retained in '4317' 'manual' 'compact' 'remot'; do
   grep -Fi "$retained" <<<"$checkpoint_summary" >/dev/null || {
-    printf 'erro: checkpoint local perdeu o marcador %s: %s\n' "$retained" "$checkpoint_summary" >&2
+    printf 'error: local checkpoint lost marker %s: %s\n' "$retained" "$checkpoint_summary" >&2
     exit 1
   }
 done

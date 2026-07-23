@@ -1,4 +1,4 @@
-"""Fixtures, snapshots, auditoria de arquivos e descarte temporário."""
+"""Fixtures, snapshots, file auditing, and temporary cleanup."""
 
 from __future__ import annotations
 
@@ -21,16 +21,16 @@ def trash_directory(path: Path) -> str | None:
     try:
         resolved = path.resolve(strict=True)
     except OSError as error:
-        return f"diretório temporário inválido: {error}"
+        return f"invalid temporary directory: {error}"
     if (
         not path.is_absolute()
         or not resolved.is_relative_to(temp_root)
         or not resolved.name.startswith(constants.TEMP_PREFIX)
     ):
-        return f"trash recusado para caminho fora dos fixtures do benchmark: {path}"
+        return f"trash refused path outside benchmark fixtures: {path}"
     trash = shutil.which("trash")
     if not trash:
-        return f"trash não encontrado; diretório temporário preservado em {path}"
+        return f"trash not found; temporary directory preserved at {path}"
     try:
         completed = subprocess.run(
             [trash, str(resolved)],
@@ -40,10 +40,10 @@ def trash_directory(path: Path) -> str | None:
             check=False,
         )
     except OSError as error:
-        return f"trash falhou para {resolved}: {error}"
+        return f"trash failed for {resolved}: {error}"
     if completed.returncode != 0:
         detail = completed.stderr.strip() or f"exit code {completed.returncode}"
-        return f"trash falhou para {resolved}: {detail}"
+        return f"trash failed for {resolved}: {detail}"
     return None
 
 

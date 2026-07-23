@@ -1,27 +1,37 @@
-# Documentação do llm-router
+# llm-router documentation
 
-O llm-router mantém uma conversa do OpenCode e escolhe, por mensagem, qual worker deve executá-la. A seleção de modelo e o controle de ferramentas são eixos independentes.
+The primary [README](../README.md) and all public documentation in this
+directory are maintained in English.
 
-## Por onde começar
+## Start here
 
-| Documento | Quando usar |
-| --- | --- |
-| [Início rápido](quick-start.md) | Instalar, atualizar e executar os primeiros comandos |
-| [Modos de roteamento](routing-modes.md) | Entender `auto`, `adaptive`, `pinned`, contexto, retomada e fork |
-| [Políticas de execução](execution-policies.md) | Escolher `native`, `restricted` ou `full` e configurar permissões |
-| [Claude via Agent SDK](claude.md) | Entender contexto, anexos, subtasks, ferramentas e autenticação do Claude |
-| [Diagnóstico e segurança](troubleshooting.md) | Corrigir falhas e configurar modelos pequenos ou loops longos |
+| Document | Purpose | Language |
+| --- | --- | --- |
+| [Quick start](quick-start.md) | Install, update, and run the first commands | English |
+| [Routing modes](routing-modes.md) | Understand `auto`, `adaptive`, `pinned`, context, resume, and fork | English |
+| [Execution policies](execution-policies.md) | Configure `native`, `restricted`, or `full` permissions | English |
+| [Claude Agent SDK](claude.md) | Context, attachments, subtasks, tools, and authentication | English |
+| [Troubleshooting and security](troubleshooting.md) | Diagnose failures and constrain long loops | English |
+| [Compatibility](compatibility.md) | Supported versions, operating systems, and upgrade boundaries | English |
+| [Privacy and costs](privacy-and-costs.md) | Data flow, credentials, and provider billing | English |
+| [Uninstall and rollback](uninstall.md) | Restore a backup or remove the installed bundle | English |
+| [Development](development.md) | Repository setup, validation, and contribution workflow | English |
+| [Release](RELEASE.md) | Changelog, SemVer, tags, and GitHub Releases | English |
+| [Public repository checklist](publication-checklist.md) | Visibility, security channel, and launch gates | English |
+| [Benchmark](../BENCHMARK.md) | Offline methodology, results, and limitations | English |
 
-## Modelo mental
+## Mental model
 
-Uma sessão tem duas decisões separadas:
+A session carries two separate decisions:
 
-1. O modo de roteamento decide quando o worker pode mudar.
-2. O perfil de execução decide quais ferramentas e limites o worker recebe.
+1. The routing mode decides when the worker can change.
+2. The execution profile decides which tools and limits the worker receives.
 
-Exemplo: `adaptive + restricted` pode trocar de GLM para Codex quando o risco aumenta, mas mantém as restrições de ferramentas. `pinned + native` fixa o primeiro worker e deixa cada provider operar com o comportamento nativo.
+For example, `adaptive + restricted` can move from GLM to Codex when risk
+increases while preserving the tool restrictions. `pinned + native` keeps the
+first worker and lets each provider operate with its native behavior.
 
-Os componentes que implementam esse contrato ficam em:
+The main contract implementations are:
 
 - [`opencode/lib/adaptive_routing.mjs`](../opencode/lib/adaptive_routing.mjs)
 - [`opencode/lib/direct_handoff.mjs`](../opencode/lib/direct_handoff.mjs)

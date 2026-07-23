@@ -1,4 +1,4 @@
-"""Orquestração, paralelismo, resume e checkpoint do benchmark."""
+"""Benchmark orchestration, parallelism, resume, and checkpoint handling."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ def run_benchmark(
     call_count = manifest["physical_call_count"]
     if call_count > max_calls:
         raise EvaluationError(
-            f"benchmark exigiria {call_count} chamadas, acima de --max-calls={max_calls}"
+            f"benchmark would require {call_count} calls, above --max-calls={max_calls}"
         )
     selected_cases = [
         case
@@ -95,28 +95,28 @@ def run_benchmark(
         if checkpoint_path.exists():
             if not resume:
                 raise EvaluationError(
-                    f"checkpoint já existe; use --resume para retomar: {checkpoint_path}"
+                    f"checkpoint already exists; use --resume to continue: {checkpoint_path}"
                 )
             checkpoint = _load_checkpoint(checkpoint_path)
             stored_manifest = checkpoint["manifest"]
             stored_fingerprint = stored_manifest.get("execution_fingerprint")
             if not isinstance(stored_fingerprint, dict):
                 raise EvaluationError(
-                    "checkpoint legado sem execution_fingerprint; "
-                    "retomada segura indisponível"
+                    "legacy checkpoint without execution_fingerprint; "
+                    "safe resume is unavailable"
                 )
             if stored_fingerprint.get("sha256") != manifest[
                 "execution_fingerprint"
             ].get("sha256"):
                 raise EvaluationError(
-                    "checkpoint diverge do perfil efetivo, versões das CLIs ou engine"
+                    "checkpoint differs from the effective profile, CLI versions, or engine"
                 )
             if stored_manifest.get("plan_sha256") != manifest["plan_sha256"]:
                 raise EvaluationError(
-                    "checkpoint diverge da config, dataset, rubricas, rotas ou ordem atuais"
+                    "checkpoint differs from the current config, dataset, rubrics, routes, or order"
                 )
             if set(checkpoint["slots"]) != set(slot_definitions):
-                raise EvaluationError("checkpoint diverge das chaves de slot planejadas")
+                raise EvaluationError("checkpoint differs from the planned slot keys")
             changed = False
             for slot in checkpoint["slots"].values():
                 if slot.get("state") == "running":
@@ -137,13 +137,13 @@ def run_benchmark(
             required_budget = call_count + historical_extra_budget
             if required_budget > max_calls:
                 raise EvaluationError(
-                    "checkpoint com retries ambiguous já reservados exige "
+                    "checkpoint with already reserved ambiguous retries requires "
                     f"--max-calls>={required_budget}"
                 )
             if ambiguous and not retry_ambiguous:
                 raise EvaluationError(
-                    f"checkpoint contém {len(ambiguous)} slot(s) ambiguous; "
-                    "use --retry-ambiguous e aumente --max-calls explicitamente"
+                    f"checkpoint contains {len(ambiguous)} ambiguous slot(s); "
+                    "use --retry-ambiguous and explicitly increase --max-calls"
                 )
             if ambiguous:
                 new_extra_budget = sum(
@@ -152,7 +152,7 @@ def run_benchmark(
                 required_budget += new_extra_budget
                 if required_budget > max_calls:
                     raise EvaluationError(
-                        f"retry de slots ambiguous exige --max-calls>={required_budget}"
+                        f"retrying ambiguous slots requires --max-calls>={required_budget}"
                     )
                 for key in ambiguous:
                     checkpoint["slots"][key]["state"] = "planned"
@@ -163,7 +163,7 @@ def run_benchmark(
                 _atomic_write_json(checkpoint_path, checkpoint)
         else:
             if resume:
-                raise EvaluationError(f"checkpoint não existe para --resume: {checkpoint_path}")
+                raise EvaluationError(f"checkpoint does not exist for --resume: {checkpoint_path}")
             checkpoint = {
                 "version": 2,
                 "created_at": datetime.now(timezone.utc).isoformat(),
@@ -181,7 +181,7 @@ def run_benchmark(
             }
             _atomic_write_json(checkpoint_path, checkpoint)
     elif resume or retry_ambiguous:
-        raise EvaluationError("--resume e --retry-ambiguous exigem --checkpoint")
+        raise EvaluationError("--resume and --retry-ambiguous require --checkpoint")
 
     indexed_results: dict[int, dict[str, Any]] = {}
     if checkpoint is not None:
@@ -193,11 +193,11 @@ def run_benchmark(
             key = _result_key(result["route"], result["case_id"], result["repetition"])
             definition = slot_definitions.get(key)
             if definition is None:
-                raise EvaluationError(f"checkpoint contém resultado desconhecido: {key}")
+                raise EvaluationError(f"checkpoint contains an unknown result: {key}")
             if checkpoint["slots"][key].get("state") != "completed":
-                raise EvaluationError(f"checkpoint possui resultado fora de completed: {key}")
+                raise EvaluationError(f"checkpoint contains a result outside completed state: {key}")
             if definition["item_index"] in indexed_results:
-                raise EvaluationError(f"checkpoint possui resultado duplicado: {key}")
+                raise EvaluationError(f"checkpoint contains a duplicate result: {key}")
             indexed_results[definition["item_index"]] = result
         resumed_slots = len(indexed_results)
 
@@ -220,9 +220,9 @@ def run_benchmark(
         if progress:
             completed = len(indexed_results)
             print(
-                f"progresso: {completed}/{len(manifest['slots'])} slots "
-                f"ordem={result['execution_order']} rota={result['route']} "
-                f"caso={result['case_id']} repetição={result['repetition']} "
+                f"progress: {completed}/{len(manifest['slots'])} slots "
+                f"order={result['execution_order']} route={result['route']} "
+                f"case={result['case_id']} repetition={result['repetition']} "
                 f"status={result['status']} score={result['score']:.2f}%",
                 file=sys.stderr,
                 flush=True,

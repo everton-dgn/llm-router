@@ -1,165 +1,210 @@
-# Claude via Agent SDK
+# Claude through the Agent SDK
 
-Claude Opus 4.8 é exposto ao OpenCode pelo provider local `claude-agent`. O provider implementa `LanguageModelV3` e chama `query()` de `@anthropic-ai/claude-agent-sdk`.
+Claude Opus 4.8 is exposed to OpenCode through the local `claude-agent`
+provider. The provider implements `LanguageModelV3` and calls `query()` from
+`@anthropic-ai/claude-agent-sdk`.
 
-O executável oficial já instalado continua responsável pela autenticação. O adapter recebe o caminho absoluto por `pathToClaudeCodeExecutable` e não lê nem copia tokens.
+The already installed official executable remains responsible for
+authentication. The adapter receives its absolute path through
+`pathToClaudeCodeExecutable`, does not search files for credentials, and does
+not persist credentials. It filters the parent environment and passes allowed
+`ANTHROPIC_` and `CLAUDE_` authentication variables to the subprocess.
 
-## Fluxo
+## Flow
 
 ```text
-mensagem do OpenCode
-  -> contexto ativo v2
-  -> projeção sanitizada e limitada
-  -> SDKUserMessage tipada
-  -> query() do Claude Agent SDK
-  -> ferramentas nativas do Claude Code
-  -> stream e resultado na mesma sessão do OpenCode
+OpenCode message
+  -> active v2 context
+  -> sanitized, bounded projection
+  -> typed SDKUserMessage
+  -> query() from the Claude Agent SDK
+  -> native Claude Code tools
+  -> stream and result in the same OpenCode session
 ```
 
-Os arquivos principais são:
+The main files are:
 
 - [`opencode/providers/claude_agent_provider.mjs`](../opencode/providers/claude_agent_provider.mjs)
 - [`opencode/lib/claude_agent.mjs`](../opencode/lib/claude_agent.mjs)
 - [`opencode/lib/claude_context.mjs`](../opencode/lib/claude_context.mjs)
 - [`opencode/lib/claude_checkpoint.mjs`](../opencode/lib/claude_checkpoint.mjs)
 
-## Contexto entre modelos
+<a id="context-across-models"></a>
 
-O OpenCode continua como fonte da conversa. O adapter não persiste uma sessão paralela do Claude.
+## Context across models
 
-Antes da chamada, o plugin lê `v2.session.context` e monta uma sequência tipada:
+OpenCode remains the source of the conversation. The adapter does not persist a
+parallel Claude session.
 
-- mensagens históricas usam `shouldQuery: false`;
-- a última mensagem é sempre o pedido atual do usuário;
-- texto sintético, raciocínio e histórico arbitrário de tools ficam fora;
-- resultados concluídos de `task` ou `agent` podem entrar como contexto reportado;
-- mensagens posteriores ao ID atual ficam fora.
+Before the call, the plugin reads `v2.session.context` and builds a typed
+sequence:
 
-Isso permite o seguinte fluxo:
+- historical messages use `shouldQuery: false`;
+- the last message is always the user's current request;
+- synthetic text, reasoning, and arbitrary tool history are excluded;
+- completed `task` or `agent` results may be included as reported context;
+- messages after the current ID are excluded.
+
+This supports the following flow:
 
 ```text
-Turno 1: GLM investiga a configuração
-Turno 2: router escolhe Claude
-Turno 2 do Claude: recebe a conversa ativa, inclusive a resposta visível do GLM
+Turn 1: GLM investigates the configuration
+Turn 2: router selects Claude
+Claude turn 2: receives the active conversation, including GLM's visible response
 ```
 
-O limite de transporte é 2 MiB, com reserva para o envelope. A mensagem atual sempre tem prioridade. Mensagens antigas são escolhidas de trás para frente e podem ser descartadas para caber. Esse teto mede bytes serializados e não estima tokens.
+The transport limit is 2 MiB, with space reserved for the envelope. The current
+message always has priority. Older messages are selected from newest to oldest
+and may be dropped to fit. This ceiling measures serialized bytes and does not
+estimate tokens.
 
-## Anexos
+## Attachments
 
-O pedido atual pode levar texto e os seguintes tipos:
+The current request may include text and the following types:
 
-| Categoria | MIME types |
+| Category | MIME types |
 | --- | --- |
-| Imagem | `image/gif`, `image/jpeg`, `image/png`, `image/webp` |
+| Image | `image/gif`, `image/jpeg`, `image/png`, `image/webp` |
 | PDF | `application/pdf` |
-| Texto | `text/plain` |
+| Text | `text/plain` |
 
-Imagem e PDF aceitam dados locais codificados e URLs `http` ou `https`. Texto remoto precisa chegar como conteúdo, não como URL arbitrária. Nomes de arquivo entram somente como metadata não confiável e são normalizados antes do prompt.
+Images and PDFs accept encoded local data and `http` or `https` URLs. Remote
+text must arrive as content, not as an arbitrary URL. File names are treated
+only as untrusted metadata and normalized before entering the prompt.
 
-Exemplos de uso no composer:
+Examples in the composer:
 
 ```text
-[anexe architecture.png]
-compare este diagrama com a implementação atual
+[attach architecture.png]
+compare this diagram with the current implementation
 ```
 
 ```text
-[anexe contract.pdf]
-liste as obrigações e aponte cláusulas contraditórias
+[attach contract.pdf]
+list the obligations and identify contradictory clauses
 ```
 
 ```text
-[anexe notes.txt]
-transforme estas notas em um plano de implementação
+[attach notes.txt]
+turn these notes into an implementation plan
 ```
 
-Base64 inválido, MIME divergente, URL com protocolo diferente de HTTP/HTTPS e anexo acima do orçamento geram erro explícito. Anexos históricos incompatíveis são descartados; o anexo atual incompatível interrompe a chamada.
+Invalid base64, mismatched MIME types, URLs that do not use HTTP or HTTPS, and
+attachments over budget produce an explicit error. Incompatible historical
+attachments are dropped; an incompatible current attachment stops the call.
 
-## Menções e subtasks
+## Mentions and subtasks
 
-Quando Claude é o worker escolhido, o runtime resolve até quatro menções `@agent` antes de montar o contexto do SDK. Cada menção recebe uma sessão filha do OpenCode com:
+When Claude is the selected worker, the runtime resolves up to four `@agent`
+mentions before building the SDK context. Each mention receives an OpenCode
+child session with:
 
-- `parentID` apontando para a conversa atual;
-- o agente mencionado como executor;
-- a política efetiva desse agente;
-- texto e anexos do pedido atual.
+- `parentID` pointing to the current conversation;
+- the mentioned agent as the executor;
+- that agent's effective policy;
+- the current request's text and attachments.
 
-As sessões filhas rodam em paralelo. O runtime espera cada uma, lê a última resposta válida de `assistant` e limita o resultado a 256 KiB. A menção original é substituída por esse texto concluído. Claude recebe o resultado dentro do pedido atual, sem metadata `agent` pendente.
+Child sessions run in parallel. The runtime waits for each one, reads its latest
+valid `assistant` response, and limits the result to 256 KiB. The original
+mention is replaced by that completed text. Claude receives the result inside
+the current request without pending `agent` metadata.
 
-Agentes gerenciados pelo router, como `router`, `router-control`, `router-auto`, `router-adaptive` e `router-manual`, não podem ser mencionados como subtasks. O perfil `restricted` também aplica `max_child_depth` antes de criar a sessão filha.
+Router-managed agents such as `router`, `router-control`, `router-auto`,
+`router-adaptive`, and `router-manual` cannot be mentioned as subtasks. The
+`restricted` profile also applies `max_child_depth` before creating the child
+session.
 
-O contexto histórico aceita resultados já concluídos das ferramentas `task` e `agent`. O texto é marcado como resultado reportado e não como instrução confiável. Resultados compactados, incompletos ou com formato inválido ficam fora.
+Historical context accepts already completed results from the `task` and
+`agent` tools. The text is marked as a reported result instead of a trusted
+instruction. Compacted, incomplete, or malformed results are excluded.
 
-Exemplo:
+Example:
 
 ```text
-1. O usuário menciona `@reviewer` junto com um PDF.
-2. O runtime cria uma sessão filha com o texto e o PDF.
-3. `reviewer` conclui a análise.
-4. A menção é substituída pelo resultado.
-5. Claude recebe o pedido, o PDF e a análise concluída.
+1. The user mentions `@reviewer` together with a PDF.
+2. The runtime creates a child session with the text and PDF.
+3. `reviewer` completes the analysis.
+4. The mention is replaced by the result.
+5. Claude receives the request, the PDF, and the completed analysis.
 ```
 
-## Permissões do Claude
+## Claude permissions
 
-Cada perfil produz um contrato distinto:
+Each profile produces a distinct contract:
 
-| Perfil | Contrato do Agent SDK |
+| Profile | Agent SDK contract |
 | --- | --- |
-| `native` | Mantém `permissionMode: "auto"`, sem callback ou regras adicionais do llm-router |
-| `restricted` | Usa modo `default`, comportamento `ask` e callback ligado às permissões do OpenCode |
-| `full` | Usa modo `default` e comportamento `allow`, sem consulta por ferramenta |
+| `native` | Keeps `permissionMode: "auto"` without an additional llm-router callback or rules |
+| `restricted` | Uses `default` mode, `ask` behavior, and a callback connected to OpenCode permissions |
+| `full` | Uses `default` mode and `allow` behavior without per-tool prompts |
 
-Quando o perfil precisa de controle, o provider recebe:
+When a profile requires control, the provider receives:
 
-- `permissionProfile`, com comportamento padrão e regras por nome exato de ferramenta;
-- `permissionCallback`, para decisões `ask`;
-- `permissionTimeoutMs`, com padrão de 30 segundos.
+- `permissionProfile`, with default behavior and rules by exact tool name;
+- `permissionCallback`, for `ask` decisions;
+- `permissionTimeoutMs`, which defaults to 30 seconds.
 
-O callback `canUseTool` aplica:
+The `canUseTool` callback applies:
 
-| Regra | Resposta ao SDK |
+| Rule | SDK response |
 | --- | --- |
-| `allow` | Autoriza e preserva o `toolUseID` |
-| `deny` | Nega com uma mensagem controlada pelo host |
-| `ask` | Consulta o host com cancelamento e timeout |
+| `allow` | Allows the tool and preserves `toolUseID` |
+| `deny` | Denies the tool with a host-controlled message |
+| `ask` | Queries the host with cancellation and a timeout |
 
-`ask` falha fechado. Ausência de callback, exceção, resposta inválida, cancelamento ou timeout devolve `deny`.
+`ask` fails closed. A missing callback, exception, invalid response,
+cancellation, or timeout returns `deny`.
 
-Os modos do SDK aceitos pelo adapter são `acceptEdits`, `auto`, `default`, `dontAsk` e `plan`, mas combinações que não conseguem aplicar a política são rejeitadas. `dontAsk` não pode ser usado para impor um perfil que precisa consultar o host.
+The adapter accepts the SDK modes `acceptEdits`, `auto`, `default`, `dontAsk`,
+and `plan`, but rejects combinations that cannot enforce the policy. `dontAsk`
+cannot enforce a profile that must query the host.
 
-Mesmo com ferramentas nativas, o processo roda com:
+Even with native tools, the process runs with:
 
 - `safe-mode`;
 - `strictMcpConfig`;
-- nenhum servidor MCP injetado;
-- nenhuma fonte local de settings;
-- Chrome desabilitado;
-- persistência de sessão do SDK desabilitada;
-- ambiente filtrado para runtime, proxy, TLS e variáveis `ANTHROPIC_` ou `CLAUDE_`.
+- no injected MCP server;
+- no local settings source;
+- Chrome disabled;
+- SDK session persistence disabled;
+- an environment filtered to runtime, proxy, TLS, and `ANTHROPIC_` or
+  `CLAUDE_` variables.
 
-Plugins, hooks e skills locais do Claude Code não são carregados por esse transporte.
+Local Claude Code plugins, hooks, and skills are not loaded by this transport.
 
-## Compactação e memória
+## Compaction and memory
 
-Antes de uma compactação, o modelo local resume somente a transcrição sanitizada. O resultado segue schema fechado e é vinculado a exatamente um `compaction.id`.
+Before a compaction, the local model summarizes only the sanitized transcript.
+The result follows a closed schema and is bound to exactly one
+`compaction.id`.
 
-O checkpoint fica em `llm-router.claude.checkpoint` na metadata. Em uma chamada futura, ele entra como recapitulação factual. Se geração, vínculo ou validação falhar, o provider usa somente a cauda ativa e mostra um aviso.
+The checkpoint is stored in metadata under `llm-router.claude.checkpoint`. On a
+future call, it enters the context as a factual recap. If generation, binding,
+or validation fails, the provider uses only the active tail and displays a
+warning.
 
-Esse trabalho ocorre na compactação. Ele não acompanha cada resposta e não adiciona um turno de orquestrador depois do worker.
+This work runs during compaction. It does not follow every response and does not
+add an orchestrator turn after the worker.
 
-## Limites e cancelamento
+## Limits and cancellation
 
-| Controle | Padrão |
+| Control | Default |
 | --- | ---: |
-| Timeout total do Claude | 15 minutos |
-| Timeout de permissão | 30 segundos |
-| Input serializado | 2 MiB |
-| Output serializado | 4 MiB |
+| Total Claude timeout | 15 minutes |
+| Permission timeout | 30 seconds |
+| Serialized input | 2 MiB |
+| Serialized output | 4 MiB |
 
-O Agent SDK não expõe um limite aplicável equivalente a `maxOutputTokens`. Quando o OpenCode envia esse campo, o provider retorna um aviso `unsupported`. `maxOutputBytes` fornece o guardião real de memória do transporte.
+The Agent SDK does not expose an enforceable limit equivalent to
+`maxOutputTokens`. When OpenCode sends this field, the provider returns an
+`unsupported` warning. `maxOutputBytes` provides the transport's actual memory
+guard.
 
-O perfil `restricted` liga `max_steps` ao `maxTurns` do Agent SDK. O valor precisa ser inteiro positivo e limita as rodadas internas do Claude. O hook mantém sua própria contagem como segunda barreira. `max_tool_calls` é contado no callback das ferramentas internas, e `max_child_depth` cobre ferramentas `Task` ou `Agent` e sessões filhas abertas por menções.
+The `restricted` profile connects `max_steps` to the Agent SDK's `maxTurns`.
+The value must be a positive integer and limits Claude's internal turns. The
+hook keeps its own count as a second barrier. `max_tool_calls` is counted in the
+internal-tool callback, and `max_child_depth` covers `Task` or `Agent` tools and
+child sessions opened by mentions.
 
-Cancelar a mensagem aborta e fecha a consulta do SDK. Timeout de execução também aborta o processo.
+Cancelling the message aborts and closes the SDK query. An execution timeout
+also aborts the process.

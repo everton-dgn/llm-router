@@ -1,5 +1,6 @@
 .DS_Store
 .idea/
+.claude/
 .serena/
 logs/
 .venv/
@@ -7,5 +8,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+/node_modules/
 /opencode/node_modules/
+/coverage/
 /plans/

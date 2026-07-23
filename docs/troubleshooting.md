@@ -1,136 +1,154 @@
-# Diagnóstico e segurança
+# Troubleshooting and security
 
-## O router respondeu em vez do worker
+## The router responded instead of the worker
 
-Mensagem típica:
+Typical message:
 
 ```text
 the llm-router handoff plugin is unavailable
 ```
 
-O modelo local do agente principal funciona como sentinela. Essa resposta indica que o hook não trocou a mensagem para um worker.
+The primary agent's local model acts as a sentinel. This response indicates that
+the hook did not switch the message to a worker.
 
-Verifique:
+Check:
 
 ```bash
 bash opencode/install.sh --dry-run
 opencode debug agent router
 ```
 
-Confirme também a presença do plugin e das bibliotecas no diretório de configuração do OpenCode.
+Also confirm that the plugin and libraries are present in the OpenCode
+configuration directory.
 
-## O classificador local falhou
+## The local classifier failed
 
-Teste o Ollama:
+Test Ollama:
 
 ```bash
 curl -fsS http://127.0.0.1:11434/api/tags
 ```
 
-Teste o contrato fechado:
+Test the closed contract:
 
 ```bash
-./route --classify --json "liste os arquivos do projeto"
+./route --classify --json "list the project files"
 ```
 
-A saída precisa ser JSON com `schema_version`, `intent` e `route`. Resposta vazia, JSON inválido e rota desconhecida interrompem o handoff.
+The output must be JSON with `schema_version`, `intent`, and `route`. An empty
+response, invalid JSON, or unknown route stops the handoff.
 
-## O modelo não mudou no modo adaptive
+## The model did not change in adaptive mode
 
-Consulte:
+Check:
 
 ```text
 /router-status
 ```
 
-Uma subida para rota maior é imediata. Uma redução exige dois turnos no worker atual, duas confirmações consecutivas e cooldown zerado. Follow-up curto também preserva o worker quando a alternativa seria uma redução.
+Promotion to a higher route is immediate. A downgrade requires two turns on the
+current worker, two consecutive confirmations, and no remaining cooldown. A
+short follow-up also preserves the worker when the alternative would be a
+downgrade.
 
-Se quiser aplicar cada recomendação sem histerese:
-
-```text
-/router-auto
-```
-
-## O modelo não mudou no modo pinned
-
-Esse é o comportamento esperado. `pinned` preserva o worker da sessão. Troque para:
+To apply every recommendation without hysteresis:
 
 ```text
 /router-auto
 ```
 
-ou:
+## The model did not change in pinned mode
+
+This is expected behavior. `pinned` preserves the session worker. Switch to:
+
+```text
+/router-auto
+```
+
+or:
 
 ```text
 /router-adaptive
 ```
 
-Abrir um fork também permite uma decisão independente porque o novo ramo recebe outro `sessionID`.
+Opening a fork also allows an independent decision because the new branch
+receives another `sessionID`.
 
-## A configuração do projeto foi rejeitada
+## The project configuration was rejected
 
-Projetos só podem restringir. Procure por uma destas tentativas:
+Projects may only restrict. Look for one of these attempts:
 
-- trocar `restricted` por `native` ou `full`;
-- converter `deny` em `ask` ou `allow`;
-- converter `ask` em `allow`;
-- aumentar `max_steps`, `max_tool_calls` ou `max_child_depth`;
-- usar wildcard em uma chave de `models`;
-- incluir chave desconhecida.
+- changing `restricted` to `native` or `full`;
+- converting `deny` to `ask` or `allow`;
+- converting `ask` to `allow`;
+- increasing `max_steps`, `max_tool_calls`, or `max_child_depth`;
+- using a wildcard in a `models` key;
+- including an unknown key.
 
-Valide o formato contra [`opencode/llm-router.policy.schema.json`](../opencode/llm-router.policy.schema.json).
+Validate the format against
+[`opencode/llm-router.policy.schema.json`](../opencode/llm-router.policy.schema.json).
 
-## Claude não aparece
+## Claude does not appear
 
-Confira a autenticação e o provider:
+Check authentication and the provider:
 
 ```bash
 claude auth status
 opencode models claude-agent
 ```
 
-O instalador também verifica se o executável suporta as flags exigidas pelo Agent SDK.
+The installer also checks whether the executable supports the flags required by
+the Agent SDK.
 
-## Claude recusou um anexo ou uma menção
+## Claude rejected an attachment or mention
 
-Confira o MIME. O adapter aceita imagens GIF, JPEG, PNG e WebP, PDF e texto simples.
+Check the MIME type. The adapter accepts GIF, JPEG, PNG, and WebP images, PDFs,
+and plain text.
 
-Outras causas:
+Other causes:
 
-- base64 inválido;
-- MIME declarado diferente do data URL;
-- URL que não usa HTTP ou HTTPS;
-- anexo ou mensagem atual acima do orçamento de 2 MiB;
-- mais de quatro menções `@agent` na mesma mensagem;
-- menção a `router` ou outro agente interno gerenciado;
-- sessão filha acima de `max_child_depth`;
-- subtask sem resposta textual ou com resultado acima de 256 KiB.
+- invalid base64;
+- a declared MIME type that differs from the data URL;
+- a URL that does not use HTTP or HTTPS;
+- an attachment or current message over the 2 MiB budget;
+- more than four `@agent` mentions in one message;
+- a mention of `router` or another managed internal agent;
+- a child session over `max_child_depth`;
+- a subtask without a text response or with a result over 256 KiB.
 
-O runtime resolve as menções em sessões filhas antes de chamar o Claude. Se o adapter informar que ainda recebeu um `agent attachment` (anexo de agente), confira se o plugin e `router_control.mjs` vieram da mesma versão. Consulte [menções e subtasks](claude.md#menções-e-subtasks).
+The runtime resolves mentions in child sessions before calling Claude. If the
+adapter reports that it still received an `agent attachment`, confirm that the
+plugin and `router_control.mjs` came from the same version. See
+[mentions and subtasks](claude.md#mentions-and-subtasks).
 
-## Claude pediu permissão e parou
+## Claude requested permission and stopped
 
-No perfil `restricted`, uma regra `ask` precisa de callback do host. O adapter nega depois de 30 segundos, ou antes se ocorrer erro, cancelamento ou ausência de callback.
+In the `restricted` profile, an `ask` rule requires a host callback. The adapter
+denies the request after 30 seconds, or earlier if an error, cancellation, or
+missing callback occurs.
 
-Consulte o estado:
+Check the status:
 
 ```text
 /router-status
 ```
 
-Para usar o comportamento normal do provider:
+To use the provider's normal behavior:
 
 ```text
 /router-native
 ```
 
-Para permitir todas as ferramentas da sessão, com supervisão:
+To allow all session tools without per-tool confirmation:
 
 ```text
 /router-full
 ```
 
-## Loop longo com modelo pequeno
+Use `/router-restricted` when you want explicit allow, ask, and deny rules
+while diagnosing a permission problem.
+
+## Long loop with a small model
 
 Use:
 
@@ -139,7 +157,7 @@ Use:
 /router-restricted
 ```
 
-Depois reduza os limites no projeto:
+Then lower the limits in the project:
 
 ```json
 {
@@ -168,25 +186,32 @@ Depois reduza os limites no projeto:
 }
 ```
 
-`adaptive` permite subir para um worker mais capaz quando o pedido ficar difícil. `restricted` impede que essa troca amplie ferramentas por consequência.
+`adaptive` allows promotion to a more capable worker when the request becomes
+difficult. `restricted` prevents that switch from expanding tools as a side
+effect.
 
-## Worker pequeno com pouca memória
+## Small worker with limited memory
 
-O modelo local de 4B só classifica e encerra. Ele não guarda o contexto da conversa, não executa ferramentas do projeto e não espera o worker terminar.
+The local 4B model only classifies and exits. It does not retain conversation
+context, execute project tools, or wait for the worker to finish.
 
-O contexto fica no OpenCode. Cada worker recebe a conversa ativa conforme seu provider. Esse desenho mantém o custo do coordenador pequeno e evita exigir memória longa do classificador.
+Context remains in OpenCode. Each worker receives the active conversation
+according to its provider. The local classifier exits after the decision and
+does not need long-term memory or a later coordination turn.
 
-## Upgrade alterou arquivos gerenciados
+## An upgrade changed managed files
 
-Rode:
+Run:
 
 ```bash
 bash opencode/install.sh --dry-run
 ```
 
-Arquivos gerenciados recebem backup antes da substituição. O instalador cria `llm-router.policy.json` uma vez e preserva seu conteúdo nos upgrades. Reinstalações idênticas ficam sem novo backup.
+Managed files are backed up before replacement. The installer creates
+`llm-router.policy.json` once and preserves its contents during upgrades.
+Identical reinstallations create no new backup.
 
-## Testes de regressão
+## Regression tests
 
 ```bash
 bash tests/smoke.sh

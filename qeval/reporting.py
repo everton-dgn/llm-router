@@ -1,4 +1,4 @@
-"""Resumos, replay, anonimização, markdown e escrita de relatórios."""
+"""Summaries, replay, anonymization, Markdown, and report writing."""
 
 from __future__ import annotations
 
@@ -82,11 +82,11 @@ def load_report(path: Path) -> dict[str, Any]:
         with path.open(encoding="utf-8") as stream:
             report = json.load(stream)
     except OSError as error:
-        raise EvaluationError(f"não foi possível ler relatório: {error}") from error
+        raise EvaluationError(f"could not read report: {error}") from error
     except json.JSONDecodeError as error:
-        raise EvaluationError(f"relatório JSON inválido: {error}") from error
+        raise EvaluationError(f"invalid report JSON: {error}") from error
     if not isinstance(report, dict) or not isinstance(report.get("results"), list):
-        raise EvaluationError("relatório precisa conter results como lista")
+        raise EvaluationError("report must contain results as a list")
     return report
 
 
@@ -101,7 +101,7 @@ def rescore_output_only_report(
         case_id = result.get("case_id")
         case = cases.get(case_id)
         if case is None:
-            raise EvaluationError(f"relatório contém caso ausente no dataset: {case_id}")
+            raise EvaluationError(f"report contains a case missing from the dataset: {case_id}")
         output_only = (
             case["evaluation_mode"] in {"objective", "hybrid"}
             and case["role"] == "judge"
@@ -168,8 +168,8 @@ def rescore_output_only_report(
         "retained_workspace_results": retained_count,
         "original_summary": report.get("summary"),
         "method": (
-            "reaplica o dataset atual somente a assertions de saída; "
-            "resultados que dependem do workspace mantêm a avaliação original"
+            "reapplies the current dataset only to output assertions; "
+            "workspace-dependent results retain their original evaluation"
         ),
     }
     return rescored_report
@@ -269,8 +269,8 @@ def build_anonymous_review_packets(
     blind_packet = {
         **common,
         "instructions": (
-            "Avalie cada candidato somente pelos turnos e pela rubrica. "
-            "Preencha uma nota por critério dentro da escala declarada."
+            "Evaluate each candidate using only the turns and rubric. "
+            "Assign a score to each criterion within the declared scale."
         ),
         "identity_redaction_count": redaction_count,
         "human_evaluation": human_evaluation,
@@ -283,33 +283,33 @@ def build_anonymous_review_packets(
 def render_markdown(report: dict[str, Any]) -> str:
     summary = report["summary"]
     lines = [
-        "# Benchmark de qualidade",
+        "# Quality benchmark",
         "",
-        f"Chamadas físicas planejadas: {report['calls']}",
+        f"Planned physical calls: {report['calls']}",
     ]
     if report.get("physical_call_accounting") == "upper_bound":
         lines.extend(
             [
-                "Limite superior de chamadas físicas após retries ambiguous: "
+                "Upper bound on physical calls after ambiguous retries: "
                 f"{report['physical_calls_upper_bound']}",
-                "Chamadas associadas a resultados concluídos: "
+                "Calls associated with completed results: "
                 f"{report['recorded_result_calls']}",
             ]
         )
     else:
         lines.append(
-            "Chamadas físicas executadas: "
+            "Executed physical calls: "
             f"{report.get('executed_calls', report.get('recorded_result_calls', report['calls']))}"
         )
     lines.extend(
         [
-            f"Repetições: {report['repetitions']}",
-            f"Escopo: {report['scope']}",
-            f"Score geral: {summary['overall']['mean']:.2f}%",
+            f"Repetitions: {report['repetitions']}",
+            f"Scope: {report['scope']}",
+            f"Overall score: {summary['overall']['mean']:.2f}%",
             "",
-            "## Resultado por rota",
+            "## Results by route",
             "",
-            "| Rota | Média | Mediana | Pior | Aprovação |",
+            "| Route | Mean | Median | Worst | Pass rate |",
             "| --- | ---: | ---: | ---: | ---: |",
         ]
     )
@@ -321,9 +321,9 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
-            "## Resultado por categoria",
+            "## Results by category",
             "",
-            "| Categoria | Média | Mediana | Pior | Aprovação |",
+            "| Category | Mean | Median | Worst | Pass rate |",
             "| --- | ---: | ---: | ---: | ---: |",
         ]
     )
@@ -336,9 +336,9 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
-            "## Resultado por dificuldade",
+            "## Results by difficulty",
             "",
-            "| Dificuldade | Média | Mediana | Pior | Aprovação |",
+            "| Difficulty | Mean | Median | Worst | Pass rate |",
             "| --- | ---: | ---: | ---: | ---: |",
         ]
     )
@@ -350,9 +350,9 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
-            "## Resultado por rota e categoria",
+            "## Results by route and category",
             "",
-            "| Rota | Categoria | Média | Mediana | Pior | Aprovação |",
+            "| Route | Category | Mean | Median | Worst | Pass rate |",
             "| --- | --- | ---: | ---: | ---: | ---: |",
         ]
     )
@@ -367,9 +367,9 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
-            "## Resultado por rota, categoria e dificuldade",
+            "## Results by route, category, and difficulty",
             "",
-            "| Rota | Categoria | Dificuldade | Média | Mediana | Pior | Aprovação |",
+            "| Route | Category | Difficulty | Mean | Median | Worst | Pass rate |",
             "| --- | --- | --- | ---: | ---: | ---: | ---: |",
         ]
     )
@@ -385,9 +385,9 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
-            "## Execuções",
+            "## Executions",
             "",
-            "| Rota | Papel | Caso | Repetição | Status | Score | SHA-256 |",
+            "| Route | Role | Case | Repetition | Status | Score | SHA-256 |",
             "| --- | --- | --- | ---: | --- | ---: | --- |",
         ]
     )
@@ -402,7 +402,7 @@ def render_markdown(report: dict[str, Any]) -> str:
 
 def write_reports(output_path: Path, report: dict[str, Any]) -> tuple[Path, Path]:
     if output_path.suffix.lower() != ".json":
-        raise EvaluationError("--output precisa terminar em .json")
+        raise EvaluationError("--output must end in .json")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     markdown_path = output_path.with_suffix(".md")
     output_path.write_text(
@@ -437,7 +437,7 @@ def write_anonymous_review_packets(
         or resolved_mapping_dir.is_relative_to(resolved_blind_dir)
     ):
         raise EvaluationError(
-            "os diretórios de avaliação cega e mapping precisam ser separados"
+            "blind review and mapping directories must be separate"
         )
     resolved_blind_dir.mkdir(parents=True, exist_ok=True)
     resolved_mapping_dir.mkdir(parents=True, mode=0o700, exist_ok=True)

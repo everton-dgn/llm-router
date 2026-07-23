@@ -242,6 +242,83 @@ test("turn limits block excess OpenCode steps and tool calls", async () => {
   )
 })
 
+test("turn tracking keeps only the active message for a session", async () => {
+  const store = fakeSessions({ "session-1": { id: "session-1", metadata: {} } })
+  const runtime = createRouterControlRuntime({
+    directory: "/workspace",
+    sessionClient: store.client,
+    v2SessionClient: { permission: {} },
+    loadPolicy: async () => ({}),
+    resolvePolicy: () => restrictedPolicy,
+    notify: async () => {},
+  })
+  const loosePolicy = {
+    ...restrictedPolicy,
+    limits: { ...restrictedPolicy.limits, max_steps: 3 },
+  }
+  const strictPolicy = {
+    ...restrictedPolicy,
+    limits: { ...restrictedPolicy.limits, max_steps: 1 },
+  }
+  runtime.rememberTurn("session-1", "message-1", loosePolicy)
+  runtime.rememberTurn("session-1", "message-2", strictPolicy)
+  const staleInput = {
+    sessionID: "session-1",
+    message: { id: "message-1" },
+    model: { providerID: "zai-coding-plan", id: "glm-5.2" },
+    agent: "glm",
+  }
+
+  await runtime.chatParams(staleInput, { options: {} })
+  await assert.rejects(
+    runtime.chatParams(staleInput, { options: {} }),
+    /max_steps 1/,
+  )
+})
+
+test("turn tracking evicts inactive sessions at its fixed capacity", async () => {
+  const store = fakeSessions()
+  const runtime = createRouterControlRuntime({
+    directory: "/workspace",
+    sessionClient: store.client,
+    v2SessionClient: { permission: {} },
+    loadPolicy: async () => ({}),
+    resolvePolicy: () => restrictedPolicy,
+    notify: async () => {},
+  })
+  const fullPolicy = {
+    profile: "full",
+    source: "defaults",
+    selector: "fallback",
+    permissions: [],
+    limits: {},
+  }
+  for (let index = 0; index <= 1024; index += 1) {
+    runtime.rememberTurn(`session-${index}`, `message-${index}`, fullPolicy)
+  }
+
+  const evictedOutput = { options: {} }
+  await runtime.chatParams({
+    sessionID: "session-0",
+    message: { id: "message-0" },
+    model: { providerID: "claude-agent", id: "claude-opus-4-8" },
+    agent: "claude",
+  }, evictedOutput)
+  assert.equal(evictedOutput.options.permissionProfile, undefined)
+
+  const activeOutput = { options: {} }
+  await runtime.chatParams({
+    sessionID: "session-1024",
+    message: { id: "message-1024" },
+    model: { providerID: "claude-agent", id: "claude-opus-4-8" },
+    agent: "claude",
+  }, activeOutput)
+  assert.deepEqual(activeOutput.options.permissionProfile, {
+    mode: "default",
+    default: "allow",
+  })
+})
+
 test("pinned Claude resolves explicit OpenCode agent mentions in a child session", async () => {
   const store = fakeSessions({ "session-1": { id: "session-1", metadata: {} } })
   const calls = []

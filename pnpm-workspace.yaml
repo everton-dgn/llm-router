@@ -1,0 +1,4 @@
+allowBuilds:
+  lefthook: false
+engineStrict: true
+saveExact: true

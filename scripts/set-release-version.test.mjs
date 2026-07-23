@@ -1,0 +1,91 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+
+import {
+  assertDirectInvocationIsReadOnly,
+  collectCommitMessages,
+  deriveAutomaticVersion,
+  runSetReleaseVersion
+} from './set-release-version.mjs'
+
+test('derives the first release from repository history', () => {
+  assert.deepEqual(
+    deriveAutomaticVersion({
+      baselineTag: '',
+      currentVersion: '0.0.0',
+      messages: ['feat: initial public router']
+    }),
+    { bump: 'minor', version: '0.1.0' }
+  )
+})
+
+test('requires package version to match the latest stable tag', () => {
+  assert.throws(
+    () =>
+      deriveAutomaticVersion({
+        baselineTag: 'v0.1.0',
+        currentVersion: '0.1.1',
+        messages: ['fix: route']
+      }),
+    /does not match latest tag/
+  )
+})
+
+test('returns no version for documentation-only commits', () => {
+  assert.deepEqual(
+    deriveAutomaticVersion({
+      baselineTag: 'v0.1.0',
+      currentVersion: '0.1.0',
+      messages: ['docs: update examples']
+    }),
+    { bump: null, version: null }
+  )
+})
+
+test('collects commit bodies from the correct baseline range', () => {
+  let invocation
+  const messages = collectCommitMessages({
+    baselineTag: 'v0.1.0',
+    runGit: args => {
+      invocation = args
+      return 'fix: one\u0000feat: two\n\nbody\u0000'
+    }
+  })
+  assert.deepEqual(messages, ['fix: one', 'feat: two\n\nbody'])
+  assert.equal(invocation[1], 'v0.1.0..HEAD')
+})
+
+test('reports local and remote candidate tags as conflicts', () => {
+  const dependencies = {
+    getBaselineTag: () => '',
+    getMessages: () => ['feat: initial public router']
+  }
+  assert.throws(
+    () =>
+      runSetReleaseVersion(['--mode', 'auto', '--print'], {
+        ...dependencies,
+        hasLocalTag: () => true,
+        hasRemoteTag: () => false
+      }),
+    /already exists locally/
+  )
+  assert.throws(
+    () =>
+      runSetReleaseVersion(['--mode', 'auto', '--print'], {
+        ...dependencies,
+        hasLocalTag: () => false,
+        hasRemoteTag: () => true
+      }),
+    /already exists on origin/
+  )
+})
+
+test('allows only read-only automatic version discovery from the CLI', () => {
+  assert.doesNotThrow(() =>
+    assertDirectInvocationIsReadOnly(['--mode', 'auto', '--print'])
+  )
+  assert.throws(
+    () => assertDirectInvocationIsReadOnly(['--mode', 'minor']),
+    /Direct version mutation is unsupported/
+  )
+})

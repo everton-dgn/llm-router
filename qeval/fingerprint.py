@@ -1,4 +1,4 @@
-"""Hashes de engine, fingerprint de execução e perfil de manifesto."""
+"""Engine hashes, execution fingerprint, and manifest profile."""
 
 from __future__ import annotations
 
@@ -36,15 +36,15 @@ def _rubric_sha256(dataset: dict[str, Any]) -> str:
 
 
 def _engine_root() -> Path:
-    """Diretório do repositório que abriga ``quality_eval.py`` e o pacote ``qeval``."""
+    """Repository directory containing ``quality_eval.py`` and the ``qeval`` package."""
     return Path(__file__).resolve().parent.parent
 
 
 def _collect_engine_sources() -> list[tuple[str, bytes]]:
-    """Coleta ``quality_eval.py`` e todos os ``qeval/*.py`` ordenados por caminho relativo.
+    """Collect ``quality_eval.py`` and all ``qeval/*.py`` files sorted by relative path.
 
-    Caches e arquivos não ``.py`` são excluídos; somente arquivos ``.py`` reais
-    do pacote (não recursivo além do nível imediato de ``qeval/``) participam.
+    Caches and non-``.py`` files are excluded; only actual package ``.py`` files
+    participate, without recursing beyond the immediate ``qeval/`` level.
     """
     engine_root = _engine_root()
     qeval_dir = Path(__file__).resolve().parent
@@ -61,7 +61,7 @@ def _collect_engine_sources() -> list[tuple[str, bytes]]:
 def _engine_source_manifest(
     sources: list[tuple[str, bytes]] | None = None,
 ) -> list[dict[str, str]]:
-    """Manifesto determinístico ``[{path, sha256}, ...]`` das fontes do engine."""
+    """Deterministic ``[{path, sha256}, ...]`` manifest of engine sources."""
     if sources is None:
         sources = _collect_engine_sources()
     manifest = [
@@ -73,7 +73,7 @@ def _engine_source_manifest(
 
 
 def _engine_aggregate_sha256(sources: list[tuple[str, bytes]] | None = None) -> str:
-    """Hash agregado determinístico cobrindo nome relativo + SHA-256 de cada fonte."""
+    """Deterministic aggregate hash covering each source's relative name and SHA-256."""
     manifest = _engine_source_manifest(sources)
     encoded = json.dumps(
         manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")

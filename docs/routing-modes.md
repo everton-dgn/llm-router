@@ -1,157 +1,194 @@
-# Modos de roteamento
+# Routing modes
 
-O modo define quando uma sessão pode trocar de worker. As permissões ficam no perfil de execução e continuam independentes do modo.
+The mode determines when a session can switch workers. Permissions remain in
+the execution profile and stay independent from the mode.
 
-## Visão geral
+## Overview
 
-| Modo | Classificação local | Troca de worker | Uso indicado |
+| Mode | Local classification | Worker switching | Recommended use |
 | --- | --- | --- | --- |
-| `auto` | Em toda mensagem | Sempre aplica a recomendação atual | Pedidos independentes e custo mínimo por turno |
-| `adaptive` | Em toda mensagem | Sobe imediatamente e reduz com confirmação | Conversas que evoluem entre tarefas simples e difíceis |
-| `pinned` | Até fixar o primeiro worker | Mantém o worker pelo restante da sessão | Continuidade de estilo, cache ou comportamento do modelo |
+| `auto` | On every message | Always applies the current recommendation | Independent requests and minimum per-turn cost |
+| `adaptive` | On every message | Upgrades immediately and downgrades after confirmation | Conversations that evolve between simple and difficult tasks |
+| `pinned` | Until the first worker is pinned | Keeps the worker for the rest of the session | Continuity of style, cache, or model behavior |
 
-O classificador local usa o script [`route`](../route) e retorna uma das quatro rotas:
+The local classifier uses the [`route`](../route) script and returns one of four
+routes:
 
 ```text
 minimax < glm < claude < codex
 ```
 
-Essa ordem é usada pela histerese do modo `adaptive`. Ela expressa a progressão operacional adotada pelo router, da rota mais econômica até a rota reservada para engenharia difícil, revisão e segurança.
+The `adaptive` mode uses this order for hysteresis. It represents the router's
+operational progression, from the least expensive route to the route reserved
+for difficult engineering, review, and security work.
 
 ## Auto
 
-Ative com:
+Activate it with:
 
 ```text
 /router-auto
 ```
 
-Cada mensagem passa pelo classificador. A recomendação é aplicada naquele turno.
+Every message goes through the classifier. Its recommendation applies to that
+turn.
 
-Exemplo:
+Example:
 
 ```text
-Mensagem 1: liste os arquivos de configuração
-Destino: MiniMax
+Message 1: list the configuration files
+Destination: MiniMax
 
-Mensagem 2: agora corrija a condição de corrida
-Destino: Codex
+Message 2: now fix the race condition
+Destination: Codex
 ```
 
-O worker anterior não controla o próximo. A conversa continua na mesma sessão, então o worker novo recebe o contexto ativo que o OpenCode fornece.
+The previous worker does not control the next one. The conversation remains in
+the same session, so the new worker receives the active context provided by
+OpenCode.
 
 ## Adaptive
 
-Ative com:
+Activate it with:
 
 ```text
 /router-adaptive
 ```
 
-O classificador continua rodando em toda mensagem. A máquina de estados em [`opencode/lib/adaptive_routing.mjs`](../opencode/lib/adaptive_routing.mjs) decide se a troca compensa.
+The classifier continues to run on every message. The state machine in
+[`opencode/lib/adaptive_routing.mjs`](../opencode/lib/adaptive_routing.mjs)
+decides whether switching is worthwhile.
 
-Parâmetros padrão:
+Default parameters:
 
-| Parâmetro | Valor | Efeito |
+| Parameter | Value | Effect |
 | --- | ---: | --- |
-| `minimumTurnsBeforeSwitch` | 2 | Exige pelo menos dois turnos no worker atual antes de reduzir a rota |
-| `downgradeConfirmations` | 2 | Exige duas recomendações consecutivas para a mesma rota inferior |
-| `switchCooldownTurns` | 1 | Bloqueia nova redução por um turno depois de uma troca |
+| `minimumTurnsBeforeSwitch` | 2 | Requires at least two turns on the current worker before downgrading the route |
+| `downgradeConfirmations` | 2 | Requires two consecutive recommendations for the same lower route |
+| `switchCooldownTurns` | 1 | Blocks another downgrade for one turn after a switch |
 
-### Subida imediata
+### Immediate upgrade
 
-Uma recomendação acima do worker atual é aplicada na mesma mensagem. Isso evita manter um modelo pequeno quando a conversa passa a exigir uma capacidade maior.
-
-```text
-Worker atual: GLM
-Pedido: faça uma revisão de segurança completa deste fluxo
-Recomendação: Codex
-Resultado: troca imediata para Codex
-```
-
-### Redução confirmada
-
-Uma redução aguarda os três critérios: permanência mínima, cooldown zerado e confirmações consecutivas.
+A recommendation above the current worker applies to the same message. This
+avoids keeping a small model after the conversation starts requiring greater
+capability.
 
 ```text
-Turno 1: GLM foi selecionado, cooldown = 1
-Turno 2: MiniMax recomendado, confirmação 1, GLM permanece, cooldown = 0
-Turno 3: MiniMax recomendado, confirmação 2, troca para MiniMax
+Current worker: GLM
+Request: perform a complete security review of this flow
+Recommendation: Codex
+Result: immediate switch to Codex
 ```
 
-Se a recomendação de redução mudar de MiniMax para GLM, a contagem começa outra vez para o novo destino. Se o classificador recomendar o worker atual, a redução pendente é descartada.
+### Confirmed downgrade
 
-### Follow-up curto
+A downgrade waits for all three criteria: minimum tenure, zero cooldown, and
+consecutive confirmations.
 
-Mensagens curtas de continuidade, como `e os testes?`, `agora isso` ou `continue`, mantêm o worker atual quando a alternativa seria uma redução. Uma subida continua imediata.
+```text
+Turn 1: GLM was selected, cooldown = 1
+Turn 2: MiniMax recommended, confirmation 1, GLM remains, cooldown = 0
+Turn 3: MiniMax recommended, confirmation 2, switch to MiniMax
+```
 
-O detector aceita até seis palavras e 80 caracteres, com prefixos de continuidade em português ou inglês. O objetivo é impedir que um follow-up dependa de um modelo que acabou de perder o fio da execução.
+If the downgrade recommendation changes from MiniMax to GLM, counting starts
+again for the new destination. If the classifier recommends the current
+worker, the pending downgrade is discarded.
+
+### Short follow-up
+
+Short continuation messages such as `what about the tests?`, `now this`, or
+`continue` keep the current worker when the alternative would be a downgrade.
+An upgrade remains immediate.
+
+The detector accepts up to six words and 80 characters, with Portuguese or
+English continuation prefixes. Its purpose is to prevent a follow-up from
+depending on a model that has just lost the execution context.
 
 ## Pinned
 
-Ative com:
+Activate it with:
 
 ```text
 /router-pinned
 ```
 
-A primeira mensagem enviada enquanto o modo está ativo é classificada e fixa o resultado. Mensagens posteriores usam esse destino sem nova classificação. Trocar de `auto` ou `adaptive` para `pinned` inicia essa seleção no próximo pedido.
+The first message sent while this mode is active is classified and pins the
+result. Later messages use that destination without another classification.
+Switching from `auto` or `adaptive` to `pinned` starts this selection on the
+next request.
 
-Exemplo:
+Example:
 
 ```text
 /router-pinned
-desenhe a arquitetura de notificações
+design the notification architecture
 
-Primeira seleção: Claude
-Mensagens seguintes: Claude permanece
+First selection: Claude
+Following messages: Claude remains
 ```
 
-O perfil continua independente. Uma sessão `pinned + native` e outra `pinned + restricted` podem usar o mesmo Claude com políticas de ferramentas diferentes.
+The profile remains independent. A `pinned + native` session and a
+`pinned + restricted` session can use the same Claude with different tool
+policies.
 
-## Estado da sessão
+## Session state
 
-O controle escolhido pelo usuário usa `llm-router.control`. Ele guarda `mode` e o `profileOverride` opcional. A máquina de roteamento usa `llm-router.routing.state`. Esse segundo registro contém:
+The user-selected control uses `llm-router.control`. It stores `mode` and the
+optional `profileOverride`. The routing state machine uses
+`llm-router.routing.state`. This second record contains:
 
 - `schemaVersion`
-- `sessionID` proprietário
+- owner `sessionID`
 - `mode`
 - `currentRoute`
 - `turnsOnCurrent`
 - `cooldownTurnsRemaining`
-- redução pendente, quando existe
+- the pending downgrade, when present
 
-Os dois registros incluem o `sessionID` proprietário. Retomar a sessão preserva modo, perfil e rota. Um fork ignora as decisões herdadas porque recebe outro ID.
+Both records include the owner `sessionID`. Resuming the session preserves its
+mode, profile, and route. A fork ignores inherited decisions because it receives
+a different ID.
 
-## Contexto ao trocar de modelo
+## Context when switching models
 
-A troca modifica o `agent` e o `model` da mensagem atual. Ela não cria outra conversa e não pede ao classificador para resumir a resposta do worker.
+The switch changes the `agent` and `model` of the current message. It does not
+create another conversation or ask the classifier to summarize the worker
+response.
 
-Na prática:
+In practice:
 
-1. O usuário continua na mesma sessão.
-2. O OpenCode mantém o histórico ativo.
-3. O worker selecionado recebe esse histórico conforme o contrato do provider.
-4. A resposta entra na mesma conversa e pode ser usada pelo próximo worker.
+1. The user remains in the same session.
+2. OpenCode keeps the active history.
+3. The selected worker receives this history according to the provider contract.
+4. The response enters the same conversation and can be used by the next worker.
 
-Claude recebe uma projeção tipada e sanitizada do contexto. Os demais providers usam o fluxo nativo do OpenCode. Consulte [Claude via Agent SDK](claude.md#contexto-entre-modelos).
+Claude receives a typed and sanitized projection of the context. Other
+providers use the native OpenCode flow. See
+[Claude via Agent SDK](claude.md#context-across-models).
 
-## Retomada e fork
+## Resume and fork
 
-Retomar a mesma sessão preserva o modo e o worker efetivo porque o `sessionID` continua igual.
+Resuming the same session preserves the mode and effective worker because the
+`sessionID` remains the same.
 
-Um fork recebe um novo `sessionID`. O histórico clonado permanece disponível, mas as decisões de roteamento herdadas são ignoradas. O novo ramo pode classificar e escolher outro worker sem alterar a sessão original.
+A fork receives a new `sessionID`. The cloned history remains available, but
+inherited routing decisions are ignored. The new branch can classify and
+select another worker without changing the original session.
 
-## Compatibilidade
+## Compatibility
 
-Aliases antigos continuam úteis durante a migração:
+Legacy aliases remain available during migration:
 
-| Alias | Semântica atual |
+| Alias | Current semantics |
 | --- | --- |
 | `router-auto` | `auto` |
 | `router-adaptive` | `adaptive` |
 | `router-manual` | `pinned` |
 
-`router-manual` preserva a chave antiga `llm-router.manual.target` apenas para ler sessões existentes. Novas decisões usam `llm-router.routing.state`.
+`router-manual` retains the legacy `llm-router.manual.target` key only to read
+existing sessions. New decisions use `llm-router.routing.state`.
 
-O composer mostra `router` como agente principal. Os aliases ficam ocultos e existem apenas para compatibilidade e resolução interna. Depois de cada handoff, o aviso informa modo, worker e perfil efetivos.
+The composer displays `router` as the primary agent. Aliases remain hidden and
+exist only for compatibility and internal resolution. After each handoff, the
+notice reports the effective mode, worker, and profile.

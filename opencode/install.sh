@@ -92,9 +92,14 @@ fi
 TRASH_PATH=$(command -v trash || true)
 JQ_PATH=$(command -v jq || true)
 NODE_PATH=$(command -v node || true)
+CONFIG_MERGER="$REPO_ROOT/scripts/merge-opencode-config.mjs"
 [[ -n "$TRASH_PATH" ]] || fail "trash is required for recoverable temporary cleanup"
 [[ -n "$JQ_PATH" ]] || fail "jq is required to merge package.json"
 [[ -n "$NODE_PATH" ]] || fail "node is required to render and validate the bundle"
+[[ -f "$CONFIG_MERGER" ]] || fail "OpenCode config merger is missing: $CONFIG_MERGER"
+if ! (cd "$REPO_ROOT" && "$NODE_PATH" -e 'import("jsonc-parser")') >/dev/null 2>&1; then
+  fail "repository dependencies are missing; run pnpm install --frozen-lockfile"
+fi
 
 case "$CONFIG_DIR" in /*) ;; *) CONFIG_DIR="$PWD/$CONFIG_DIR" ;; esac
 case "$BACKUP_ROOT" in /*) ;; *) BACKUP_ROOT="$PWD/$BACKUP_ROOT" ;; esac
@@ -221,10 +226,23 @@ ROUTER_PATH_VALUE="$ROUTER_PATH" "$NODE_PATH" -e '
   .provider["claude-agent"].npm = $provider_url
   | .provider["claude-agent"].options.claudePath = $claude_path
   | .provider["router-control"].npm = $control_provider_url
-' "$SCRIPT_DIR/opencode.jsonc" | tee "$RENDER_DIR/opencode.jsonc" >/dev/null
+' "$SCRIPT_DIR/opencode.jsonc" | tee "$RENDER_DIR/opencode.required.json" >/dev/null
 
-"$JQ_PATH" empty "$RENDER_DIR/opencode.jsonc" >/dev/null 2>&1 \
-  || fail "rendered opencode.jsonc is invalid"
+"$JQ_PATH" empty "$RENDER_DIR/opencode.required.json" >/dev/null 2>&1 \
+  || fail "rendered required OpenCode configuration is invalid"
+if [[ -e "$CONFIG_DIR/opencode.jsonc" ]]; then
+  [[ ! -L "$CONFIG_DIR/opencode.jsonc" ]] \
+    || fail "refusing to replace symlink: $CONFIG_DIR/opencode.jsonc"
+  [[ -f "$CONFIG_DIR/opencode.jsonc" ]] \
+    || fail "refusing to replace non-file: $CONFIG_DIR/opencode.jsonc"
+  "$NODE_PATH" "$CONFIG_MERGER" \
+    --current "$CONFIG_DIR/opencode.jsonc" \
+    --required "$RENDER_DIR/opencode.required.json" \
+    --output "$RENDER_DIR/opencode.jsonc" \
+    || fail "cannot merge the existing OpenCode configuration"
+else
+  cp "$RENDER_DIR/opencode.required.json" "$RENDER_DIR/opencode.jsonc"
+fi
 "$NODE_PATH" --check "$RENDER_DIR/plugins/llm_router_handoff.ts" >/dev/null 2>&1 \
   || fail "rendered llm_router_handoff.ts is invalid"
 
@@ -339,8 +357,12 @@ install_once_file() {
 
 retire_file() {
   local target=$1
-  [[ ! -L "$target" ]] || fail "refusing to retire symlink: $target"
   [[ -e "$target" ]] || return 0
+  if ! is_known_retired_file "$target"; then
+    printf 'preserved unrecognized legacy path %s\n' "$target"
+    return
+  fi
+  [[ ! -L "$target" ]] || fail "refusing to retire symlink: $target"
 
   if [[ "$DRY_RUN" == true ]]; then
     printf 'would retire %s (with backup)\n' "$target"
@@ -349,6 +371,62 @@ retire_file() {
 
   "$TRASH_PATH" "$target"
   printf 'retired %s\n' "$target"
+}
+
+is_known_retired_file() {
+  local target=$1
+  local relative=${target#"$CONFIG_DIR"/}
+  local actual_hash
+  local expected_hashes
+  [[ -f "$target" && ! -L "$target" ]] || return 1
+  actual_hash=$("$NODE_PATH" --input-type=module - "$target" <<'NODE'
+import { createHash } from "node:crypto"
+import { readFileSync } from "node:fs"
+
+const source = readFileSync(process.argv[2], "utf8")
+const normalized = source.replace(
+  /^const (ROUTER_PATH|UV_PATH|STAGE_VERIFIER_PATH|CONFIG_PATH|LOG_PATH|CLAUDE_PATH|OPENCODE_PATH) = .*$/gmu,
+  'const $1 = "__NORMALIZED_PATH__"',
+)
+process.stdout.write(createHash("sha256").update(normalized).digest("hex"))
+NODE
+)
+  case "$relative" in
+    lib/prompt_guard.mjs)
+      expected_hashes="d72b196e6ac1d38114ce17df34fcd358d8117c679ba95608f4f8f2f703fee82f"
+      ;;
+    lib/stage_tools.mjs)
+      expected_hashes="dc2d75b2d9c6d316f663c807f962945f137a405d15072f23a877a88457b4959e"
+      ;;
+    tools/llm_route.ts)
+      expected_hashes="039094d0526f76e254f92b1e20b6ea1dac79f76aad4efd6021578f2dbee29a0e 2099299b2f9de49b8992bf765a5a65cc32be170a1aaa6f18ae7309c81d7bdad6 57068696d5f880325026129dea19d51529cf1895fb058eb2338de68d12b074e3"
+      ;;
+    tools/claude_agent.ts)
+      expected_hashes="4711a15408957bb86b0265671f79b45fec348a153f30d4b56facca28be1f9ce0"
+      ;;
+    tools/stage_prepare.ts)
+      expected_hashes="37cbce495280328a32bee94dfc518d576d1a4a7c02cb872c6df76c0467c6e632"
+      ;;
+    tools/stage_verify.ts)
+      expected_hashes="bc00325441cfb52a7f4355ee16ef939eb101e59d6bfdcc4e7120839ff276c7aa"
+      ;;
+    plugins/llm_router_prompt_guard.ts)
+      expected_hashes="31a0e5da57efd5572be1b59c2732faf1bb308adf769142866e0ab4f11841a7de"
+      ;;
+    tools/claude_opus.ts)
+      expected_hashes="93ed1b9b5b77147d8f5303fcbddde8d7d770559d4cc263b2d15228da278c3723"
+      ;;
+    tools/delegate_task.ts)
+      expected_hashes="6eea6c83cf13ad33a69987d592540a8273d188d95f660e8eb5e673a9b8d34911"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+  case " $expected_hashes " in
+    *" $actual_hash "*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 SOURCES=(
@@ -398,14 +476,11 @@ TARGETS=(
 RETIRED_TARGETS=(
   "$CONFIG_DIR/lib/prompt_guard.mjs"
   "$CONFIG_DIR/lib/stage_tools.mjs"
-  "$CONFIG_DIR/lib/llm-router-config.json"
-  "$CONFIG_DIR/lib/stage_verifier.py"
   "$CONFIG_DIR/tools/llm_route.ts"
   "$CONFIG_DIR/tools/claude_agent.ts"
   "$CONFIG_DIR/tools/stage_prepare.ts"
   "$CONFIG_DIR/tools/stage_verify.ts"
   "$CONFIG_DIR/plugins/llm_router_prompt_guard.ts"
-  "$CONFIG_DIR/plugins/llm_router_prompt_guard.js"
   "$CONFIG_DIR/tools/claude_opus.ts"
   "$CONFIG_DIR/tools/delegate_task.ts"
 )
@@ -415,7 +490,9 @@ for index in "${!TARGETS[@]}"; do
 done
 preflight_target "$CONFIG_DIR/llm-router.policy.json" "preserve"
 for target in "${RETIRED_TARGETS[@]}"; do
-  preflight_target "$target" "retire"
+  if [[ -e "$target" ]] && is_known_retired_file "$target"; then
+    preflight_target "$target" "retire"
+  fi
 done
 
 if [[ "$DRY_RUN" != true ]]; then
@@ -425,7 +502,9 @@ if [[ "$DRY_RUN" != true ]]; then
     fi
   done
   for target in "${RETIRED_TARGETS[@]}"; do
-    [[ ! -e "$target" ]] || backup_file "$target"
+    if [[ -e "$target" ]] && is_known_retired_file "$target"; then
+      backup_file "$target"
+    fi
   done
 fi
 

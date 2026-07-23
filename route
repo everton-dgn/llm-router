@@ -1,41 +1,41 @@
 #!/usr/bin/env bash
-# Roteador local de modelos: um classificador local definido em config.json
-# decide qual agente configurado no OpenCode deve atender cada prompt.
+# Local model router: a local classifier defined in config.json
+# decides which agent configured in OpenCode should handle each prompt.
 #
-# A configuração de classificação e checkpoint vive no config.json ao lado deste script.
-# Editar rotas não exige tocar no código.
+# Classification and checkpoint configuration lives in config.json next to this script.
+# Editing routes does not require changing the code.
 #
-# Uso:
-#   route "prompt"                    # saída humana
-#   route --classify --json "prompt"  # contrato estável para integrações
-#   route --summarize --json           # checkpoint seguro via JSON no stdin
+# Usage:
+#   route "prompt"                    # human-readable output
+#   route --classify --json "prompt"  # stable contract for integrations
+#   route --summarize --json           # safe checkpoint via JSON on stdin
 #
-# Requer o modelo do config baixado no Ollama, por exemplo:
+# Requires the model configured in config.json to be downloaded in Ollama, for example:
 #   ollama pull hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG="$SCRIPT_DIR/config.json"
-[[ -f "$CONFIG" ]] || { echo "erro: config nao encontrado em $CONFIG" >&2; exit 3; }
-jq empty "$CONFIG" 2>/dev/null || { echo "erro: config.json invalido ($CONFIG)" >&2; exit 3; }
+[[ -f "$CONFIG" ]] || { echo "error: config not found at $CONFIG" >&2; exit 3; }
+jq empty "$CONFIG" 2>/dev/null || { echo "error: invalid config.json ($CONFIG)" >&2; exit 3; }
 
 show_help() {
   local command_name
   command_name="$(basename "$0")"
 
   cat <<EOF
-Uso: $command_name "prompt"
+Usage: $command_name "prompt"
      $command_name --classify --json "prompt"
      $command_name --summarize --json < checkpoint.json
      $command_name help
      $command_name --help
 
-Saídas:
-  padrão               Classifica e mostra a rota em formato humano.
-  --classify --json     Retorna o contrato JSON versionado para integrações.
-  --summarize --json    Resume contexto sanitizado recebido somente por stdin.
+Outputs:
+  default               Classifies and displays the route in human-readable format.
+  --classify --json     Returns the versioned JSON contract for integrations.
+  --summarize --json    Summarizes sanitized context received only through stdin.
 
-Rotas:
+Routes:
 EOF
   jq -r '
     .routing[] as $routing
@@ -45,13 +45,13 @@ EOF
   ' "$CONFIG"
   cat <<EOF
 
-Exemplos:
-  $command_name "quantos arquivos tem este projeto?"
-  $command_name --classify --json "planeje uma migração sem downtime"
+Examples:
+  $command_name "how many files does this project have?"
+  $command_name --classify --json "plan a zero-downtime migration"
   $command_name --summarize --json < checkpoint.json
 
-Requisitos:
-  Ollama e o modelo local configurado; jq e curl no PATH.
+Requirements:
+  Ollama and the configured local model; jq and curl on PATH.
 EOF
 }
 
@@ -81,18 +81,18 @@ while [[ $# -gt 0 ]]; do
     --)
       shift
       [[ $# -eq 1 && -z "$PROMPT" ]] || {
-        echo "erro: -- exige exatamente um prompt depois dele" >&2
+        echo "error: -- requires exactly one prompt after it" >&2
         exit 1
       }
       PROMPT=$1
       shift
       ;;
     --*)
-      echo "erro: opção desconhecida: $1" >&2
+      echo "error: unknown option: $1" >&2
       exit 1
       ;;
     *)
-      [[ -z "$PROMPT" ]] || { echo "erro: informe o prompt como um único argumento" >&2; exit 1; }
+      [[ -z "$PROMPT" ]] || { echo "error: provide the prompt as a single argument" >&2; exit 1; }
       PROMPT=$1
       shift
       ;;
@@ -100,22 +100,22 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "$CLASSIFY" == true && "$SUMMARIZE" == true ]]; then
-  echo "erro: --classify e --summarize são mutuamente exclusivos" >&2
+  echo "error: --classify and --summarize are mutually exclusive" >&2
   exit 1
 fi
 
 if [[ "$JSON_OUTPUT" == true && "$CLASSIFY" != true && "$SUMMARIZE" != true ]]; then
-  echo "erro: --json exige --classify ou --summarize" >&2
+  echo "error: --json requires --classify or --summarize" >&2
   exit 1
 fi
 
 if [[ "$SUMMARIZE" == true ]]; then
-  [[ "$JSON_OUTPUT" == true ]] || { echo "erro: --summarize exige --json" >&2; exit 1; }
-  [[ -z "$PROMPT" ]] || { echo "erro: --summarize recebe o contexto somente por stdin" >&2; exit 1; }
+  [[ "$JSON_OUTPUT" == true ]] || { echo "error: --summarize requires --json" >&2; exit 1; }
+  [[ -z "$PROMPT" ]] || { echo "error: --summarize accepts context only through stdin" >&2; exit 1; }
 else
   [[ -n "$PROMPT" ]] || {
-    echo "uso: $(basename "$0") [--classify --json] \"prompt\"" >&2
-    echo "use '$(basename "$0") --help' para ver o contrato e as rotas" >&2
+    echo "usage: $(basename "$0") [--classify --json] \"prompt\"" >&2
+    echo "use '$(basename "$0") --help' to see the contract and routes" >&2
     exit 1
   }
 fi
@@ -160,16 +160,16 @@ if [[ "$SUMMARIZE" == true ]]; then
     and (.source.selected_message_count == (.messages | length))
   ' <<<"$CHECKPOINT_INPUT" >/dev/null 2>&1 || checkpoint_error \
     "invalid_summary_input" \
-    "entrada de checkpoint inválida"
+    "invalid checkpoint input"
 
   MAX_REQUEST_BYTES=$(jq -r '.checkpoint.max_request_bytes // 131072' "$CONFIG")
   [[ "$MAX_REQUEST_BYTES" =~ ^[0-9]+$ && "$MAX_REQUEST_BYTES" -gt 0 ]] || checkpoint_error \
     "invalid_summary_config" \
-    "checkpoint.max_request_bytes deve ser um inteiro positivo"
+    "checkpoint.max_request_bytes must be a positive integer"
   CHECKPOINT_INPUT_BYTES=$(LC_ALL=C; printf '%s' "$CHECKPOINT_INPUT" | wc -c | tr -d ' ')
   (( CHECKPOINT_INPUT_BYTES <= MAX_REQUEST_BYTES )) || checkpoint_error \
     "summary_input_too_large" \
-    "entrada de checkpoint excede ${MAX_REQUEST_BYTES} bytes"
+    "checkpoint input exceeds ${MAX_REQUEST_BYTES} bytes"
 
   SUMMARY_MODEL=$(jq -r '.checkpoint.model // .model' "$CONFIG")
   SUMMARY_OPTS=$(jq -c '.checkpoint.options // {temperature:0, seed:42, num_predict:2048}' "$CONFIG")
@@ -177,16 +177,16 @@ if [[ "$SUMMARIZE" == true ]]; then
   MAX_SUMMARY_BYTES=$(jq -r '.checkpoint.max_summary_bytes // 32768' "$CONFIG")
   [[ -n "$SUMMARY_MODEL" && "$SUMMARY_MODEL" != "null" ]] || checkpoint_error \
     "invalid_summary_config" \
-    "checkpoint.model deve ser uma string não vazia"
+    "checkpoint.model must be a non-empty string"
   jq -e 'type == "object"' <<<"$SUMMARY_OPTS" >/dev/null 2>&1 || checkpoint_error \
     "invalid_summary_config" \
-    "checkpoint.options deve ser um objeto JSON"
+    "checkpoint.options must be a JSON object"
   [[ "$SUMMARY_TIMEOUT" =~ ^[0-9]+$ && "$SUMMARY_TIMEOUT" -gt 0 && "$SUMMARY_TIMEOUT" -le 30 ]] || checkpoint_error \
     "invalid_summary_config" \
-    "checkpoint.timeout_seconds deve ser um inteiro entre 1 e 30"
+    "checkpoint.timeout_seconds must be an integer between 1 and 30"
   [[ "$MAX_SUMMARY_BYTES" =~ ^[0-9]+$ && "$MAX_SUMMARY_BYTES" -gt 0 ]] || checkpoint_error \
     "invalid_summary_config" \
-    "checkpoint.max_summary_bytes deve ser um inteiro positivo"
+    "checkpoint.max_summary_bytes must be a positive integer"
 
   SUMMARY_SCHEMA=$(jq -cn \
     '{type:"object",properties:{summary:{type:"string",minLength:1}},required:["summary"],additionalProperties:false}')
@@ -203,7 +203,7 @@ Return strict JSON only: {"summary":"concise factual checkpoint"}
 %s
 </sanitized_conversation>
 EOF
-  # SUMMARY_TMPL é controlado e tem um único placeholder %s.
+  # SUMMARY_TMPL is controlled and has a single %s placeholder.
   # shellcheck disable=SC2059
   SUMMARY_PROMPT=$(printf "$SUMMARY_TMPL" "$CHECKPOINT_INPUT")
   SUMMARY_BODY=$(jq -n \
@@ -215,7 +215,7 @@ EOF
 
   if ! SUMMARY_RESP=$(curl -sS --connect-timeout 5 --max-time "$SUMMARY_TIMEOUT" \
     -H 'Content-Type: application/json' "$ENDPOINT" -d "$SUMMARY_BODY"); then
-    checkpoint_error "summarizer_unavailable" "não foi possível consultar o sumarizador local"
+    checkpoint_error "summarizer_unavailable" "could not query the local summarizer"
   fi
   SUMMARY=$(jq -er '
     .message.content
@@ -226,25 +226,25 @@ EOF
   ' <<<"$SUMMARY_RESP" 2>/dev/null || true)
   [[ -n "$SUMMARY" ]] || checkpoint_error \
     "invalid_summary_response" \
-    "sumarizador local não devolveu um resumo válido"
+    "local summarizer did not return a valid summary"
   SUMMARY_BYTES=$(LC_ALL=C; printf '%s' "$SUMMARY" | wc -c | tr -d ' ')
   (( SUMMARY_BYTES <= MAX_SUMMARY_BYTES )) || checkpoint_error \
     "summary_too_large" \
-    "resumo local excede ${MAX_SUMMARY_BYTES} bytes"
+    "local summary exceeds ${MAX_SUMMARY_BYTES} bytes"
   jq -cn --arg summary "$SUMMARY" '{schema_version:1,summary:$summary}'
   exit 0
 fi
 
-# Intencoes no formato do Plano (uma linha por preferencia: {name, description}).
+# Intents in Plano format (one line per preference: {name, description}).
 ROUTES=$(jq -c '.routing[] | {name:.intent, description}' "$CONFIG")
-# Opcoes de geracao e schema restrito a exatamente uma intencao configurada.
+# Generation options and schema restricted to exactly one configured intent.
 OPTS=$(jq -c '.options // {temperature:0, num_predict:32}' "$CONFIG")
 SCHEMA=$(jq -c '{type:"object",properties:{route:{type:"array",minItems:1,maxItems:1,items:{type:"string",enum:[.routing[].intent]}}},required:["route"],additionalProperties:false}' "$CONFIG")
 
-# Conversa no formato esperado pelo Plano.
+# Conversation in the format expected by Plano.
 CONV=$(jq -n --arg p "$PROMPT" '[{role:"user",content:$p}]')
 
-# Prompt de orquestracao do Plano (formato nativo do model card). %s = routes, conversation.
+# Plano orchestration prompt (native model card format). %s = routes, conversation.
 read -r -d '' TMPL <<'EOF' || true
 You are a routing classifier. Select exactly one route for every user request.
 <routes>
@@ -267,11 +267,11 @@ Intermediate social content that requires technical precision uses the engineeri
 Always return one route. Never return an empty list.
 Return strict JSON only: {"route":["route_name"]}
 EOF
-# TMPL é um formato controlado com dois placeholders %s.
+# TMPL is a controlled format with two %s placeholders.
 # shellcheck disable=SC2059
 PLANO_PROMPT=$(printf "$TMPL" "$ROUTES" "$CONV")
 
-# Chama o modelo. think:false evita que a resposta seja enviada como raciocínio.
+# Calls the model. think:false prevents the response from being sent as reasoning.
 BODY=$(jq -n --arg m "$MODEL" --arg c "$PLANO_PROMPT" --argjson schema "$SCHEMA" --argjson opts "$OPTS" \
   '{model:$m, messages:[{role:"user",content:$c}], stream:false, format:$schema, think:false, options:$opts}')
 
@@ -282,31 +282,31 @@ classification_error() {
     jq -cn --arg code "$code" --arg message "$message" \
       '{schema_version:1,error:{code:$code,message:$message}}' >&2
   else
-    printf 'erro: %s\n' "$message" >&2
+    printf 'error: %s\n' "$message" >&2
   fi
   exit 2
 }
 
 if ! RESP=$(curl -sS --connect-timeout 5 --max-time 120 -H 'Content-Type: application/json' "$ENDPOINT" -d "$BODY"); then
-  classification_error "classifier_unavailable" "não foi possível consultar o classificador"
+  classification_error "classifier_unavailable" "could not query the classifier"
 fi
 
 INTENT=$(echo "$RESP" | jq -r '.message.content | fromjson | .route[0] // empty' 2>/dev/null || true)
 [[ -n "$INTENT" ]] || classification_error \
   "invalid_classifier_response" \
-  "classificador não devolveu uma rota válida"
+  "classifier did not return a valid route"
 
-# Mapeia a intenção semântica para o executor real.
+# Maps the semantic intent to the actual executor.
 ROUTE=$(jq -r --arg intent "$INTENT" '.routing[] | select(.intent == $intent) | .route' "$CONFIG")
 [[ -n "$ROUTE" ]] || classification_error \
   "unknown_intent" \
-  "intenção desconhecida: '$INTENT'"
+  "unknown intent: '$INTENT'"
 
 DISPLAY_NAME=$(jq -r --arg route "$ROUTE" \
   '.routes[] | select(.name == $route) | .display_name // empty' "$CONFIG")
 [[ -n "$DISPLAY_NAME" ]] || classification_error \
   "unknown_route" \
-  "rota desconhecida: '$ROUTE'"
+  "unknown route: '$ROUTE'"
 
 if [[ "$JSON_OUTPUT" == true ]]; then
   jq -cn \
@@ -314,5 +314,5 @@ if [[ "$JSON_OUTPUT" == true ]]; then
     --arg route "$ROUTE" \
     '{schema_version:1,intent:$intent,route:$route}'
 else
-  printf 'rota:     %s  ->  %s\n' "$ROUTE" "$DISPLAY_NAME"
+  printf 'route:    %s  ->  %s\n' "$ROUTE" "$DISPLAY_NAME"
 fi

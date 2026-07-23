@@ -1,0 +1,76 @@
+name: Bug report
+description: Report a reproducible defect in llm-router
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Remove credentials and private data before submitting.
+  - type: input
+    id: version
+    attributes:
+      label: llm-router version
+      description: Provide a tag or commit SHA.
+      placeholder: v0.1.0 or abc1234
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Include the OS, architecture, Node.js, Python, OpenCode, and Ollama versions that apply.
+      placeholder: macOS 15 arm64, Node.js 24, Python 3.11, OpenCode 1.18.4
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Router CLI
+        - Routing mode
+        - Execution policy
+        - OpenCode plugin or provider
+        - Claude Agent SDK transport
+        - Installer
+        - Tests or documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the observed and expected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Provide the smallest sequence that reproduces the problem.
+      placeholder: |
+        1. Run ...
+        2. Send ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: Paste sanitized logs, structured errors, or test output.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues for this problem.
+          required: true
+        - label: I removed credentials, tokens, personal data, and private prompts.
+          required: true
+        - label: This report does not disclose a security vulnerability.
+          required: true

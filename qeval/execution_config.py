@@ -1,4 +1,4 @@
-"""Preparação de config efetiva, rotas, ambiente e preflight."""
+"""Prepare the effective config, routes, environment, and preflight."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ def prepare_execution_config(
                         {
                             "route": route["name"],
                             "role": role,
-                            "change": "Codex autorizado a executar no fixture temporário sem Git",
+                            "change": "Codex allowed to run in the temporary fixture without Git",
                         }
                     )
                     prompt_index += 1
@@ -51,7 +51,7 @@ def prepare_execution_config(
                         {
                             "route": route["name"],
                             "role": role,
-                            "change": "Config global e MCPs do Codex ignorados no benchmark",
+                            "change": "Codex global config and MCPs ignored during the benchmark",
                         }
                     )
                 profile["argv"] = adjusted
@@ -88,15 +88,15 @@ def prepare_execution_config(
                     adjusted.extend(
                         ["--permission-mode", "dontAsk", "--tools", configured_tools]
                     )
-                    change = f"Claude preservado no perfil read-only {configured_tools}"
+                    change = f"Claude kept in the read-only profile {configured_tools}"
                 else:
                     adjusted.extend(
                         ["--permission-mode", "acceptEdits", "--tools", "Read,Edit,Write"]
                     )
-                    change = "Claude limitado a Read,Edit,Write com permission-mode acceptEdits"
+                    change = "Claude restricted to Read,Edit,Write with permission-mode acceptEdits"
             else:
                 adjusted.extend(["--tools", "Read"])
-                change = "Claude limitado a Read para auditoria das fixtures"
+                change = "Claude restricted to Read for fixture auditing"
             adjusted.extend(
                 [
                     "--strict-mcp-config",
@@ -109,7 +109,7 @@ def prepare_execution_config(
                 {
                     "route": route["name"],
                     "role": role,
-                    "change": "MCPs externos desativados no fixture do benchmark",
+                    "change": "External MCPs disabled in the benchmark fixture",
                 }
             )
             profile["argv"] = adjusted
@@ -164,7 +164,7 @@ def preflight(
 ) -> dict[str, Any]:
     trash = shutil.which("trash")
     if not trash:
-        raise EvaluationError("trash é obrigatório antes de executar o benchmark")
+        raise EvaluationError("trash is required before running the benchmark")
     if (assertion_types or set()) & {
         "command",
         "python_behavior",
@@ -172,11 +172,11 @@ def preflight(
     }:
         if shutil.which("sandbox-exec") != "/usr/bin/sandbox-exec":
             raise EvaluationError(
-                "/usr/bin/sandbox-exec é obrigatório para assertions Python seguras"
+                "/usr/bin/sandbox-exec is required for safe Python assertions"
             )
         if not constants.SANDBOX_PYTHON.is_file():
             raise EvaluationError(
-                f"{constants.SANDBOX_PYTHON} é obrigatório para assertions Python seguras"
+                f"{constants.SANDBOX_PYTHON} is required for safe Python assertions"
             )
     route_configs = _route_configs(config)
     required_variables: set[str] = set()
@@ -190,20 +190,20 @@ def preflight(
             profile = headless[role]
             raw_argv = profile.get("argv")
             if not isinstance(raw_argv, list) or not raw_argv:
-                raise EvaluationError(f"{route}.{role}.argv precisa ser uma lista não vazia")
+                raise EvaluationError(f"{route}.{role}.argv must be a non-empty list")
             required_variables.update(_required_environment(raw_argv))
             executable = raw_argv[0]
             if "${" in executable or "{" in executable:
-                raise EvaluationError(f"executável dinâmico não suportado em {route}.{role}")
+                raise EvaluationError(f"dynamic executable is not supported in {route}.{role}")
             resolved = shutil.which(executable)
             if not resolved:
-                raise EvaluationError(f"executável ausente para {route}.{role}: {executable}")
+                raise EvaluationError(f"missing executable for {route}.{role}: {executable}")
             executables[executable] = resolved
             safe_argv[(route, role)] = _safe_profile_argv(profile)
     missing = sorted(name for name in required_variables if not os.environ.get(name))
     if missing:
         names = ", ".join(missing)
-        raise EvaluationError(f"variáveis de ambiente obrigatórias ausentes: {names}")
+        raise EvaluationError(f"missing required environment variables: {names}")
 
     versions: dict[str, str] = {}
     for executable, resolved in executables.items():
@@ -217,7 +217,7 @@ def preflight(
                 check=False,
             )
             first_line = (completed.stdout or "").strip().splitlines()
-            versions[executable] = first_line[0][:500] if first_line else "indisponível"
+            versions[executable] = first_line[0][:500] if first_line else "unavailable"
         except (OSError, subprocess.TimeoutExpired):
-            versions[executable] = "indisponível"
+            versions[executable] = "unavailable"
     return {"safe_argv": safe_argv, "cli_versions": versions}

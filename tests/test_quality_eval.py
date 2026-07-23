@@ -179,7 +179,7 @@ class DatasetValidationTests(unittest.TestCase):
         self.assertTrue(assertions[0]["critical"])
 
     def test_rejects_unsafe_fixture_path(self) -> None:
-        with self.assertRaisesRegex(EvaluationError, "caminho relativo seguro"):
+        with self.assertRaisesRegex(EvaluationError, "safe relative path"):
             make_dataset([make_case(files={"../outside.txt": "x"})])
 
     def test_v2_accepts_difficulty_hybrid_rubric_and_two_turns(self) -> None:
@@ -253,7 +253,7 @@ class DatasetValidationTests(unittest.TestCase):
             ],
         ):
             with self.subTest(argv=argv), self.assertRaisesRegex(
-                EvaluationError, "prefixo seguro|somente um script Python relativo ou -c"
+                EvaluationError, "safe prefix|only a relative Python script or -c"
             ):
                 make_dataset([make_case(assertions=[{"type": "command", "argv": argv}])])
 
@@ -283,7 +283,7 @@ class DatasetValidationTests(unittest.TestCase):
             )
         rubric = make_human_rubric()
         rubric["criteria"][0]["weight"] = 10
-        with self.assertRaisesRegex(EvaluationError, "peso 100"):
+        with self.assertRaisesRegex(EvaluationError, "weights must total 100"):
             validate_dataset(
                 {
                     "version": 2,
@@ -885,7 +885,7 @@ class AssertionTests(unittest.TestCase):
         self.assertTrue(results[0]["passed"])
 
     def test_rejects_removed_hidden_tests_and_behavior_path_escapes(self) -> None:
-        with self.assertRaisesRegex(EvaluationError, "foi removido"):
+        with self.assertRaisesRegex(EvaluationError, "was removed"):
             validate_dataset(
                 {
                     "version": 2,
@@ -900,7 +900,7 @@ class AssertionTests(unittest.TestCase):
             )
         for module, call in (("../os", "system"), ("safe", "thing.__dict__")):
             with self.subTest(module=module, call=call), self.assertRaisesRegex(
-                EvaluationError, "sem acesso dunder|identificadores Python"
+                EvaluationError, "without dunder access|Python identifiers"
             ):
                 validate_dataset(
                     {
@@ -1154,7 +1154,7 @@ class BenchmarkTests(unittest.TestCase):
             return ProcessResult("success", 0, "OK", "", "", 0.1)
 
         dataset = make_dataset([make_case()])
-        with self.assertRaisesRegex(EvaluationError, "acima de --max-calls"):
+        with self.assertRaisesRegex(EvaluationError, "above --max-calls"):
             run_benchmark(
                 Path("missing-config.json"),
                 self.config,
@@ -1314,8 +1314,10 @@ class BenchmarkTests(unittest.TestCase):
 
         result = report["results"][0]
         self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["assertions"][0]["error"],
-                         "workspace contém arquivo inseguro para leitura: result.txt")
+        self.assertEqual(
+            result["assertions"][0]["error"],
+            "workspace contains an unsafe file for reading: result.txt",
+        )
         self.assertEqual(result["assertions"][-1]["unsafe_files"], ["result.txt"])
 
     def test_oversized_allowed_file_is_still_a_critical_failure(self) -> None:
@@ -1375,7 +1377,7 @@ class BenchmarkTests(unittest.TestCase):
 
         result = report["results"][0]
         self.assertEqual(result["status"], "failed")
-        self.assertIn("arquivo inseguro", result["assertions"][0]["error"])
+        self.assertIn("unsafe file", result["assertions"][0]["error"])
         self.assertEqual(result["assertions"][-1]["unsafe_files"], ["large.txt"])
 
     def test_snapshot_distinguishes_regular_files_from_symlinks(self) -> None:
@@ -1424,7 +1426,7 @@ class BenchmarkTests(unittest.TestCase):
 
         result = report["results"][0]
         self.assertEqual(result["status"], "failed")
-        self.assertIn("arquivo inseguro", result["assertions"][0]["error"])
+        self.assertIn("unsafe file", result["assertions"][0]["error"])
         self.assertEqual(result["assertions"][-1]["unsafe_files"], ["result.txt"])
 
     def test_file_assertion_revalidates_path_after_audit(self) -> None:
@@ -1477,7 +1479,7 @@ class BenchmarkTests(unittest.TestCase):
 
         result = report["results"][0]
         self.assertEqual(result["status"], "failed")
-        self.assertIn("inseguro", result["assertions"][0]["error"])
+        self.assertIn("unsafe", result["assertions"][0]["error"])
 
     def test_process_error_scores_zero(self) -> None:
         def fake_execute(route: str, role: str, prompt: str, cwd: Path) -> ProcessResult:
@@ -2071,7 +2073,7 @@ class BenchmarkV2Tests(unittest.TestCase):
                 if slot["case_id"] == prompt
             )
             if state["slots"][slot_key]["state"] != "running":
-                return ProcessResult("process_error", 1, "", "", "slot não persistido", 0.0)
+                return ProcessResult("process_error", 1, "", "", "slot not persisted", 0.0)
             with lock:
                 call_counts[prompt] += 1
                 active += 1
@@ -2279,11 +2281,11 @@ class BenchmarkV2Tests(unittest.TestCase):
 
         with (
             patch("qeval.fingerprint._engine_identity", return_value=changed_engine),
-            self.assertRaisesRegex(EvaluationError, "perfil efetivo"),
+            self.assertRaisesRegex(EvaluationError, "effective profile"),
         ):
             run_benchmark(
                 Path("missing-config.json"), self.config, dataset, ["alpha"], 1, 1, 1,
-                execute=lambda *_: self.fail("executou com perfil divergente"),
+                execute=lambda *_: self.fail("executed with a mismatched profile"),
                 checkpoint_path=checkpoint, resume=True,
             )
 
@@ -2299,10 +2301,10 @@ class BenchmarkV2Tests(unittest.TestCase):
         checkpoint_data["manifest"].pop("execution_fingerprint")
         _atomic_write_json(checkpoint, checkpoint_data)
 
-        with self.assertRaisesRegex(EvaluationError, "checkpoint legado"):
+        with self.assertRaisesRegex(EvaluationError, "legacy checkpoint"):
             run_benchmark(
                 Path("missing-config.json"), self.config, dataset, ["alpha"], 1, 1, 1,
-                execute=lambda *_: self.fail("executou checkpoint legado"),
+                execute=lambda *_: self.fail("executed a legacy checkpoint"),
                 checkpoint_path=checkpoint, resume=True,
             )
 
@@ -2332,7 +2334,7 @@ class BenchmarkV2Tests(unittest.TestCase):
         with self.assertRaisesRegex(EvaluationError, "--max-calls>=4"):
             run_benchmark(
                 Path("missing-config.json"), self.config, dataset, ["alpha"], 1, 1, 2,
-                execute=lambda *_: self.fail("executou acima do orçamento"),
+                execute=lambda *_: self.fail("executed above the budget"),
                 checkpoint_path=checkpoint, resume=True,
             )
 
@@ -2365,7 +2367,7 @@ class BenchmarkV2Tests(unittest.TestCase):
         with self.assertRaisesRegex(EvaluationError, "--max-calls>=6"):
             run_benchmark(
                 Path("missing-config.json"), self.config, dataset, ["alpha"], 1, 1, 5,
-                execute=lambda *_: self.fail("executou segundo retry sem orçamento"),
+                execute=lambda *_: self.fail("executed a second retry without enough budget"),
                 checkpoint_path=checkpoint, resume=True, retry_ambiguous=True,
             )
 
@@ -2386,12 +2388,12 @@ class BenchmarkV2Tests(unittest.TestCase):
                 slot["ambiguous_retry_count"] = invalid
                 _atomic_write_json(checkpoint, checkpoint_data)
                 with self.assertRaisesRegex(
-                    EvaluationError, "ambiguous_retry_count inválido"
+                    EvaluationError, "invalid ambiguous_retry_count"
                 ):
                     run_benchmark(
                         Path("missing-config.json"), self.config, dataset, ["alpha"],
                         1, 1, 1,
-                        execute=lambda *_: self.fail("executou retry count inválido"),
+                        execute=lambda *_: self.fail("executed with an invalid retry count"),
                         checkpoint_path=checkpoint, resume=True,
                     )
 
@@ -2451,8 +2453,8 @@ class BenchmarkV2Tests(unittest.TestCase):
         self.assertEqual(retried["physical_calls_upper_bound"], 4)
         self.assertNotIn("executed_calls", retried)
         markdown = render_markdown(retried)
-        self.assertIn("Limite superior de chamadas físicas", markdown)
-        self.assertNotIn("Chamadas físicas executadas", markdown)
+        self.assertIn("Upper bound on physical calls", markdown)
+        self.assertNotIn("Executed physical calls", markdown)
 
     def test_canary_leak_is_a_critical_failure(self) -> None:
         dataset = validate_dataset(
@@ -2656,7 +2658,7 @@ class BenchmarkV2Tests(unittest.TestCase):
             )
 
         self.assertEqual(exit_code, 0)
-        self.assertIn("468 chamadas físicas planejadas", stdout.getvalue())
+        self.assertIn("468 planned physical calls", stdout.getvalue())
         execute_benchmark.assert_not_called()
 
     def test_rubric_hash_changes_when_frozen_rubric_changes(self) -> None:
@@ -2738,7 +2740,7 @@ class SafetyTests(unittest.TestCase):
         error = trash_directory(Path.cwd())
 
         self.assertIsNotNone(error)
-        self.assertIn("trash recusado", error)
+        self.assertIn("trash refused", error)
         self.assertTrue(Path.cwd().exists())
 
     def test_claude_worker_loses_bypass_and_bash(self) -> None:
