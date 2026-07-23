@@ -68,43 +68,57 @@
       "template": "Apply router mode auto.",
       "description": "Classify every message",
       "agent": "router-control",
-      "model": "router-control/control"
+      "model": "router-control/control",
+      "subtask": false
     },
     "router-adaptive": {
       "template": "Apply router mode adaptive.",
       "description": "Change models only when the benefit is stable",
       "agent": "router-control",
-      "model": "router-control/control"
+      "model": "router-control/control",
+      "subtask": false
     },
     "router-pinned": {
       "template": "Apply router mode pinned.",
       "description": "Keep the first selected model for this conversation",
       "agent": "router-control",
-      "model": "router-control/control"
+      "model": "router-control/control",
+      "subtask": false
     },
     "router-native": {
       "template": "Apply router execution profile native.",
       "description": "Use each provider's native permissions",
       "agent": "router-control",
-      "model": "router-control/control"
+      "model": "router-control/control",
+      "subtask": false
     },
     "router-restricted": {
       "template": "Apply router execution profile restricted.",
       "description": "Use policy limits and ask or deny rules",
       "agent": "router-control",
-      "model": "router-control/control"
+      "model": "router-control/control",
+      "subtask": false
     },
     "router-full": {
       "template": "Apply router execution profile full.",
       "description": "Allow all tools for this conversation",
       "agent": "router-control",
-      "model": "router-control/control"
+      "model": "router-control/control",
+      "subtask": false
     },
     "router-status": {
       "template": "Show the active router mode and execution profile.",
       "description": "Show router state without calling an LLM",
       "agent": "router-control",
-      "model": "router-control/control"
+      "model": "router-control/control",
+      "subtask": false
+    },
+    "router-uninstall": {
+      "template": "$ARGUMENTS",
+      "description": "Preview or confirm removal of llm-router",
+      "agent": "router-control",
+      "model": "router-control/control",
+      "subtask": false
     }
   },
   "agent": {

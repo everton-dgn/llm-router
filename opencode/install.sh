@@ -101,6 +101,19 @@ fi
 
 case "$CONFIG_DIR" in /*) ;; *) CONFIG_DIR="$PWD/$CONFIG_DIR" ;; esac
 case "$BACKUP_ROOT" in /*) ;; *) BACKUP_ROOT="$PWD/$BACKUP_ROOT" ;; esac
+CONFIG_DIR=$("$NODE_PATH" -e '
+  const { existsSync, realpathSync } = require("node:fs")
+  const { basename, dirname, resolve } = require("node:path")
+  let current = resolve(process.argv[1])
+  const suffix = []
+  while (!existsSync(current)) {
+    const parent = dirname(current)
+    if (parent === current) throw new Error(`cannot resolve config directory: ${process.argv[1]}`)
+    suffix.unshift(basename(current))
+    current = parent
+  }
+  process.stdout.write(resolve(realpathSync.native(current), ...suffix))
+' "$CONFIG_DIR") || fail "cannot resolve config directory: $CONFIG_DIR"
 ROUTER_PATH="$(cd "$(dirname "$ROUTER_PATH")" && pwd)/$(basename "$ROUTER_PATH")"
 [[ -x "$ROUTER_PATH" ]] || fail "llm-router executable not found: $ROUTER_PATH"
 [[ -n "$CLAUDE_PATH" ]] || fail "Claude Code executable not found in PATH"
@@ -187,6 +200,8 @@ cp "$SCRIPT_DIR/lib/claude_checkpoint.mjs" "$RENDER_DIR/lib/claude_checkpoint.mj
 cp "$SCRIPT_DIR/lib/adaptive_routing.mjs" "$RENDER_DIR/lib/adaptive_routing.mjs"
 cp "$SCRIPT_DIR/lib/direct_handoff.mjs" "$RENDER_DIR/lib/direct_handoff.mjs"
 cp "$SCRIPT_DIR/lib/execution_policy.mjs" "$RENDER_DIR/lib/execution_policy.mjs"
+cp "$SCRIPT_DIR/lib/install_state.mjs" "$RENDER_DIR/lib/install_state.mjs"
+cp "$SCRIPT_DIR/lib/uninstall.mjs" "$RENDER_DIR/lib/uninstall.mjs"
 cp "$SCRIPT_DIR/lib/opencode_transport.mjs" "$RENDER_DIR/lib/opencode_transport.mjs"
 cp "$SCRIPT_DIR/lib/repo_query.mjs" "$RENDER_DIR/lib/repo_query.mjs"
 cp "$SCRIPT_DIR/lib/router_control.mjs" "$RENDER_DIR/lib/router_control.mjs"
@@ -444,6 +459,8 @@ SOURCES=(
   "$RENDER_DIR/lib/claude_checkpoint.mjs"
   "$RENDER_DIR/lib/direct_handoff.mjs"
   "$RENDER_DIR/lib/execution_policy.mjs"
+  "$RENDER_DIR/lib/install_state.mjs"
+  "$RENDER_DIR/lib/uninstall.mjs"
   "$RENDER_DIR/lib/opencode_transport.mjs"
   "$RENDER_DIR/lib/repo_query.mjs"
   "$RENDER_DIR/lib/route_contract.mjs"
@@ -466,6 +483,8 @@ TARGETS=(
   "$CONFIG_DIR/lib/claude_checkpoint.mjs"
   "$CONFIG_DIR/lib/direct_handoff.mjs"
   "$CONFIG_DIR/lib/execution_policy.mjs"
+  "$CONFIG_DIR/lib/install_state.mjs"
+  "$CONFIG_DIR/lib/uninstall.mjs"
   "$CONFIG_DIR/lib/opencode_transport.mjs"
   "$CONFIG_DIR/lib/repo_query.mjs"
   "$CONFIG_DIR/lib/route_contract.mjs"
@@ -502,7 +521,28 @@ for target in "${RETIRED_TARGETS[@]}"; do
   fi
 done
 
+INSTALL_STATE_ARGS=(
+  --config-dir "$CONFIG_DIR"
+  --required-config "$RENDER_DIR/opencode.required.json"
+  --required-package "$RENDER_DIR/package.required.json"
+)
+for index in "${!TARGETS[@]}"; do
+  case "${TARGETS[$index]}" in
+    "$CONFIG_DIR/opencode.jsonc"|"$CONFIG_DIR/package.json")
+      ;;
+    *)
+      INSTALL_STATE_ARGS+=(
+        --managed-file
+        "${TARGETS[$index]#"$CONFIG_DIR"/}"
+        "${SOURCES[$index]}"
+      )
+      ;;
+  esac
+done
+
 if [[ "$DRY_RUN" != true ]]; then
+  "$NODE_PATH" "$SCRIPT_DIR/lib/install_state.mjs" prepare "${INSTALL_STATE_ARGS[@]}" \
+    || fail "cannot prepare the persistent installation state"
   for index in "${!TARGETS[@]}"; do
     if [[ -e "${TARGETS[$index]}" ]] && ! cmp -s "${SOURCES[$index]}" "${TARGETS[$index]}"; then
       backup_file "${TARGETS[$index]}"
@@ -522,6 +562,11 @@ install_once_file "$RENDER_DIR/llm-router.policy.defaults.json" "$CONFIG_DIR/llm
 for target in "${RETIRED_TARGETS[@]}"; do
   retire_file "$target"
 done
+
+if [[ "$DRY_RUN" != true ]]; then
+  "$NODE_PATH" "$SCRIPT_DIR/lib/install_state.mjs" finalize "${INSTALL_STATE_ARGS[@]}" \
+    || fail "cannot finalize the persistent installation state"
+fi
 
 if [[ -n "$BACKUP_DIR" ]]; then
   printf 'backup %s\n' "$BACKUP_DIR"

@@ -174,11 +174,19 @@ The default session uses `adaptive + native`.
 /router-native
 /router-restricted
 /router-full
+/router-uninstall
 ```
 
 Routing commands preserve the current execution profile. Profile commands
 preserve the current routing mode. The control provider handles these commands
 locally without calling an LLM.
+
+`/router-uninstall` first previews the exact changes and returns a confirmation
+token. Run `/router-uninstall <token>` to apply the preview only while the
+fingerprints of the affected files still match. The command preserves the
+user-created policy, saves shared configuration before editing it, and moves
+bundle files into a timestamped recovery directory. Restart OpenCode after it
+completes. See [uninstall and rollback](docs/uninstall.md) for the full contract.
 
 ## Claude Agent SDK integration
 

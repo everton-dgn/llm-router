@@ -211,6 +211,29 @@ Managed files are backed up before replacement. The installer creates
 `llm-router.policy.json` once and preserves its contents during upgrades.
 Identical reinstallations create no new backup.
 
+## The uninstall token was rejected
+
+An uninstall token is bound to the preview and to fingerprints of the affected
+files. It is rejected when it is invalid, belongs to another preview, or the
+configuration changed after it was issued.
+
+Run a fresh preview:
+
+```text
+/router-uninstall
+```
+
+Review the new plan, then apply the token printed by that response:
+
+```text
+/router-uninstall <token>
+```
+
+If the uninstall succeeds, note the recovery path in the response and restart
+OpenCode. For legacy installations, the result may list ambiguous files or
+shared entries that were preserved for manual review. See
+[uninstall and rollback](uninstall.md).
+
 ## Regression tests
 
 ```bash

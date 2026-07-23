@@ -137,6 +137,100 @@ test("router-status reports state without mutating session permissions", async (
   assert.match(output.parts[0].text, /^Router status\. mode: adaptive \| profile: restricted$/)
 })
 
+test("router-uninstall delegates arguments without reading or mutating session state", async () => {
+  const store = fakeSessions({
+    "session-1": {
+      id: "session-1",
+      metadata: {
+        [ROUTER_CONTROL_METADATA_KEY]: {
+          schemaVersion: 1,
+          sessionID: "session-1",
+          mode: "pinned",
+          profileOverride: "full",
+        },
+      },
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    },
+  })
+  const calls = []
+  const runtime = createRouterControlRuntime({
+    directory: "/workspace",
+    sessionClient: store.client,
+    v2SessionClient: { permission: {} },
+    loadPolicy: async () => {
+      throw new Error("router-uninstall must not load execution policy")
+    },
+    resolvePolicy: () => {
+      throw new Error("router-uninstall must not resolve execution policy")
+    },
+    uninstall: async (argumentsText) => {
+      calls.push(argumentsText)
+      return "Uninstall preview. Run /router-uninstall confirmation-token to continue."
+    },
+    notify: async () => {
+      throw new Error("router-uninstall must not send router-control notifications")
+    },
+  })
+  const output = { parts: [{ type: "text", text: "stale" }] }
+  const corePartsReference = output.parts
+
+  await runtime.commandBefore({
+    command: "router-uninstall",
+    sessionID: "session-1",
+    arguments: "  confirmation-token  ",
+  }, output)
+
+  assert.deepEqual(calls, ["  confirmation-token  "])
+  assert.equal(output.parts, corePartsReference)
+  assert.deepEqual(store.updates, [])
+  assert.deepEqual(store.sessions["session-1"].metadata[ROUTER_CONTROL_METADATA_KEY], {
+    schemaVersion: 1,
+    sessionID: "session-1",
+    mode: "pinned",
+    profileOverride: "full",
+  })
+  assert.deepEqual(store.sessions["session-1"].permission, [
+    { permission: "*", pattern: "*", action: "allow" },
+  ])
+  assert.deepEqual(output.parts, [{
+    type: "text",
+    text: "Uninstall preview. Run /router-uninstall confirmation-token to continue.",
+  }])
+})
+
+test("router-uninstall normalizes missing arguments and rejects invalid responses", async () => {
+  const store = fakeSessions()
+  const calls = []
+  const runtime = createRouterControlRuntime({
+    directory: "/workspace",
+    sessionClient: store.client,
+    v2SessionClient: { permission: {} },
+    loadPolicy: async () => ({}),
+    resolvePolicy: () => restrictedPolicy,
+    uninstall: async (argumentsText) => {
+      calls.push(argumentsText)
+      return calls.length === 1 ? "Uninstall preview" : undefined
+    },
+  })
+
+  const output = { parts: [] }
+  await runtime.commandBefore({
+    command: "router-uninstall",
+    sessionID: "session-1",
+  }, output)
+  assert.deepEqual(calls, [""])
+  assert.deepEqual(output.parts, [{ type: "text", text: "Uninstall preview" }])
+
+  await assert.rejects(
+    runtime.commandBefore({
+      command: "router-uninstall",
+      sessionID: "session-1",
+      arguments: "token",
+    }, output),
+    /must return a text response/,
+  )
+})
+
 test("restricted Claude uses OpenCode native permission requests and correlates ask replies", async () => {
   const store = fakeSessions({
     "session-1": {
