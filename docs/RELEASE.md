@@ -57,11 +57,9 @@ Generated entries treat commit prose as untrusted text. Active links,
 before they reach `CHANGELOG.md` or a GitHub Release. Valid inline code spans
 remain readable.
 
-Before `1.0.0`, an automatic breaking change increments the minor version. A
-maintainer must make the deliberate decision to publish `1.0.0`.
-
-The first release starts from `0.0.0` and derives from the complete non-merge
-history. Later releases require `package.json` to match the latest stable tag.
+The root manifest uses `0.0.0` as the unpublished sentinel. The first
+release-worthy history is promoted directly to `1.0.0`. Later releases require
+`package.json` to match the latest stable tag and follow the bump table above.
 
 ## Local checks
 
@@ -73,7 +71,7 @@ git pull --ff-only
 pnpm release:next
 ```
 
-The command is read-only. It prints `none` or one version such as `0.1.0`.
+The command is read-only. It prints `none` or one version such as `1.0.0`.
 
 Run the release unit tests with:
 

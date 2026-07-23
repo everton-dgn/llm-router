@@ -1,50 +1,16 @@
-"""Fixtures, snapshots, file auditing, and temporary cleanup."""
+"""Fixtures, snapshots, and file auditing."""
 
 from __future__ import annotations
 
 import fnmatch
 import hashlib
 import os
-import shutil
 import stat
-import subprocess
-import tempfile
 from pathlib import Path
 from typing import Any
 
 from qeval import constants
 from qeval.errors import EvaluationError
-
-
-def trash_directory(path: Path) -> str | None:
-    temp_root = Path(tempfile.gettempdir()).resolve()
-    try:
-        resolved = path.resolve(strict=True)
-    except OSError as error:
-        return f"invalid temporary directory: {error}"
-    if (
-        not path.is_absolute()
-        or not resolved.is_relative_to(temp_root)
-        or not resolved.name.startswith(constants.TEMP_PREFIX)
-    ):
-        return f"trash refused path outside benchmark fixtures: {path}"
-    trash = shutil.which("trash")
-    if not trash:
-        return f"trash not found; temporary directory preserved at {path}"
-    try:
-        completed = subprocess.run(
-            [trash, str(resolved)],
-            text=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-    except OSError as error:
-        return f"trash failed for {resolved}: {error}"
-    if completed.returncode != 0:
-        detail = completed.stderr.strip() or f"exit code {completed.returncode}"
-        return f"trash failed for {resolved}: {detail}"
-    return None
 
 
 def _write_fixture(cwd: Path, files: dict[str, str]) -> None:

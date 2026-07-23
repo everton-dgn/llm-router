@@ -9,7 +9,7 @@
   available in Ollama.
 - OpenAI authenticated in OpenCode.
 - `MINIMAX_API_KEY` and `ZAI_API_KEY` in the environment that starts OpenCode.
-- `curl`, `jq`, `node`, `pnpm`, and `trash` in `PATH`.
+- `curl`, `jq`, `node`, and `pnpm` in `PATH`.
 
 Pull the local classifier:
 
@@ -70,9 +70,10 @@ The installer does not run a package manager. The second command uses the same
 When `opencode.jsonc` already exists, the installer updates only the
 router-owned model, default agent, providers, commands, and agents. Comments,
 custom providers, custom agents, commands, and unrelated settings remain in
-place. Files at retired llm-router paths are sent to Trash only when their
-content matches a known legacy implementation; an unrecognized file is
-preserved and reported.
+place. Files at retired llm-router paths are moved out of the active
+configuration only when their content matches a known legacy implementation.
+The timestamped backup retains their contents under `retired/`; an
+unrecognized file is preserved and reported.
 
 ## First use
 

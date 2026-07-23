@@ -51,11 +51,10 @@ by llm-router have no previous copy and need the removal procedure below.
 
 ## Remove files introduced by llm-router
 
-Never move `package.json` or `opencode.jsonc` to the trash. They are shared
-OpenCode configuration files and may contain unrelated providers, scripts, or
-dependencies. Restore them from the selected backup. When no backup exists,
-remove only the entries introduced by llm-router after reviewing the current
-JSON.
+Keep `package.json` and `opencode.jsonc`. They are shared OpenCode configuration
+files and may contain unrelated providers, scripts, or dependencies. Restore
+them from the selected backup. When no backup exists, remove only the entries
+introduced by llm-router after reviewing the current JSON.
 
 The same rule applies to any path that already existed before installation. If
 the selected backup contains that relative path, restore the backup instead of
@@ -64,28 +63,29 @@ removing the file.
 The following paths are exclusive to the current llm-router bundle when they
 were absent before installation:
 
-```bash
-trash /absolute/path/to/opencode/plugins/llm_router_handoff.ts
-trash /absolute/path/to/opencode/providers/claude_agent_provider.mjs
-trash /absolute/path/to/opencode/providers/router_control_provider.mjs
-trash /absolute/path/to/opencode/llm-router.policy.defaults.json
-trash /absolute/path/to/opencode/llm-router.policy.schema.json
-trash /absolute/path/to/opencode/tools/repo_query.ts
-trash /absolute/path/to/opencode/lib/adaptive_routing.mjs
-trash /absolute/path/to/opencode/lib/claude_agent.mjs
-trash /absolute/path/to/opencode/lib/claude_checkpoint.mjs
-trash /absolute/path/to/opencode/lib/claude_context.mjs
-trash /absolute/path/to/opencode/lib/direct_handoff.mjs
-trash /absolute/path/to/opencode/lib/execution_policy.mjs
-trash /absolute/path/to/opencode/lib/opencode_transport.mjs
-trash /absolute/path/to/opencode/lib/repo_query.mjs
-trash /absolute/path/to/opencode/lib/route_contract.mjs
-trash /absolute/path/to/opencode/lib/router_control.mjs
-trash /absolute/path/to/opencode/lib/routing_policy.mjs
-trash /absolute/path/to/opencode/lib/session_metadata.mjs
+```text
+/absolute/path/to/opencode/plugins/llm_router_handoff.ts
+/absolute/path/to/opencode/providers/claude_agent_provider.mjs
+/absolute/path/to/opencode/providers/router_control_provider.mjs
+/absolute/path/to/opencode/llm-router.policy.defaults.json
+/absolute/path/to/opencode/llm-router.policy.schema.json
+/absolute/path/to/opencode/tools/repo_query.ts
+/absolute/path/to/opencode/lib/adaptive_routing.mjs
+/absolute/path/to/opencode/lib/claude_agent.mjs
+/absolute/path/to/opencode/lib/claude_checkpoint.mjs
+/absolute/path/to/opencode/lib/claude_context.mjs
+/absolute/path/to/opencode/lib/direct_handoff.mjs
+/absolute/path/to/opencode/lib/execution_policy.mjs
+/absolute/path/to/opencode/lib/opencode_transport.mjs
+/absolute/path/to/opencode/lib/repo_query.mjs
+/absolute/path/to/opencode/lib/route_contract.mjs
+/absolute/path/to/opencode/lib/router_control.mjs
+/absolute/path/to/opencode/lib/routing_policy.mjs
+/absolute/path/to/opencode/lib/session_metadata.mjs
 ```
 
-Compare each candidate with the same file in this repository before moving it.
+Compare each candidate with the same file in this repository before removing
+it.
 The `TARGETS` array in `opencode/install.sh` is an installation manifest, not a
 safe deletion list.
 

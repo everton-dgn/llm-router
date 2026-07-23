@@ -80,7 +80,9 @@ export function deriveAutomaticVersion({
   if (derivedBump === null) {
     return { bump: null, version: null }
   }
-  const bump = resolveAutoBump(derivedBump, currentVersion)
+  const bump = baselineTag
+    ? resolveAutoBump(derivedBump, currentVersion)
+    : 'major'
   return {
     bump,
     version: computeNextReleaseVersion(currentVersion, bump)

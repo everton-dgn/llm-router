@@ -4,14 +4,14 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
-TRASH_PATH=$(command -v trash || true)
-[[ -n "$TRASH_PATH" ]] || { printf 'FAILED: trash is required\n' >&2; exit 1; }
 
 TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/llm-router-smoke.XXXXXX")
-cleanup() {
-  [[ ! -d "$TEST_TMP" ]] || "$TRASH_PATH" "$TEST_TMP" >/dev/null 2>&1 || true
+preserve_fixture() {
+  [[ ! -d "$TEST_TMP" ]] \
+    || mv "$TEST_TMP" "$TEST_TMP.preserved" >/dev/null 2>&1 \
+    || true
 }
-trap cleanup EXIT
+trap preserve_fixture EXIT
 
 fail() {
   printf 'FAILED: %s\n' "$*" >&2

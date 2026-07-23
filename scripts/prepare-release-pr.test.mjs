@@ -19,6 +19,10 @@ const existingChangelog = [
   '- Initial release.',
   ''
 ].join('\n')
+const firstStableChangelog = existingChangelog.replace(
+  '## 0.1.0',
+  '## 1.0.0'
+)
 
 test('prepares package metadata and prepends deterministic release notes', () => {
   const plan = createReleasePlan({
@@ -51,7 +55,7 @@ test('prepares package metadata and prepends deterministic release notes', () =>
 test('preserves a manually prepared matching changelog entry', () => {
   const plan = createReleasePlan({
     baselineTag: '',
-    changelog: existingChangelog,
+    changelog: firstStableChangelog,
     currentManifest: {
       name: 'llm-router',
       private: true,
@@ -61,8 +65,8 @@ test('preserves a manually prepared matching changelog entry', () => {
     messages: ['feat: publish the router']
   })
 
-  assert.equal(plan.version, '0.1.0')
-  assert.equal(plan.changelog, existingChangelog)
+  assert.equal(plan.version, '1.0.0')
+  assert.equal(plan.changelog, firstStableChangelog)
   assert.deepEqual(plan.changedFiles, ['package.json'])
 })
 

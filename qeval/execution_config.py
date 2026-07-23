@@ -162,9 +162,6 @@ def preflight(
     assertion_types: set[str] | None = None,
     route_roles: dict[str, set[str]] | None = None,
 ) -> dict[str, Any]:
-    trash = shutil.which("trash")
-    if not trash:
-        raise EvaluationError("trash is required before running the benchmark")
     if (assertion_types or set()) & {
         "command",
         "python_behavior",

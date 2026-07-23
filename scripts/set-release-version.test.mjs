@@ -7,14 +7,14 @@ import {
   runReleaseVersionPreview
 } from './set-release-version.mjs'
 
-test('derives the first release from repository history', () => {
+test('promotes the first release to the stable 1.0.0 line', () => {
   assert.deepEqual(
     deriveAutomaticVersion({
       baselineTag: '',
       currentVersion: '0.0.0',
       messages: ['feat: initial public router']
     }),
-    { bump: 'minor', version: '0.1.0' }
+    { bump: 'major', version: '1.0.0' }
   )
 })
 

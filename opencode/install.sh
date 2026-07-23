@@ -89,11 +89,9 @@ fi
 
 [[ -n "$ROUTER_PATH" ]] || ROUTER_PATH="$REPO_ROOT/route"
 [[ -n "$CLAUDE_PATH" ]] || CLAUDE_PATH=$(command -v claude || true)
-TRASH_PATH=$(command -v trash || true)
 JQ_PATH=$(command -v jq || true)
 NODE_PATH=$(command -v node || true)
 CONFIG_MERGER="$REPO_ROOT/scripts/merge-opencode-config.mjs"
-[[ -n "$TRASH_PATH" ]] || fail "trash is required for recoverable temporary cleanup"
 [[ -n "$JQ_PATH" ]] || fail "jq is required to merge package.json"
 [[ -n "$NODE_PATH" ]] || fail "node is required to render and validate the bundle"
 [[ -f "$CONFIG_MERGER" ]] || fail "OpenCode config merger is missing: $CONFIG_MERGER"
@@ -168,15 +166,17 @@ for required_flag in "${CLAUDE_REQUIRED_FLAGS[@]}"; do
   fi
 done
 
-cleanup() {
+preserve_runtime_files() {
   if [[ -n "$PENDING_TARGET" && -e "$PENDING_TARGET" ]]; then
-    "$TRASH_PATH" "$PENDING_TARGET" >/dev/null 2>&1 || true
+    mv "$PENDING_TARGET" \
+      "$RENDER_DIR/$(basename "$PENDING_TARGET").incomplete" \
+      >/dev/null 2>&1 || true
   fi
   if [[ -n "$RENDER_DIR" && -d "$RENDER_DIR" ]]; then
-    "$TRASH_PATH" "$RENDER_DIR" >/dev/null 2>&1 || true
+    mv "$RENDER_DIR" "$RENDER_DIR.preserved" >/dev/null 2>&1 || true
   fi
 }
-trap cleanup EXIT
+trap preserve_runtime_files EXIT
 
 RENDER_DIR=$(mktemp -d "${TMPDIR:-/tmp}/llm-router-opencode.XXXXXX")
 mkdir -p "$RENDER_DIR/tools" "$RENDER_DIR/lib" "$RENDER_DIR/plugins" "$RENDER_DIR/providers"
@@ -357,6 +357,8 @@ install_once_file() {
 
 retire_file() {
   local target=$1
+  local relative
+  local retained
   [[ -e "$target" ]] || return 0
   if ! is_known_retired_file "$target"; then
     printf 'preserved unrecognized legacy path %s\n' "$target"
@@ -369,7 +371,12 @@ retire_file() {
     return
   fi
 
-  "$TRASH_PATH" "$target"
+  [[ -n "$BACKUP_DIR" ]] || fail "backup directory missing while retiring $target"
+  relative=${target#"$CONFIG_DIR"/}
+  retained="$BACKUP_DIR/retired/$relative"
+  (umask 077 && mkdir -p "$(dirname "$retained")")
+  mv "$target" "$retained"
+  chmod 600 "$retained"
   printf 'retired %s\n' "$target"
 }
 

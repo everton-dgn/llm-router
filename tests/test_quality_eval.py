@@ -42,7 +42,6 @@ from quality_eval import (
     rescore_output_only_report,
     render_markdown,
     run_benchmark,
-    trash_directory,
     validate_dataset,
     validate_routes,
     validate_selection,
@@ -308,11 +307,6 @@ class DatasetValidationTests(unittest.TestCase):
 class AssertionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.cwd = Path(tempfile.mkdtemp(prefix="llm-router-quality-test-"))
-
-    def tearDown(self) -> None:
-        cleanup_error = trash_directory(self.cwd)
-        if cleanup_error:
-            self.fail(cleanup_error)
 
     @requires_benchmark_sandbox
     def test_weighted_scoring_and_json_code_fence(self) -> None:
@@ -887,15 +881,11 @@ class AssertionTests(unittest.TestCase):
             }
         )["cases"][0]["assertions"]
 
-        try:
-            score, results = evaluate_assertions(assertions, "OK", self.cwd)
-        finally:
-            cleanup_error = trash_directory(external_root)
-            if cleanup_error:
-                self.fail(cleanup_error)
+        score, results = evaluate_assertions(assertions, "OK", self.cwd)
 
         self.assertEqual(score, 100.0)
         self.assertTrue(results[0]["passed"])
+        self.assertTrue(external_root.is_dir())
 
     def test_rejects_removed_hidden_tests_and_behavior_path_escapes(self) -> None:
         with self.assertRaisesRegex(EvaluationError, "was removed"):
@@ -1182,7 +1172,7 @@ class BenchmarkTests(unittest.TestCase):
             )
         self.assertEqual(calls, 0)
 
-    def test_fake_executor_runs_exact_shuffled_slots_and_cleans_fixtures(self) -> None:
+    def test_fake_executor_runs_exact_shuffled_slots_and_preserves_fixtures(self) -> None:
         observed: list[tuple[str, str, str, Path]] = []
 
         def fake_execute(route: str, role: str, prompt: str, cwd: Path) -> ProcessResult:
@@ -1243,7 +1233,7 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(len(counts), 8)
         self.assertTrue(all(count == 1 for count in counts.values()))
         self.assertTrue(all(item["status"] == "passed" for item in report["results"]))
-        self.assertTrue(all(not cwd.exists() for *_, cwd in observed))
+        self.assertTrue(all(cwd.is_dir() for *_, cwd in observed))
         self.assertEqual(report["summary"]["by_route"]["alpha"]["worst"], 100.0)
         self.assertEqual(report["summary"]["by_route"]["alpha"]["pass_rate"], 100.0)
         self.assertEqual(
@@ -1397,18 +1387,14 @@ class BenchmarkTests(unittest.TestCase):
 
     def test_snapshot_distinguishes_regular_files_from_symlinks(self) -> None:
         temp_root = Path(tempfile.mkdtemp(prefix="llm-router-quality-fixture-"))
-        try:
-            (temp_root / "target.txt").write_text("content", encoding="utf-8")
-            (temp_root / "link.txt").symlink_to("target.txt")
+        (temp_root / "target.txt").write_text("content", encoding="utf-8")
+        (temp_root / "link.txt").symlink_to("target.txt")
 
-            snapshot = _snapshot_files(temp_root)
-        finally:
-            cleanup_error = trash_directory(temp_root)
-            if cleanup_error:
-                self.fail(cleanup_error)
+        snapshot = _snapshot_files(temp_root)
 
         self.assertTrue(snapshot["target.txt"].startswith("regular:"))
         self.assertTrue(snapshot["link.txt"].startswith("symlink:"))
+        self.assertTrue(temp_root.is_dir())
 
     def test_symlink_skips_file_assertion_without_following_target(self) -> None:
         def fake_execute(route: str, role: str, prompt: str, cwd: Path) -> ProcessResult:
@@ -1693,12 +1679,7 @@ class BenchmarkTests(unittest.TestCase):
         source_root = Path(tempfile.mkdtemp(prefix="llm-router-quality-test-"))
         source = source_root / "source-report.json"
         source.write_text("{}", encoding="utf-8")
-        try:
-            rescored = rescore_output_only_report(report, dataset, source)
-        finally:
-            cleanup_error = trash_directory(source_root)
-            if cleanup_error:
-                self.fail(cleanup_error)
+        rescored = rescore_output_only_report(report, dataset, source)
 
         self.assertEqual(rescored["results"][0]["score"], 100.0)
         self.assertEqual(rescored["results"][0]["status"], "passed")
@@ -1767,32 +1748,28 @@ class BenchmarkTests(unittest.TestCase):
             written["report"] = report
             return path, path.with_suffix(".md")
 
-        try:
-            with (
-                patch("quality_eval.load_config", return_value=self.config),
-                patch("quality_eval.load_dataset", return_value=dataset),
-                patch("quality_eval.load_report", return_value=source_report),
-                patch("quality_eval.write_reports", side_effect=capture_report),
-                redirect_stdout(io.StringIO()),
-            ):
-                exit_code = main(
-                    [
-                        "--config",
-                        str(config_path),
-                        "--cases",
-                        str(cases_path),
-                        "--output",
-                        str(output_path),
-                        "--replay-report",
-                        str(source_path),
-                    ]
-                )
-        finally:
-            cleanup_error = trash_directory(temp_root)
-            if cleanup_error:
-                self.fail(cleanup_error)
+        with (
+            patch("quality_eval.load_config", return_value=self.config),
+            patch("quality_eval.load_dataset", return_value=dataset),
+            patch("quality_eval.load_report", return_value=source_report),
+            patch("quality_eval.write_reports", side_effect=capture_report),
+            redirect_stdout(io.StringIO()),
+        ):
+            exit_code = main(
+                [
+                    "--config",
+                    str(config_path),
+                    "--cases",
+                    str(cases_path),
+                    "--output",
+                    str(output_path),
+                    "--replay-report",
+                    str(source_path),
+                ]
+            )
 
         self.assertEqual(exit_code, 0)
+        self.assertTrue(temp_root.is_dir())
         replayed = written["report"]
         for field in (
             "scope",
@@ -1824,11 +1801,6 @@ class BenchmarkV2Tests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.temp_root = Path(tempfile.mkdtemp(prefix="llm-router-quality-test-"))
-
-    def tearDown(self) -> None:
-        cleanup_error = trash_directory(self.temp_root)
-        if cleanup_error:
-            self.fail(cleanup_error)
 
     def test_manifest_counts_156_physical_calls_with_unique_keys(self) -> None:
         cases = []
@@ -2751,13 +2723,6 @@ class ClaudeEffortRoutingTests(unittest.TestCase):
 
 
 class SafetyTests(unittest.TestCase):
-    def test_trash_rejects_path_outside_benchmark_fixtures(self) -> None:
-        error = trash_directory(Path.cwd())
-
-        self.assertIsNotNone(error)
-        self.assertIn("trash refused", error)
-        self.assertTrue(Path.cwd().exists())
-
     def test_claude_worker_loses_bypass_and_bash(self) -> None:
         config = {
             "routes": [
@@ -2875,30 +2840,26 @@ class SafetyTests(unittest.TestCase):
 
     def test_executor_uses_logical_config_path_inside_fixture(self) -> None:
         fixture = Path(tempfile.mkdtemp(prefix="llm-router-quality-test-"))
-        try:
-            captured: dict[str, Path] = {}
+        captured: dict[str, Path] = {}
 
-            class FakeBenchmarkExecutor:
-                def __init__(
-                    self,
-                    config_path: Path,
-                    config: dict[str, object],
-                    cwd: Path,
-                ) -> None:
-                    captured["config_path"] = config_path
+        class FakeBenchmarkExecutor:
+            def __init__(
+                self,
+                config_path: Path,
+                config: dict[str, object],
+                cwd: Path,
+            ) -> None:
+                captured["config_path"] = config_path
 
-                def execute_model(self, route: str, role: str, prompt: str) -> ProcessResult:
-                    return ProcessResult("success", 0, "OK", "", "", 0.1)
+            def execute_model(self, route: str, role: str, prompt: str) -> ProcessResult:
+                return ProcessResult("success", 0, "OK", "", "", 0.1)
 
-            with patch("qeval.executor.BenchmarkExecutor", FakeBenchmarkExecutor):
-                result = _make_executor({})("route", "judge", "prompt", fixture)
+        with patch("qeval.executor.BenchmarkExecutor", FakeBenchmarkExecutor):
+            result = _make_executor({})("route", "judge", "prompt", fixture)
 
-            self.assertEqual(result.status, "success")
-            self.assertEqual(captured["config_path"].parent, fixture)
-        finally:
-            cleanup_error = trash_directory(fixture)
-            if cleanup_error:
-                self.fail(cleanup_error)
+        self.assertEqual(result.status, "success")
+        self.assertEqual(captured["config_path"].parent, fixture)
+        self.assertTrue(fixture.is_dir())
 
 
 if __name__ == "__main__":

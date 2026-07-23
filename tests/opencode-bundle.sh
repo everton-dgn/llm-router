@@ -13,17 +13,17 @@ ADAPTIVE_ROUTING="$REPO_ROOT/opencode/lib/adaptive_routing.mjs"
 EXECUTION_POLICY="$REPO_ROOT/opencode/lib/execution_policy.mjs"
 ROUTER_CONTROL="$REPO_ROOT/opencode/lib/router_control.mjs"
 VERIFICATION_CONFIG="$REPO_ROOT/config.json"
-TRASH_PATH=$(command -v trash || true)
 NODE_PATH=$(command -v node || true)
-[[ -n "$TRASH_PATH" ]] || { printf 'FAIL: trash is required\n' >&2; exit 1; }
 [[ -n "$NODE_PATH" ]] || { printf 'FAIL: node is required\n' >&2; exit 1; }
 
 FIXTURE=$(mktemp -d "${TMPDIR:-/tmp}/llm-router-opencode-test.XXXXXX")
 FIXTURE=$(cd "$FIXTURE" && pwd)
-cleanup() {
-  [[ ! -d "$FIXTURE" ]] || "$TRASH_PATH" "$FIXTURE" >/dev/null 2>&1 || true
+preserve_fixture() {
+  [[ ! -d "$FIXTURE" ]] \
+    || mv "$FIXTURE" "$FIXTURE.preserved" >/dev/null 2>&1 \
+    || true
 }
-trap cleanup EXIT
+trap preserve_fixture EXIT
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2

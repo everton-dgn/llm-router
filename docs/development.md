@@ -19,7 +19,7 @@
 - Node.js 22.22.2 or 24.15.0, both validated in CI;
 - pnpm through Corepack;
 - Python 3.11 or newer through `uv`;
-- Bash, `jq`, and `trash`.
+- Bash and `jq`.
 
 Install repository tooling and Git hooks, then install the OpenCode bundle
 dependencies:

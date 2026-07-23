@@ -24,7 +24,8 @@ a total of 72 single-shot calls in reproducible random order with seed 42.
 - The rubrics are deterministic, and critical failures score the run as zero.
 - Each route received 18 calls; each case received 12.
 - All 72 calls finished with exit code zero, without a timeout or process error.
-- The fixtures were sent to `trash` after the audit.
+- Each fixture was created under system temporary storage and preserved after
+  the audit.
 
 Command used:
 

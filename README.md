@@ -11,8 +11,8 @@ The composer always stays on the primary `router` agent. The plugin changes the
 effective worker for the current message and displays that destination in the
 OpenCode interface.
 
-> Project status: pre-1.0 and under active development. The current integration
-> is pinned to OpenCode 1.18.4. Review the
+> Project status: stable 1.x and under active development. The current
+> integration is pinned to OpenCode 1.18.4. Review the
 > [compatibility contract](docs/compatibility.md) before upgrading OpenCode or
 > the provider SDKs.
 
@@ -100,7 +100,7 @@ warning.
 - Python 3.11 or newer through `uv`, for benchmarks and Python tests;
 - Ollama with the configured local classifier;
 - Claude Code installed and authenticated;
-- `curl`, `jq`, `trash`, and a POSIX shell;
+- `curl`, `jq`, and a POSIX shell;
 - OpenAI authenticated in OpenCode;
 - `MINIMAX_API_KEY` and `ZAI_API_KEY` in the environment that starts OpenCode.
 

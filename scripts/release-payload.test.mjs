@@ -65,3 +65,23 @@ test('accepts one SemVer bump with matching release notes', () => {
     /CHANGELOG\.md/
   )
 })
+
+test('accepts the first stable release from the unpublished sentinel', () => {
+  assert.equal(
+    assertReleasePayload({
+      changelog:
+        '# Changelog\n\n## 1.0.0 - 2026-07-23\n\n- Publish the stable router.\n',
+      currentManifest: {
+        name: 'llm-router',
+        private: true,
+        version: '1.0.0'
+      },
+      previousManifest: {
+        name: 'llm-router',
+        private: true,
+        version: '0.0.0'
+      }
+    }),
+    '1.0.0'
+  )
+})
