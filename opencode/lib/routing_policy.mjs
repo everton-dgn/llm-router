@@ -29,6 +29,7 @@ const mutationComparisonMention = new RegExp(
 const minimaxForbiddenIntent = /\b(?:translate|translation|tradu(?:za|zir|ção)|summar(?:ize|ise|y)|resum(?:a|ir|o)|rewrite|rewriting|reescrev(?:a|er)|document(?:e|ar|ation|ação)|brainstorm|copywriting|naming|(?:product|brand|company|feature)\s+names?|nomes?\s+(?:para|de)\s+(?:(?:o|a)\s+)?(?:produto|marca|empresa|recurso|funcionalidade))\b/i
 const nonLiteralTextIntent = /\b(?:analy[sz]e|architect|brainstorm|compare|critique|discuss|draft|evaluate|explain|plan|reason|recommend|review|suggest|write|ideas?|strateg(?:y|ies)|sales\s+copy|pros?\s+and\s+cons|stories?|poems?|articles?|analise|arquitet(?:e|ar)|compare|critique|discuta|avalie|explique|planeje|raciocine|recomende|revise|sugira|ideias?|estrat[eé]gias?|plano|pr[oó]s\s+e\s+contras|conte[uú]do)\b/i
 const literalReadOnlyIntent = /\b(?:count|list|find|locate|search|extract|format|show|identify|return|sort|filter|conte|quantos?|liste|busque|procure|localize|extraia|formate|mostre|identifique|retorne|ordene|filtre|qual\s+(?:é\s+)?(?:a\s+)?vers[aã]o|what\s+version|o\s+que\s+significa|what\s+does[\s\S]{0,80}\s+mean)\b/i
+export const LITERAL_READ_ONLY_INTENT = "literal_read_only_no_writing"
 const repositoryInspectionVerb = String.raw`(?:inspect|read|check|search|find|scan|review|open|list|count|verify|look\s+at|inspecion(?:e|ar|a)|leia|ler|l[eê]|verifi(?:que|car|ca)|bus(?:que|car|ca)|procur(?:e|ar|a)|vasculh(?:e|ar|a)|revis(?:e|ar|a)|abr(?:a|ir|e)|list(?:e|ar|a)|cont(?:e|ar|a)|analis(?:e|ar|a))`
 const repositoryResource = String.raw`(?:repo(?:sitor(?:y|ies))?|codebase|workspace|source\s+code|code|projects?|project\s+files?|package\.json|readme(?:\.md)?|reposit[oó]rios?|projetos?|c[oó]digo(?:[-\s]+fonte)?|arquivos?\s+(?:do|deste|desse)\s+projeto|[\w./-]+\.(?:[cm]?[jt]sx?|jsonc?|ya?ml|toml|md|py|rb|go|rs|java|kt|swift|sh|css|scss|html))`
 const repositoryInspectionIntent = new RegExp(
@@ -191,15 +192,16 @@ function stripNegatedCapabilityIntents(request) {
 
 export function requiredRouteCapabilities(
   request,
-  { hasAgentMentions = false, hasAttachments = false } = {},
+  { hasAgentMentions = false, hasAttachments = false, intent } = {},
 ) {
   const affirmativeCapabilities = stripNegatedCapabilityIntents(request)
   return {
     canExecuteCommands: explicitIntentOutsideExplanation(affirmativeCapabilities, commandExecutionIntent),
-    canHandleNonLiteralText:
-      minimaxForbiddenIntent.test(request)
-      || nonLiteralTextIntent.test(request)
-      || !literalReadOnlyIntent.test(request),
+    canHandleNonLiteralText: intent === LITERAL_READ_ONLY_INTENT
+      ? minimaxForbiddenIntent.test(request)
+      : minimaxForbiddenIntent.test(request)
+        || nonLiteralTextIntent.test(request)
+        || !literalReadOnlyIntent.test(request),
     canMutateProject: affirmativeMutation(request),
     canReadRepository: explicitIntentOutsideExplanation(affirmativeCapabilities, repositoryInspectionIntent),
     canUseAgentMentions: hasAgentMentions,

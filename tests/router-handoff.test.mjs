@@ -8,7 +8,11 @@ import {
 import { ROUTING_STATE_METADATA_KEY } from "../opencode/lib/adaptive_routing.mjs"
 import { CLAUDE_CHECKPOINT_METADATA_KEY } from "../opencode/lib/claude_checkpoint.mjs"
 import { createOpenCodeV2ClientFromLegacyTransport } from "../opencode/lib/opencode_transport.mjs"
-import { routeCapabilities } from "../opencode/lib/routing_policy.mjs"
+import {
+  LITERAL_READ_ONLY_INTENT,
+  enforceMinimumRoute,
+  routeCapabilities,
+} from "../opencode/lib/routing_policy.mjs"
 import { updateSessionMetadata } from "../opencode/lib/session_metadata.mjs"
 
 function userMessage(text, agent = "router-auto", sessionID = "session-1") {
@@ -1664,4 +1668,43 @@ test("keeps the toast non-blocking after a selection succeeds", async () => {
   await hooks["chat.message"](message.input, message.output)
 
   assert.equal(message.output.message.agent, "glm")
+})
+
+test("keeps a literal read-only question on MiniMax when the classifier says so", () => {
+  const questions = [
+    "qual maior arquivo do repo?",
+    "quantas linhas tem o README",
+    "qual o maior arquivo do repositorio",
+    "which file has the most lines?",
+  ]
+  for (const question of questions) {
+    assert.equal(
+      enforceMinimumRoute("minimax", question, { intent: LITERAL_READ_ONLY_INTENT }),
+      "minimax",
+      `expected MiniMax to keep the literal question: ${question}`,
+    )
+  }
+})
+
+test("still promotes MiniMax-forbidden work even under a literal intent", () => {
+  const forbidden = [
+    "traduza este README",
+    "resuma este log",
+    "reescreva esta documentacao",
+  ]
+  for (const request of forbidden) {
+    assert.equal(
+      enforceMinimumRoute("minimax", request, { intent: LITERAL_READ_ONLY_INTENT }),
+      "glm",
+      `expected the forbidden-intent veto to survive: ${request}`,
+    )
+  }
+})
+
+test("preserves the regex floor when the intent is not literal read-only", () => {
+  assert.equal(
+    enforceMinimumRoute("minimax", "qual maior arquivo do repo?", { intent: "other_intent" }),
+    "glm",
+  )
+  assert.equal(enforceMinimumRoute("minimax", "qual maior arquivo do repo?", {}), "glm")
 })

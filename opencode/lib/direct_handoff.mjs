@@ -30,7 +30,10 @@ function classifyRequest(classify, request, requirements) {
     }
 
     const classified = parseClassifierResult(raw.trim())
-    const route = enforceMinimumRoute(classified.route, request, requirements)
+    const route = enforceMinimumRoute(classified.route, request, {
+      ...requirements,
+      intent: classified.intent,
+    })
     return { classified, route, target: routeTarget(route) }
   })
 }
