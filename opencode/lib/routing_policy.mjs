@@ -197,8 +197,14 @@ export function requiredRouteCapabilities(
   const affirmativeCapabilities = stripNegatedCapabilityIntents(request)
   return {
     canExecuteCommands: explicitIntentOutsideExplanation(affirmativeCapabilities, commandExecutionIntent),
+    // The classifier's intent decides whether a request is literal. The regex
+    // floor stays as defense in depth: minimaxForbiddenIntent and
+    // nonLiteralTextIntent still veto MiniMax when the request positively shows
+    // non-literal work, even if the classifier called it literal. Only the
+    // "no literal evidence" term is dropped for a literal intent, since that
+    // term reproduced the classifier's own judgement and caused false promotions.
     canHandleNonLiteralText: intent === LITERAL_READ_ONLY_INTENT
-      ? minimaxForbiddenIntent.test(request)
+      ? minimaxForbiddenIntent.test(request) || nonLiteralTextIntent.test(request)
       : minimaxForbiddenIntent.test(request)
         || nonLiteralTextIntent.test(request)
         || !literalReadOnlyIntent.test(request),

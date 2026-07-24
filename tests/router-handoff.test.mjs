@@ -1701,6 +1701,22 @@ test("still promotes MiniMax-forbidden work even under a literal intent", () => 
   }
 })
 
+test("promotes non-literal work even when the classifier mislabels it literal", () => {
+  const interpretive = [
+    "explique o que esse codigo faz",
+    "analise estes dados",
+    "compare estas duas abordagens",
+    "avalie os prós e contras",
+  ]
+  for (const request of interpretive) {
+    assert.equal(
+      enforceMinimumRoute("minimax", request, { intent: LITERAL_READ_ONLY_INTENT }),
+      "glm",
+      `expected the non-literal floor to survive a wrong literal intent: ${request}`,
+    )
+  }
+})
+
 test("preserves the regex floor when the intent is not literal read-only", () => {
   assert.equal(
     enforceMinimumRoute("minimax", "qual maior arquivo do repo?", { intent: "other_intent" }),
