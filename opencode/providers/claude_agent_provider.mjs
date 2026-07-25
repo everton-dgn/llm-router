@@ -1,7 +1,6 @@
 import { query as claudeQuery } from "@anthropic-ai/claude-agent-sdk"
 
 import {
-  CLAUDE_MODEL,
   CLAUDE_TIMEOUT_MS,
   createClaudeMessageStream,
   runClaudeAgent,
@@ -9,14 +8,19 @@ import {
 import {
   boundedClaudeJSONBytes,
   claudeContentBlocksFromProviderFile,
+  comparableClaudeUserText,
   normalizeClaudeConversationContent,
-  visibleClaudeConversationText,
 } from "../lib/claude_context.mjs"
 
 // This guards transport memory only. OpenCode owns the 200k-token compaction
-// threshold, so the byte ceiling must not truncate ordinary context first.
-export const CLAUDE_MAX_INPUT_BYTES = 2 * 1024 * 1024
-export const CLAUDE_DEFAULT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024
+// threshold, so the byte ceiling must not truncate ordinary context first. The
+// ceiling matches the 32 MiB request limit Claude documents for attachments, so
+// an ordinary PDF is not rejected before the model ever sees it.
+export const CLAUDE_MAX_INPUT_BYTES = 32 * 1024 * 1024
+export const CLAUDE_DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024 * 1024
+// Reasoning effort levels the Claude Agent SDK accepts. Models without support
+// for a level fall back to the closest one they do support.
+export const CLAUDE_EFFORT_LEVELS = Object.freeze(["low", "medium", "high", "xhigh", "max"])
 
 function currentUserContentParts(part) {
   if (!part || typeof part !== "object" || typeof part.type !== "string") {
@@ -39,6 +43,32 @@ function currentUserContentParts(part) {
 
 function inputTooLarge() {
   throw new Error(`Claude input exceeds the ${CLAUDE_MAX_INPUT_BYTES}-byte input limit`)
+}
+
+// Attachment bytes may be resized by OpenCode before they reach the adapter, so
+// only the kind and media type of each attachment are compared.
+function attachmentShape(content) {
+  return normalizeClaudeConversationContent(content)
+    .filter((part) => part.type !== "text")
+    .map((part) => `${part.type}:${part.source?.media_type ?? part.source?.type ?? ""}`)
+    .join("|")
+}
+
+// Claude Code rejects a "user" envelope whose inner role is "assistant", so a
+// replayed assistant turn travels as an assistant message. Only user turns take
+// the human origin marker and the shouldQuery flag; assistant replay never
+// starts a turn on its own.
+function claudeSDKEnvelope(message, { historical }) {
+  if (message.role === "assistant") {
+    return { type: "assistant", message, parent_tool_use_id: null }
+  }
+  return {
+    type: "user",
+    message,
+    parent_tool_use_id: null,
+    origin: { kind: "human" },
+    ...(historical ? { shouldQuery: false } : {}),
+  }
 }
 
 function validateSafeConversation(conversation, currentContent) {
@@ -64,13 +94,7 @@ function validateSafeConversation(conversation, currentContent) {
       role: message.role,
       content,
     }
-    const sdkMessage = {
-      type: "user",
-      message: normalizedMessage,
-      parent_tool_use_id: null,
-      ...(message.role === "user" ? { origin: { kind: "human" } } : {}),
-      shouldQuery: false,
-    }
+    const sdkMessage = claudeSDKEnvelope(normalizedMessage, { historical: true })
     const messageBytes = boundedClaudeJSONBytes(sdkMessage, CLAUDE_MAX_INPUT_BYTES)
     if (messageBytes > CLAUDE_MAX_INPUT_BYTES) inputTooLarge()
     measuredBytes += (normalized.length > 0 ? 1 : 0) + messageBytes
@@ -78,14 +102,16 @@ function validateSafeConversation(conversation, currentContent) {
     normalized.push(normalizedMessage)
   }
   const last = normalized.at(-1)
-  const currentText = visibleClaudeConversationText(currentContent)
-  const safeText = last ? visibleClaudeConversationText(last.content) : ""
-  if (
-    last?.role !== "user"
-    || safeText !== currentText
-    || (!currentText && JSON.stringify(last.content) !== JSON.stringify(currentContent))
-  ) {
+  const currentText = comparableClaudeUserText(currentContent)
+  const safeText = last ? comparableClaudeUserText(last.content) : ""
+  // OpenCode prefixes an attachment message with synthetic notices such as
+  // "Called the Read tool ...", so the projected user text must be the tail of
+  // the current message rather than its exact copy.
+  if (last?.role !== "user" || !currentText.endsWith(safeText)) {
     throw new Error("Claude safe conversation does not match the current user message")
+  }
+  if (attachmentShape(last.content) !== attachmentShape(currentContent)) {
+    throw new Error("Claude safe conversation does not match the current user attachments")
   }
   normalized[normalized.length - 1] = { role: "user", content: currentContent }
   return normalized
@@ -124,12 +150,8 @@ export function serializeClaudePrompt(prompt, safeConversation) {
     ? [{ role: "user", content: currentContent }]
     : validateSafeConversation(safeConversation, currentContent)
 
-  const sdkMessages = transcript.map((message, index) => ({
-    type: "user",
-    message,
-    parent_tool_use_id: null,
-    ...(message.role === "user" ? { origin: { kind: "human" } } : {}),
-    ...(index < transcript.length - 1 ? { shouldQuery: false } : {}),
+  const sdkMessages = transcript.map((message, index) => claudeSDKEnvelope(message, {
+    historical: index < transcript.length - 1,
   }))
   const inputBytes = boundedClaudeJSONBytes(sdkMessages, CLAUDE_MAX_INPUT_BYTES)
   if (inputBytes > CLAUDE_MAX_INPUT_BYTES) {
@@ -190,6 +212,13 @@ function runtimeOptions(callOptions, providerName, defaults) {
   if (typeof claudePath !== "string" || !claudePath.trim()) {
     throw new Error("Claude adapter requires an absolute Claude executable path")
   }
+  const claudeConfigDir = provided.claudeConfigDir ?? defaults.claudeConfigDir
+  if (
+    claudeConfigDir !== undefined
+    && (typeof claudeConfigDir !== "string" || !claudeConfigDir.startsWith("/"))
+  ) {
+    throw new Error("Claude adapter claudeConfigDir must be an absolute path")
+  }
   const maxOutputBytes = provided.maxOutputBytes
     ?? defaults.maxOutputBytes
     ?? CLAUDE_DEFAULT_MAX_OUTPUT_BYTES
@@ -200,9 +229,15 @@ function runtimeOptions(callOptions, providerName, defaults) {
   if (maxTurns !== undefined && (!Number.isInteger(maxTurns) || maxTurns <= 0)) {
     throw new Error("Claude adapter maxTurns must be a positive integer")
   }
+  const effort = provided.effort ?? defaults.effort
+  if (effort !== undefined && !CLAUDE_EFFORT_LEVELS.includes(effort)) {
+    throw new Error(`Claude adapter effort must be one of ${CLAUDE_EFFORT_LEVELS.join(", ")}`)
+  }
   return {
     cwd,
     claudePath,
+    claudeConfigDir,
+    effort,
     permissionCallback: provided.permissionCallback ?? defaults.permissionCallback,
     permissionProfile: provided.permissionProfile ?? defaults.permissionProfile,
     permissionTimeoutMs: provided.permissionTimeoutMs ?? defaults.permissionTimeoutMs,
@@ -254,7 +289,9 @@ function languageModel(modelID, providerName, defaults) {
       request: prompt.request,
       cwd: runtime.cwd,
       model: modelID,
+      effort: runtime.effort,
       claudePath: runtime.claudePath,
+      claudeConfigDir: runtime.claudeConfigDir,
       parentSignal: signal,
       timeoutMs: runtime.timeoutMs,
       onMessage: limitedMessageHandler(runtime.maxOutputBytes, onMessage),
@@ -387,7 +424,10 @@ function languageModel(modelID, providerName, defaults) {
 export function createClaudeAgent(options = {}) {
   const providerName = options.name ?? "claude-agent"
   return {
-    languageModel(modelID = CLAUDE_MODEL) {
+    languageModel(modelID) {
+      if (typeof modelID !== "string" || !modelID.trim()) {
+        throw new Error("Claude model ID must be a non-empty string")
+      }
       return languageModel(modelID, providerName, options)
     },
   }

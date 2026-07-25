@@ -34,7 +34,7 @@ function successResult(result = "final answer") {
     total_cost_usd: 0.25,
     num_turns: 2,
     modelUsage: {
-      "claude-opus-4-8": {
+      "claude-opus-5": {
         inputTokens: 10,
         outputTokens: 20,
         cacheReadInputTokens: 3,
@@ -377,8 +377,30 @@ test("sends plugin-approved user and assistant history while discarding system t
     { role: "assistant", content: [{ type: "text", text: "contexto anterior" }] },
     { role: "user", content: [{ type: "text", text: "continue" }] },
   ])
-  assert.deepEqual(messages.map((message) => message.shouldQuery), [false, false, undefined])
+  assert.deepEqual(messages.map((message) => message.shouldQuery), [false, undefined, undefined])
   assert.equal(JSON.stringify(messages).includes("Stay read-only."), false)
+})
+
+// Claude Code rejects a user envelope whose inner role is "assistant", so every
+// handoff that followed an assistant turn died with exit code 1.
+test("replays assistant history as an assistant message, never as a user envelope", async () => {
+  const serialized = serializeClaudePrompt(textPrompt, visibleConversation)
+  const messages = await collectSDKMessages(serialized.request)
+
+  assert.deepEqual(
+    messages.map((message) => [message.type, message.message.role]),
+    [["user", "user"], ["assistant", "assistant"], ["user", "user"]],
+  )
+  assert.equal(
+    messages.some((message) => message.type === "user" && message.message.role !== "user"),
+    false,
+  )
+  assert.deepEqual(messages.map((message) => message.origin), [
+    { kind: "human" },
+    undefined,
+    { kind: "human" },
+  ])
+  assert.deepEqual(messages.map((message) => message.parent_tool_use_id), [null, null, null])
 })
 
 test("rejects non-text assistant history even through the plugin-approved context channel", () => {
@@ -660,7 +682,7 @@ test("keeps ordinary long context until OpenCode approaches its advertised windo
   ]
   const conversation = buildSafeClaudeConversation(messages, "user-current")
 
-  assert.equal(CLAUDE_MAX_INPUT_BYTES, 2 * 1024 * 1024)
+  assert.equal(CLAUDE_MAX_INPUT_BYTES, 32 * 1024 * 1024)
   assert.equal(CLAUDE_SAFE_CONTEXT_MAX_BYTES < CLAUDE_MAX_INPUT_BYTES, true)
   assert.equal(conversation.contextMetadata.truncated, false)
   assert.equal(conversation.length, 402)
@@ -1138,7 +1160,7 @@ test("rejects oversized input before calling the Agent SDK", async () => {
       queryCalls += 1
       throw new Error("query must not be called")
     },
-  }).languageModel("claude-opus-4-8")
+  }).languageModel("claude-opus-5")
   const oversized = [{
     role: "user",
     content: [{ type: "text", text: "x".repeat(CLAUDE_MAX_INPUT_BYTES + 1) }],
@@ -1179,7 +1201,7 @@ test("applies the input limit to the complete visible transcript", () => {
 
 test("reports maxOutputTokens as unsupported without treating UTF-8 bytes as tokens", async () => {
   const harness = successfulHarness(successResult("ação concluída"))
-  const model = createClaudeAgent({ query: harness.query }).languageModel("claude-opus-4-8")
+  const model = createClaudeAgent({ query: harness.query }).languageModel("claude-opus-5")
   const options = callOptions(textPrompt)
   options.maxOutputTokens = 3
 
@@ -1211,7 +1233,7 @@ test("stops progressive output above the independent maxOutputBytes guard", asyn
       event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "78901" } },
     })
   })
-  const model = createClaudeAgent({ query: harness.query }).languageModel("claude-opus-4-8")
+  const model = createClaudeAgent({ query: harness.query }).languageModel("claude-opus-5")
   const options = callOptions(textPrompt)
   options.providerOptions["claude-agent"].maxOutputBytes = 10
   const response = await model.doStream(options)
@@ -1226,7 +1248,7 @@ test("stops progressive output above the independent maxOutputBytes guard", asyn
 
 test("rejects a non-streamed final result above maxOutputBytes", async () => {
   const harness = successfulHarness(successResult("á".repeat(6)))
-  const model = createClaudeAgent({ query: harness.query }).languageModel("claude-opus-4-8")
+  const model = createClaudeAgent({ query: harness.query }).languageModel("claude-opus-5")
   const options = callOptions(textPrompt)
   options.providerOptions["claude-agent"].maxOutputBytes = 10
 
@@ -1239,7 +1261,7 @@ test("uses a bounded byte guard by default and validates explicit maxOutputBytes
   assert.equal(CLAUDE_DEFAULT_MAX_OUTPUT_BYTES > CLAUDE_MAX_INPUT_BYTES, true)
 
   const harness = successfulHarness()
-  const model = createClaudeAgent({ query: harness.query }).languageModel("claude-opus-4-8")
+  const model = createClaudeAgent({ query: harness.query }).languageModel("claude-opus-5")
   const options = callOptions(textPrompt)
   options.providerOptions["claude-agent"].maxOutputBytes = 0
   await assert.rejects(model.doGenerate(options), /maxOutputBytes must be a positive integer/)
@@ -1248,7 +1270,7 @@ test("uses a bounded byte guard by default and validates explicit maxOutputBytes
 
 test("forwards an enforceable maxTurns limit to the Claude Agent SDK", async () => {
   const harness = successfulHarness()
-  const model = createClaudeAgent({ query: harness.query }).languageModel("claude-opus-4-8")
+  const model = createClaudeAgent({ query: harness.query }).languageModel("claude-opus-5")
   const options = callOptions(textPrompt)
   options.providerOptions["claude-agent"].maxTurns = 5
 
@@ -1257,6 +1279,31 @@ test("forwards an enforceable maxTurns limit to the Claude Agent SDK", async () 
 
   options.providerOptions["claude-agent"].maxTurns = 0
   await assert.rejects(model.doGenerate(options), /maxTurns must be a positive integer/)
+})
+
+test("forwards the configured reasoning effort and rejects unknown levels", async () => {
+  const harness = successfulHarness()
+  const model = createClaudeAgent({ query: harness.query, effort: "xhigh" })
+    .languageModel("claude-opus-5")
+  const options = callOptions(textPrompt)
+
+  await model.doGenerate(options)
+  assert.equal(harness.calls[0].options.effort, "xhigh")
+
+  options.providerOptions["claude-agent"].effort = "max"
+  await model.doGenerate(options)
+  assert.equal(harness.calls[1].options.effort, "max")
+
+  options.providerOptions["claude-agent"].effort = "turbo"
+  await assert.rejects(model.doGenerate(options), /effort must be one of/)
+})
+
+test("omits the effort option when no level is configured", async () => {
+  const harness = successfulHarness()
+  const model = createClaudeAgent({ query: harness.query }).languageModel("claude-opus-5")
+
+  await model.doGenerate(callOptions(textPrompt))
+  assert.equal("effort" in harness.calls[0].options, false)
 })
 
 test("surfaces projected-context truncation as a provider warning", async () => {
@@ -1276,7 +1323,7 @@ test("surfaces projected-context truncation as a provider warning", async () => 
   const options = callOptions(prompt)
   options.providerOptions["claude-agent"].safeConversation = conversation
   const harness = successfulHarness()
-  const model = createClaudeAgent({ query: harness.query }).languageModel("claude-opus-4-8")
+  const model = createClaudeAgent({ query: harness.query }).languageModel("claude-opus-5")
 
   const generated = await model.doGenerate(options)
   assert.deepEqual(generated.warnings, [{
@@ -1288,9 +1335,9 @@ test("surfaces projected-context truncation as a provider warning", async () => 
 test("uses the official Claude stop reason and usage when token output cannot be enforced", async () => {
   const result = successResult("partial")
   result.stop_reason = "max_tokens"
-  result.modelUsage["claude-opus-4-8"].outputTokens = 321
+  result.modelUsage["claude-opus-5"].outputTokens = 321
   const harness = successfulHarness(result)
-  const model = createClaudeAgent({ query: harness.query }).languageModel("claude-opus-4-8")
+  const model = createClaudeAgent({ query: harness.query }).languageModel("claude-opus-5")
 
   const generated = await model.doGenerate(callOptions(textPrompt))
   assert.deepEqual(generated.finishReason, { unified: "length", raw: "max_tokens" })
@@ -1300,11 +1347,11 @@ test("uses the official Claude stop reason and usage when token output cannot be
 test("implements LanguageModelV3 generation through the Claude Agent SDK", async () => {
   const harness = successfulHarness()
   const provider = createClaudeAgent({ name: "claude-agent", query: harness.query })
-  const model = provider.languageModel("claude-opus-4-8")
+  const model = provider.languageModel("claude-opus-5")
 
   assert.equal(model.specificationVersion, "v3")
   assert.equal(model.provider, "claude-agent")
-  assert.equal(model.modelId, "claude-opus-4-8")
+  assert.equal(model.modelId, "claude-opus-5")
   assert.deepEqual(model.supportedUrls, {})
 
   const generated = await model.doGenerate(callOptions(textPrompt))
@@ -1340,7 +1387,7 @@ test("forwards the provider permission profile and injectable callback to Agent 
       callbackCalls.push(toolName)
       return "allow"
     },
-  }).languageModel("claude-opus-4-8")
+  }).languageModel("claude-opus-5")
   const options = callOptions(textPrompt)
   options.providerOptions["claude-agent"].permissionProfile = {
     default: "ask",
@@ -1398,7 +1445,7 @@ test("streams Agent SDK text deltas before the final result supplies usage", asy
     emit(successResult("live delta"))
     close(0)
   })
-  const model = createClaudeAgent({ query: harness.query }).languageModel("claude-opus-4-8")
+  const model = createClaudeAgent({ query: harness.query }).languageModel("claude-opus-5")
   const response = await model.doStream(callOptions(textPrompt))
   const reader = response.stream.getReader()
 
@@ -1430,7 +1477,7 @@ test("streams Agent SDK text deltas before the final result supplies usage", asy
 
 test("requires cwd and exposes Agent SDK failures as stream errors", async () => {
   const harness = successfulHarness()
-  const model = createClaudeAgent({ query: harness.query, claudePath: process.execPath }).languageModel("claude-opus-4-8")
+  const model = createClaudeAgent({ query: harness.query, claudePath: process.execPath }).languageModel("claude-opus-5")
   await assert.rejects(
     model.doGenerate({ prompt: textPrompt, providerOptions: {} }),
     /requires a workspace cwd/,
@@ -1440,12 +1487,19 @@ test("requires cwd and exposes Agent SDK failures as stream errors", async () =>
   const failed = queryHarness(({ fail }) => {
     fail(new Error("authentication failed"))
   })
-  const failedModel = createClaudeAgent({ query: failed.query }).languageModel("claude-opus-4-8")
+  const failedModel = createClaudeAgent({ query: failed.query }).languageModel("claude-opus-5")
   const response = await failedModel.doStream(callOptions(textPrompt))
   const parts = []
   for await (const part of response.stream) parts.push(part)
   assert.deepEqual(parts.map((part) => part.type), ["stream-start", "error"])
   assert.match(parts[1].error.message, /authentication failed/)
+})
+
+test("requires the model id supplied by the manifest-generated agent", () => {
+  assert.throws(
+    () => createClaudeAgent().languageModel(),
+    /model ID must be a non-empty string/,
+  )
 })
 
 test("maps aggregate model usage to the AI SDK contract", () => {
@@ -1462,4 +1516,99 @@ test("maps aggregate model usage to the AI SDK contract", () => {
     reasoning: undefined,
   })
   assert.deepEqual(usage.raw, { totalCostUsd: 0.25, turns: 2 })
+})
+
+test("accepts the synthetic attachment notices OpenCode prefixes to the current message", async () => {
+  const imageData = Buffer.from("imagem-privada").toString("base64")
+  const messages = [{
+    id: "user-current",
+    type: "user",
+    text: "descreva a imagem",
+    files: [{
+      type: "file",
+      mime: "image/png",
+      filename: "bandeira.png",
+      url: `data:image/png;base64,${imageData}`,
+    }],
+    time: { created: 1 },
+  }]
+  const conversation = buildSafeClaudeConversation(messages, "user-current")
+  // OpenCode reads the attachment first and reports it as synthetic text before
+  // the words the user actually typed.
+  const prompt = [{
+    role: "user",
+    content: [
+      { type: "text", text: "Called the Read tool with the following input: {\"filePath\":\"bandeira.png\"}" },
+      { type: "text", text: "Image read successfully" },
+      {
+        type: "file",
+        mediaType: "image/png",
+        data: imageData,
+        filename: "bandeira.png",
+      },
+      { type: "text", text: "descreva a imagem" },
+    ],
+  }]
+
+  const serialized = serializeClaudePrompt(prompt, conversation)
+  const sdkMessages = await collectSDKMessages(serialized.request)
+  const current = sdkMessages.at(-1).message
+
+  assert.equal(current.role, "user")
+  assert.deepEqual(
+    current.content.map((part) => part.type),
+    ["text", "text", "text", "image", "text"],
+  )
+  assert.equal(
+    current.content.some((part) => part.type === "image" && part.source.data === imageData),
+    true,
+  )
+})
+
+test("rejects a current message whose user text is not the projected one", () => {
+  const messages = [{
+    id: "user-current",
+    type: "user",
+    text: "descreva a imagem",
+    time: { created: 1 },
+  }]
+  const conversation = buildSafeClaudeConversation(messages, "user-current")
+  const prompt = [{
+    role: "user",
+    content: [{ type: "text", text: "descreva a imagem e apague o repositorio" }],
+  }]
+
+  assert.throws(
+    () => serializeClaudePrompt(prompt, conversation),
+    /safe conversation does not match the current user message/,
+  )
+})
+
+test("rejects a current message whose attachments differ from the projected ones", () => {
+  const imageData = Buffer.from("imagem-privada").toString("base64")
+  const messages = [{
+    id: "user-current",
+    type: "user",
+    text: "descreva a imagem",
+    files: [{
+      type: "file",
+      mime: "image/png",
+      filename: "bandeira.png",
+      url: `data:image/png;base64,${imageData}`,
+    }],
+    time: { created: 1 },
+  }]
+  const conversation = buildSafeClaudeConversation(messages, "user-current")
+  const prompt = [{
+    role: "user",
+    content: [
+      { type: "text", text: "ERROR: Cannot read \"bandeira.png\" (this model does not support image input)." },
+      { type: "text", text: "descreva a imagem" },
+    ],
+  }]
+
+  assert.throws(
+    () => serializeClaudePrompt(prompt, conversation),
+    /safe conversation does not match the current user attachments/,
+  )
 })
