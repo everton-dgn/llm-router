@@ -472,6 +472,35 @@ if command -v opencode >/dev/null 2>&1; then
   grep -F 'provider-that-does-not-exist' <<< "$UNKNOWN_PROVIDER_ERROR" >/dev/null \
     || fail "installer did not name the unknown route provider"
 fi
+# A lookup that never completes would hold the installer open. Waiting for the
+# real bound would only measure timeout itself, so the stubs stand in for a
+# lookup that reached it and report the status timeout uses to say so. The
+# shipped manifest is enough here, because openai is the one provider it routes
+# to that the bundle leaves for OpenCode to resolve.
+"$REPO_ROOT/route" --manifest --json > "$FIXTURE/stalled-lookup-manifest.json"
+jq -e '[.routes[].target.providerID] | index("openai")' \
+  "$FIXTURE/stalled-lookup-manifest.json" >/dev/null \
+  || fail "no undeclared route provider is left to stall the lookup"
+STALLED_LOOKUP_DIR="$FIXTURE/stalled-lookup-bin"
+mkdir -p "$STALLED_LOOKUP_DIR"
+printf '%s\n' '#!/bin/sh' 'exit 124' | tee "$STALLED_LOOKUP_DIR/timeout" >/dev/null
+printf '%s\n' '#!/bin/sh' 'exit 0' | tee "$STALLED_LOOKUP_DIR/opencode" >/dev/null
+chmod +x "$STALLED_LOOKUP_DIR/timeout" "$STALLED_LOOKUP_DIR/opencode"
+STALLED_LOOKUP_ERROR=$(PATH="$STALLED_LOOKUP_DIR:$PATH" \
+  LLM_ROUTER_TEST_MANIFEST="$FIXTURE/stalled-lookup-manifest.json" \
+  bash "$INSTALLER" \
+  --dry-run \
+  --config-dir "$FIXTURE/stalled-lookup-config" \
+  --backup-root "$FIXTURE/stalled-lookup-backups" \
+  --router-path "$UNKNOWN_PROVIDER_ROUTER" \
+  --claude-path "$CLAUDE_PATH" 2>&1 >/dev/null) \
+  && fail "installer accepted a provider lookup that never completed"
+grep -F 'did not answer' <<< "$STALLED_LOOKUP_ERROR" >/dev/null \
+  || fail "installer did not report the stalled provider lookup"
+grep -F 'openai' <<< "$STALLED_LOOKUP_ERROR" >/dev/null \
+  || fail "installer did not name the provider whose lookup stalled"
+[[ ! -e "$FIXTURE/stalled-lookup-config" ]] \
+  || fail "stalled provider lookup created target config"
 
 [[ ! -e "$FIXTURE/tty-help-config" ]] || fail "TTY help dry-run created target config"
 [[ ! -e "$FIXTURE/tty-help-backups" ]] || fail "TTY help dry-run created backups"
