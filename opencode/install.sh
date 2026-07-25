@@ -12,7 +12,7 @@ CLAUDE_PATH=""
 RENDER_DIR=""
 PENDING_TARGET=""
 BACKUP_DIR=""
-PROVIDER_LOOKUP_TIMEOUT=20
+PROVIDER_LOOKUP_TIMEOUT="${LLM_ROUTER_PROVIDER_LOOKUP_TIMEOUT:-20}"
 
 show_help() {
   cat <<'HELP'
@@ -42,6 +42,31 @@ fail() {
 
 require_value() {
   [[ $# -ge 2 && -n "$2" ]] || fail "$1 requires a path"
+}
+
+# Runs a command under a deadline and exits 124 when it expires, the status GNU
+# timeout uses. A stock macOS ships no timeout or gtimeout, so the bound comes
+# from the Node the installer already requires instead of from coreutils.
+run_bounded() {
+  local seconds="$1"
+  shift
+  LLM_ROUTER_DEADLINE_SECONDS="$seconds" "${NODE_PATH:-node}" -e '
+    const { spawnSync } = require("node:child_process")
+    const [command, ...args] = process.argv.slice(1)
+    const seconds = Number(process.env.LLM_ROUTER_DEADLINE_SECONDS)
+    const result = spawnSync(command, args, {
+      encoding: "utf8",
+      timeout: seconds * 1000,
+    })
+    if (result.stdout) process.stdout.write(result.stdout)
+    if (result.stderr) process.stderr.write(result.stderr)
+    if (result.error?.code === "ETIMEDOUT" || result.signal === "SIGTERM") process.exit(124)
+    if (result.error) {
+      process.stderr.write(`${result.error.message}\n`)
+      process.exit(127)
+    }
+    process.exit(result.status ?? 1)
+  ' "$@"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -354,9 +379,6 @@ UNDECLARED_PROVIDERS=$("$JQ_PATH" -r \
 ' "$RENDER_DIR/opencode.required.json")
 if [[ -n "$UNDECLARED_PROVIDERS" ]]; then
   OPENCODE_PATH=$(command -v opencode || true)
-  # coreutils is not part of a stock macOS, so the lookup is bounded when the
-  # command is available and runs unbounded otherwise.
-  TIMEOUT_PATH=$(command -v timeout || command -v gtimeout || true)
   for provider_id in $UNDECLARED_PROVIDERS; do
     if [[ -z "$OPENCODE_PATH" ]]; then
       printf 'warning: route provider %s is not declared by the bundle and OpenCode is not on PATH to confirm it exists\n' \
@@ -366,12 +388,9 @@ if [[ -n "$UNDECLARED_PROVIDERS" ]]; then
     # A provider OpenCode resolves is answered with its model list and a zero
     # status, so the status carries the verdict and no error wording is parsed.
     provider_lookup_status=0
-    if [[ -n "$TIMEOUT_PATH" ]]; then
-      provider_lookup=$("$TIMEOUT_PATH" "$PROVIDER_LOOKUP_TIMEOUT" "$OPENCODE_PATH" models "$provider_id" 2>&1) \
-        || provider_lookup_status=$?
-    else
-      provider_lookup=$("$OPENCODE_PATH" models "$provider_id" 2>&1) || provider_lookup_status=$?
-    fi
+    provider_lookup=$(run_bounded "$PROVIDER_LOOKUP_TIMEOUT" \
+      "$OPENCODE_PATH" models "$provider_id" 2>&1) \
+      || provider_lookup_status=$?
     case "$provider_lookup_status" in
       0) ;;
       124)
