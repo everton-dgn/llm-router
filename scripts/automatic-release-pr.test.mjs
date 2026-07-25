@@ -309,9 +309,6 @@ test('validates the release merge shape and payload against its first parent', (
       if (command === `show ${mergeSha}:package.json`) {
         return JSON.stringify({ name: 'llm-router', version: '0.1.0' })
       }
-      if (command === `show ${releaseSha}:package.json`) {
-        return JSON.stringify({ name: 'llm-router', version: '0.1.0' })
-      }
       if (command === `show ${baseSha}:package.json`) {
         return JSON.stringify({ name: 'llm-router', version: '0.0.0' })
       }
@@ -436,10 +433,7 @@ test('finds one valid untagged release merge before planning another version', (
       ) {
         return '2'.repeat(40)
       }
-      if (
-        command === `show ${mergeSha}:package.json` ||
-        command === `show ${releaseSha}:package.json`
-      ) {
+      if (command === `show ${mergeSha}:package.json`) {
         return JSON.stringify({ name: 'llm-router', version: '0.1.0' })
       }
       if (

@@ -401,10 +401,6 @@ export function inspectReleaseMergeCommit({
     'show',
     `${normalizedMergeSha}:package.json`
   ])
-  const releaseManifestText = runGit([
-    'show',
-    `${normalizedReleaseSha}:package.json`
-  ])
   const mergedChangelog = runGit([
     'show',
     `${normalizedMergeSha}:CHANGELOG.md`
