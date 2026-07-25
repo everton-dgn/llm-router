@@ -36,6 +36,7 @@ const LEGACY_FILES = [
   "lib/opencode_transport.mjs",
   "lib/repo_query.mjs",
   "lib/route_contract.mjs",
+  "lib/route_manifest.mjs",
   "lib/router_control.mjs",
   "lib/routing_policy.mjs",
   "lib/session_metadata.mjs",

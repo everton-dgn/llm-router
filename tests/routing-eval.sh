@@ -91,7 +91,12 @@ for row in "${cases[@]}"; do
   }
   if ! jq -e '
     .schema_version == 1 and
-    (.intent | type == "string" and length > 0) and
+    (.intent | IN(
+      "literal_read_only_no_writing",
+      "translation_simple_brainstorm_docs_or_intermediate_work",
+      "complex_creative_product_or_architecture",
+      "review_security_hard_engineering_or_technical_writing"
+    )) and
     (.route | IN("minimax", "glm", "claude", "codex")) and
     (keys | sort == ["intent", "route", "schema_version"])
   ' <<<"$output" >/dev/null; then

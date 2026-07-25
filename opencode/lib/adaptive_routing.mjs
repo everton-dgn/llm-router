@@ -1,3 +1,9 @@
+import {
+  LEGACY_ROUTE_MANIFEST,
+  routeManifestEntry,
+} from "./route_manifest.mjs"
+import { routeSupportsSelectedRequest } from "./routing_policy.mjs"
+
 export const ROUTING_STATE_METADATA_KEY = "llm-router.routing.state"
 export const ROUTING_STATE_SCHEMA_VERSION = 1
 
@@ -7,8 +13,6 @@ export const DEFAULT_ADAPTIVE_ROUTING_POLICY = Object.freeze({
   switchCooldownTurns: 1,
 })
 
-const routeOrder = Object.freeze(["minimax", "glm", "claude", "codex"])
-const routeRanks = new Map(routeOrder.map((route, index) => [route, index]))
 const routerModes = new Set(["auto", "adaptive", "pinned"])
 
 const modeByAgent = Object.freeze({
@@ -24,8 +28,10 @@ function exactInteger(value, name, minimum) {
   return value
 }
 
-function exactRoute(route) {
-  if (!routeRanks.has(route)) throw new Error(`Unknown adaptive route: ${route}`)
+function exactRoute(route, manifest) {
+  if (!routeManifestEntry(manifest, route)) {
+    throw new Error(`Unknown adaptive route: ${route}`)
+  }
   return route
 }
 
@@ -79,7 +85,11 @@ export function isManagedRouterAgent(agent) {
   return agent === "router" || routerModeForAgent(agent) !== undefined
 }
 
-export function readRoutingState(metadata, sessionID) {
+export function readRoutingState(
+  metadata,
+  sessionID,
+  manifest = LEGACY_ROUTE_MANIFEST,
+) {
   const stored = metadata?.[ROUTING_STATE_METADATA_KEY]
   if (stored === undefined) return
   if (!stored || typeof stored !== "object" || Array.isArray(stored)) {
@@ -92,9 +102,18 @@ export function readRoutingState(metadata, sessionID) {
   ) {
     throw new Error("OpenCode session has invalid llm-router routing state")
   }
-  exactRoute(stored.currentRoute)
+  if (typeof stored.currentRoute !== "string" || !stored.currentRoute) {
+    throw new Error("OpenCode session has invalid llm-router routing state")
+  }
   exactInteger(stored.turnsOnCurrent, "turnsOnCurrent", 1)
   exactInteger(stored.cooldownTurnsRemaining, "cooldownTurnsRemaining", 0)
+  if (!routeManifestEntry(manifest, stored.currentRoute)) {
+    return {
+      ...stored,
+      currentRoute: undefined,
+      pendingDowngrade: undefined,
+    }
+  }
   if (stored.pendingDowngrade !== undefined) {
     if (
       !stored.pendingDowngrade
@@ -103,8 +122,16 @@ export function readRoutingState(metadata, sessionID) {
     ) {
       throw new Error("OpenCode session has invalid adaptive downgrade state")
     }
-    exactRoute(stored.pendingDowngrade.route)
+    if (
+      typeof stored.pendingDowngrade.route !== "string"
+      || !stored.pendingDowngrade.route
+    ) {
+      throw new Error("OpenCode session has invalid adaptive downgrade state")
+    }
     exactInteger(stored.pendingDowngrade.confirmations, "downgrade confirmations", 1)
+    if (!routeManifestEntry(manifest, stored.pendingDowngrade.route)) {
+      return { ...stored, pendingDowngrade: undefined }
+    }
   }
   return stored
 }
@@ -131,15 +158,20 @@ export function transitionRoutingState({
   mode,
   recommendedRoute,
   request = "",
+  requirements = {},
   policy,
+  manifest = LEGACY_ROUTE_MANIFEST,
 }) {
   if (typeof sessionID !== "string" || !sessionID) {
     throw new Error("OpenCode session ID is required for adaptive routing")
   }
   if (!routerModes.has(mode)) throw new Error(`Unknown router mode: ${mode}`)
-  exactRoute(recommendedRoute)
+  exactRoute(recommendedRoute, manifest)
   const thresholds = normalizeAdaptiveRoutingPolicy(policy)
-  const current = state?.mode === mode ? state : undefined
+  const current = state?.mode === mode
+    && routeManifestEntry(manifest, state.currentRoute)
+    ? state
+    : undefined
 
   if (!current) {
     return baseState({
@@ -175,6 +207,22 @@ export function transitionRoutingState({
     })
   }
 
+  if (!routeSupportsSelectedRequest(
+    current.currentRoute,
+    recommendedRoute,
+    request,
+    requirements,
+    manifest,
+  )) {
+    return baseState({
+      sessionID,
+      mode,
+      currentRoute: recommendedRoute,
+      turnsOnCurrent: 1,
+      cooldownTurnsRemaining: thresholds.switchCooldownTurns,
+    })
+  }
+
   if (current.currentRoute === recommendedRoute) {
     return baseState({
       sessionID,
@@ -185,8 +233,8 @@ export function transitionRoutingState({
     })
   }
 
-  const currentRank = routeRanks.get(current.currentRoute)
-  const recommendedRank = routeRanks.get(recommendedRoute)
+  const currentRank = routeManifestEntry(manifest, current.currentRoute).order
+  const recommendedRank = routeManifestEntry(manifest, recommendedRoute).order
   if (recommendedRank > currentRank) {
     return baseState({
       sessionID,

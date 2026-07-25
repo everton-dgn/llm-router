@@ -1,3 +1,10 @@
+import {
+  LEGACY_ROUTE_MANIFEST,
+  normalizeAttachmentMediaType,
+  routeAcceptsMediaType,
+  routeManifestEntry,
+} from "./route_manifest.mjs"
+
 const portugueseMutationVerb = String.raw`(?:adicion(?:ar|e|a)|apag(?:ar|ue|a)|alter(?:ar|e|a)|atualiz(?:ar|e|a)|configur(?:ar|e|a)|corr(?:igir|ija|ige)|cri(?:ar|e|a)|edit(?:ar|e|a)|escrev(?:er|a|e)|exclu(?:ir|a|i)|faça|fazer|faz|implement(?:ar|e|a)|instal(?:ar|e|a)|modifi(?:car|que|ca)|mov(?:er|a|e)|refator(?:ar|e|a)|remov(?:er|a|e)|renome(?:ar|ie|ia)|sobrescrev(?:er|a|e)|substitu(?:ir|a|i))`
 const mutationVerb = String.raw`(?:add|change|configure|create|delete|edit|fix|implement|install|modify|move|overwrite|patch|refactor|remove|rename|replace|update|write|${portugueseMutationVerb})`
 const mutationIntent = new RegExp(String.raw`\b${mutationVerb}\b`, "i")
@@ -26,10 +33,9 @@ const mutationComparisonMention = new RegExp(
   String.raw`\b(?:(?:the\s+)?differences?\s+between|(?:a\s+)?diferen[çc]as?\s+entre)\s+(?:${mutationVerb})\s+(?:and|or|e|ou)\s+(?:${mutationVerb})\b`,
   "gi",
 )
-const minimaxForbiddenIntent = /\b(?:translate|translation|tradu(?:za|zir|ção)|summar(?:ize|ise|y)|resum(?:a|ir|o)|rewrite|rewriting|reescrev(?:a|er)|document(?:e|ar|ation|ação)|brainstorm|copywriting|naming|(?:product|brand|company|feature)\s+names?|nomes?\s+(?:para|de)\s+(?:(?:o|a)\s+)?(?:produto|marca|empresa|recurso|funcionalidade))\b/i
+const minimaxForbiddenIntent = /\b(?:correct|correction|proofread|corr(?:ija|igir|eção)|translate|translation|tradu(?:za|zir|ção)|summar(?:ize|ise|y)|resum(?:a|ir|o)|rewrite|rewriting|reescrev(?:a|er)|document(?:e|ar|ation|ação)|brainstorm|copywriting|naming|(?:product|brand|company|feature)\s+names?|nomes?\s+(?:para|de)\s+(?:(?:o|a)\s+)?(?:produto|marca|empresa|recurso|funcionalidade))\b/i
 const nonLiteralTextIntent = /\b(?:analy[sz]e|architect|brainstorm|compare|critique|discuss|draft|evaluate|explain|plan|reason|recommend|review|suggest|write|ideas?|strateg(?:y|ies)|sales\s+copy|pros?\s+and\s+cons|stories?|poems?|articles?|analise|arquitet(?:e|ar)|compare|critique|discuta|avalie|explique|planeje|raciocine|recomende|revise|sugira|ideias?|estrat[eé]gias?|plano|pr[oó]s\s+e\s+contras|conte[uú]do)\b/i
 const literalReadOnlyIntent = /\b(?:count|list|find|locate|search|extract|format|show|identify|return|sort|filter|conte|quantos?|liste|busque|procure|localize|extraia|formate|mostre|identifique|retorne|ordene|filtre|qual\s+(?:é\s+)?(?:a\s+)?vers[aã]o|what\s+version|o\s+que\s+significa|what\s+does[\s\S]{0,80}\s+mean)\b/i
-export const LITERAL_READ_ONLY_INTENT = "literal_read_only_no_writing"
 const repositoryInspectionVerb = String.raw`(?:inspect|read|check|search|find|scan|review|open|list|count|verify|look\s+at|inspecion(?:e|ar|a)|leia|ler|l[eê]|verifi(?:que|car|ca)|bus(?:que|car|ca)|procur(?:e|ar|a)|vasculh(?:e|ar|a)|revis(?:e|ar|a)|abr(?:a|ir|e)|list(?:e|ar|a)|cont(?:e|ar|a)|analis(?:e|ar|a))`
 const repositoryResource = String.raw`(?:repo(?:sitor(?:y|ies))?|codebase|workspace|source\s+code|code|projects?|project\s+files?|package\.json|readme(?:\.md)?|reposit[oó]rios?|projetos?|c[oó]digo(?:[-\s]+fonte)?|arquivos?\s+(?:do|deste|desse)\s+projeto|[\w./-]+\.(?:[cm]?[jt]sx?|jsonc?|ya?ml|toml|md|py|rb|go|rs|java|kt|swift|sh|css|scss|html))`
 const repositoryInspectionIntent = new RegExp(
@@ -68,68 +74,6 @@ const bareTaskConnector = new RegExp(
   "gi",
 )
 const clauseBoundary = /([;.\n]|\b(?:but|mas)\b)/gi
-
-export const routeTargets = Object.freeze({
-  minimax: Object.freeze({
-    agent: "minimax",
-    providerID: "minimax-coding-plan",
-    modelID: "MiniMax-M3",
-  }),
-  glm: Object.freeze({
-    agent: "glm",
-    providerID: "zai-coding-plan",
-    modelID: "glm-5.2",
-  }),
-  claude: Object.freeze({
-    agent: "claude",
-    providerID: "claude-agent",
-    modelID: "claude-opus-4-8",
-  }),
-  codex: Object.freeze({
-    agent: "codex",
-    providerID: "openai",
-    modelID: "gpt-5.6-sol",
-  }),
-})
-
-export const routeCapabilities = Object.freeze({
-  minimax: Object.freeze({
-    canExecuteCommands: false,
-    canHandleNonLiteralText: false,
-    canMutateProject: false,
-    canReadRepository: true,
-    canUseAgentMentions: false,
-    canUseAttachments: false,
-    canUseExternalTools: false,
-  }),
-  glm: Object.freeze({
-    canExecuteCommands: true,
-    canHandleNonLiteralText: true,
-    canMutateProject: true,
-    canReadRepository: true,
-    canUseAgentMentions: true,
-    canUseAttachments: true,
-    canUseExternalTools: true,
-  }),
-  claude: Object.freeze({
-    canExecuteCommands: true,
-    canHandleNonLiteralText: true,
-    canMutateProject: true,
-    canReadRepository: true,
-    canUseAgentMentions: true,
-    canUseAttachments: true,
-    canUseExternalTools: true,
-  }),
-  codex: Object.freeze({
-    canExecuteCommands: true,
-    canHandleNonLiteralText: true,
-    canMutateProject: true,
-    canReadRepository: true,
-    canUseAgentMentions: true,
-    canUseAttachments: true,
-    canUseExternalTools: true,
-  }),
-})
 
 function stripNegatedMutations(request) {
   return request
@@ -192,18 +136,18 @@ function stripNegatedCapabilityIntents(request) {
 
 export function requiredRouteCapabilities(
   request,
-  { hasAgentMentions = false, hasAttachments = false, intent } = {},
+  {
+    allowLiteralOnlyRoute = false,
+    hasAgentMentions = false,
+    hasAttachments = false,
+  } = {},
 ) {
   const affirmativeCapabilities = stripNegatedCapabilityIntents(request)
   return {
     canExecuteCommands: explicitIntentOutsideExplanation(affirmativeCapabilities, commandExecutionIntent),
-    // The classifier's intent decides whether a request is literal. The regex
-    // floor stays as defense in depth: minimaxForbiddenIntent and
-    // nonLiteralTextIntent still veto MiniMax when the request positively shows
-    // non-literal work, even if the classifier called it literal. Only the
-    // "no literal evidence" term is dropped for a literal intent, since that
-    // term reproduced the classifier's own judgement and caused false promotions.
-    canHandleNonLiteralText: intent === LITERAL_READ_ONLY_INTENT
+    // A selected route that declares itself literal-only supplies the semantic
+    // classifier signal. The regex floor still vetoes non-literal work.
+    canHandleNonLiteralText: allowLiteralOnlyRoute
       ? minimaxForbiddenIntent.test(request) || nonLiteralTextIntent.test(request)
       : minimaxForbiddenIntent.test(request)
         || nonLiteralTextIntent.test(request)
@@ -216,24 +160,170 @@ export function requiredRouteCapabilities(
   }
 }
 
-export function routeSupportsRequest(route, request, options) {
-  const capabilities = routeCapabilities[route]
-  if (!capabilities) throw new Error(`unknown route: ${route}`)
-  const required = requiredRouteCapabilities(request, options)
-  return Object.entries(required).every(
-    ([capability, needed]) => !needed || capabilities[capability] === true,
+export const UNKNOWN_ATTACHMENT_MEDIA_TYPE = "application/octet-stream"
+export const UNSUPPORTED_MEDIA_TYPE_ERROR_CODE = "unsupported_media_type"
+
+// An attachment with no usable media type keeps a stable identity, so only a
+// route that declares that type explicitly can receive it.
+export function attachmentMediaTypes(values) {
+  if (!Array.isArray(values)) return []
+  const mediaTypes = []
+  for (const value of values) {
+    const mediaType = normalizeAttachmentMediaType(value) || UNKNOWN_ATTACHMENT_MEDIA_TYPE
+    if (!mediaTypes.includes(mediaType)) mediaTypes.push(mediaType)
+  }
+  return mediaTypes
+}
+
+function requestMediaTypes(options) {
+  return attachmentMediaTypes(options?.attachmentMediaTypes)
+}
+
+export function unsupportedRouteMediaTypes(
+  route,
+  mediaTypes,
+  manifest = LEGACY_ROUTE_MANIFEST,
+) {
+  const entry = routeManifestEntry(manifest, route)
+  if (!entry) throw new Error(`unknown route: ${route}`)
+  return attachmentMediaTypes(mediaTypes).filter(
+    (mediaType) => !routeAcceptsMediaType(entry, mediaType),
   )
 }
 
-export function enforceMinimumRoute(route, request, options) {
-  if (routeSupportsRequest(route, request, options)) return route
-  if (route === "minimax") return "glm"
-  if (route === "claude") return "codex"
-  return route
+function routeAcceptsEveryMediaType(route, mediaTypes) {
+  return mediaTypes.every((mediaType) => routeAcceptsMediaType(route, mediaType))
 }
 
-export function routeTarget(route) {
-  const target = routeTargets[route]
+function unsupportedMediaTypeError(manifest, mediaTypes) {
+  const rejected = mediaTypes.filter((mediaType) => (
+    !manifest.routes.some((route) => routeAcceptsMediaType(route, mediaType))
+  ))
+  const error = new Error(
+    rejected.length > 0
+      ? `no route accepts the attached media types: ${rejected.join(", ")}`
+      : `no single route accepts every attached media type: ${mediaTypes.join(", ")}`,
+  )
+  error.code = UNSUPPORTED_MEDIA_TYPE_ERROR_CODE
+  error.mediaTypes = rejected.length > 0 ? rejected : mediaTypes
+  return error
+}
+
+// Keeps the selected route when it accepts every attachment, otherwise borrows
+// the closest route above it and only then looks below.
+export function enforceMediaCompatibleRoute(
+  route,
+  mediaTypes,
+  manifest = LEGACY_ROUTE_MANIFEST,
+) {
+  const selected = routeManifestEntry(manifest, route)
+  if (!selected) throw new Error(`unknown route: ${route}`)
+  const requested = attachmentMediaTypes(mediaTypes)
+  if (requested.length === 0) return route
+  if (routeAcceptsEveryMediaType(selected, requested)) return route
+
+  const promoted = manifest.routes.find((candidate) => (
+    candidate.order > selected.order
+    && routeAcceptsEveryMediaType(candidate, requested)
+  ))
+  if (promoted) return promoted.id
+  const alternative = manifest.routes.find(
+    (candidate) => routeAcceptsEveryMediaType(candidate, requested),
+  )
+  if (!alternative) throw unsupportedMediaTypeError(manifest, requested)
+  return alternative.id
+}
+
+export function routeCapabilities(manifest = LEGACY_ROUTE_MANIFEST) {
+  return Object.freeze(Object.fromEntries(
+    manifest.routes.map(({ id, capabilities }) => [id, capabilities]),
+  ))
+}
+
+export function routeTargets(manifest = LEGACY_ROUTE_MANIFEST) {
+  return Object.freeze(Object.fromEntries(
+    manifest.routes.map(({ id, target }) => [id, target]),
+  ))
+}
+
+export function routeSupportsRequest(
+  route,
+  request,
+  options,
+  manifest = LEGACY_ROUTE_MANIFEST,
+) {
+  const entry = routeManifestEntry(manifest, route)
+  if (!entry) throw new Error(`unknown route: ${route}`)
+  if (!routeAcceptsEveryMediaType(entry, requestMediaTypes(options))) return false
+  const required = requiredRouteCapabilities(request, options)
+  return Object.entries(required).every(
+    ([capability, needed]) => !needed || entry.capabilities[capability] === true,
+  )
+}
+
+export function routeSupportsSelectedRequest(
+  candidateRoute,
+  selectedRoute,
+  request,
+  options,
+  manifest = LEGACY_ROUTE_MANIFEST,
+) {
+  const selected = routeManifestEntry(manifest, selectedRoute)
+  if (!selected) throw new Error(`unknown route: ${selectedRoute}`)
+  return routeSupportsRequest(candidateRoute, request, {
+    ...options,
+    allowLiteralOnlyRoute: selected.capabilities.canHandleNonLiteralText === false,
+  }, manifest)
+}
+
+export function minimumCompatibleRoute(
+  request,
+  options,
+  manifest = LEGACY_ROUTE_MANIFEST,
+) {
+  const route = manifest.routes.find((candidate) => (
+    routeSupportsRequest(candidate.id, request, options, manifest)
+  ))
+  if (route) return route.id
+  const mediaTypes = requestMediaTypes(options)
+  if (mediaTypes.length > 0) throw unsupportedMediaTypeError(manifest, mediaTypes)
+  throw new Error("no compatible route available for request")
+}
+
+export function enforceMinimumRoute(
+  route,
+  request,
+  options,
+  manifest = LEGACY_ROUTE_MANIFEST,
+) {
+  const selected = routeManifestEntry(manifest, route)
+  if (!selected) throw new Error(`unknown route: ${route}`)
+  if (routeSupportsSelectedRequest(route, route, request, options, manifest)) return route
+  const promoted = manifest.routes.find((candidate) => (
+    candidate.order > selected.order
+    && routeSupportsSelectedRequest(candidate.id, route, request, options, manifest)
+  ))
+  if (promoted) return promoted.id
+
+  // An attachment the selected route cannot read may only be served by a
+  // cheaper route, so media incompatibility also searches below it.
+  const mediaTypes = requestMediaTypes(options)
+  if (mediaTypes.length > 0 && !routeAcceptsEveryMediaType(selected, mediaTypes)) {
+    const alternative = manifest.routes.find((candidate) => (
+      routeSupportsSelectedRequest(candidate.id, route, request, options, manifest)
+    ))
+    if (alternative) return alternative.id
+    // The media error belongs to requests the attachments alone made
+    // unroutable; a capability gap keeps its own message.
+    if (!manifest.routes.some((candidate) => routeAcceptsEveryMediaType(candidate, mediaTypes))) {
+      throw unsupportedMediaTypeError(manifest, mediaTypes)
+    }
+  }
+  throw new Error(`no compatible route available above: ${route}`)
+}
+
+export function routeTarget(route, manifest = LEGACY_ROUTE_MANIFEST) {
+  const target = routeManifestEntry(manifest, route)?.target
   if (!target) throw new Error(`unknown route: ${route}`)
   return target
 }

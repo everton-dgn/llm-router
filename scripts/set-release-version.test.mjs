@@ -56,8 +56,9 @@ test('collects commit bodies from the correct baseline range', () => {
 
 test('reports local and remote candidate tags as conflicts', () => {
   const dependencies = {
-    getBaselineTag: () => '',
-    getMessages: () => ['feat: initial public router']
+    getCurrentVersion: () => '0.1.0',
+    getBaselineTag: () => 'v0.1.0',
+    getMessages: () => ['feat: next feature']
   }
   assert.throws(
     () =>

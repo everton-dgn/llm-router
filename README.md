@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 Local message router for OpenCode. It keeps one visible conversation while
-selecting MiniMax M3, GLM 5.2, Claude Opus 4.8, or GPT-5.6 Sol as the worker for
+selecting MiniMax M3, GLM 5.2, Claude Opus 5, or GPT-5.6 Sol as the worker for
 each message.
 
 The composer always stays on the primary `router` agent. The plugin changes the
@@ -20,8 +20,8 @@ OpenCode interface.
 
 A full orchestration turn adds latency, cost, and another model that can distort
 the request. llm-router uses a small local Ollama model for one deterministic
-classification, then hands the original message to the selected native worker.
-The classifier exits immediately after returning the route.
+route classification, then hands the original message to the selected native
+worker. The classifier exits immediately after returning the route.
 
 Routing and tool control are independent:
 
@@ -57,17 +57,98 @@ See [routing modes](docs/routing-modes.md) and
 [execution policies](docs/execution-policies.md) for the complete state and
 configuration contracts.
 
-## Default route matrix
+## Default routes
 
-| Intent | Route | OpenCode destination |
-| --- | --- | --- |
-| Literal lookup and mechanical formatting | MiniMax | `minimax-coding-plan/MiniMax-M3` |
-| Translation and simple or intermediate work | GLM | `zai-coding-plan/glm-5.2` |
-| Product, architecture, strategy, and complex creative work | Claude | `claude-agent/claude-opus-4-8` |
-| Review, security, difficult engineering, and precise technical writing | Codex | `openai/gpt-5.6-sol` |
+The shipped schema 2 config defines four classifier intents:
 
-These routes express a cost and capability preference. They do not grant or
-remove tools.
+| Classifier intent | Route |
+| --- | --- |
+| `literal_read_only_no_writing` | MiniMax |
+| `translation_simple_brainstorm_docs_or_intermediate_work` | GLM |
+| `complex_creative_product_or_architecture` | Claude |
+| `review_security_hard_engineering_or_technical_writing` | Codex |
+
+These assignments choose a preferred worker. The seven route capabilities are
+an orthogonal eligibility filter applied after classification; they do not
+grant or remove OpenCode tools.
+
+Attachments use the same filter through `acceptedMediaTypes`. The classified
+route is preserved whenever it reads every attached file; otherwise the message
+moves to a route that does, and the TUI reports the change once. See
+[Routing modes](docs/routing-modes.md#attachments).
+
+## Config-driven routes
+
+`config.json` schema 2 is the source of truth for route IDs, display names, cost
+order, OpenCode targets, the seven routing capabilities, the accepted media
+types, and intent mappings. Each routing entry declares one `intent` and one
+`route`:
+
+```json
+{
+  "intent": "translation_simple_brainstorm_docs_or_intermediate_work",
+  "route": "glm"
+}
+```
+
+The runtime does not assume a fixed route count or fixed model IDs. Inspect the
+normalized schema 2 manifest without starting Ollama:
+
+```bash
+./route --manifest --json
+```
+
+The installer validates this manifest and generates the required OpenCode agent
+and provider model entries. A version 1 config, identified by a missing
+`schema_version` or `schema_version: 1`, expands to the four legacy routes.
+Version 2 configs may add, remove, or retarget routes. Both versions normalize
+to schema 2 and must pass the complete validation.
+
+Successful classifier output uses exact schema 1 keys:
+
+```json
+{
+  "schema_version": 1,
+  "intent": "translation_simple_brainstorm_docs_or_intermediate_work",
+  "route": "glm"
+}
+```
+
+Classification failures also use schema 1 and write an exact error object to
+standard error:
+
+```json
+{
+  "schema_version": 1,
+  "error": {
+    "code": "invalid_classifier_response",
+    "message": "classifier did not return a valid route"
+  }
+}
+```
+
+A project may reduce route eligibility in
+`.opencode/llm-router.routes.json`. The override can only set existing
+capabilities to `false`; route IDs, order, targets, and intent mappings stay
+global. For example:
+
+```json
+{
+  "schema_version": 1,
+  "routes": {
+    "minimax": {
+      "capabilities": {
+        "canReadRepository": false
+      }
+    }
+  }
+}
+```
+
+The manifest is cached when the plugin starts. After adding, removing, or
+retargeting a route in `config.json`, rerun `opencode/install.sh` and restart
+OpenCode. Intent and capability changes in `config.json`, plus project override
+changes, require an OpenCode restart.
 
 ## How one message flows
 
@@ -271,10 +352,10 @@ uv run --no-project --no-python-downloads python -m unittest \
   tests/test_stage_verifier.py tests/test_quality_eval.py
 ```
 
-The routing evaluation calls the local Ollama classifier. `pnpm test` matches CI
-and does not require provider credentials or a running Ollama service.
-Lefthook runs Commitlint for commit messages, selects focused tests from staged
-files before a commit, and runs the deterministic gate before a push.
+The integration evaluation calls the local Ollama classifier. `pnpm test` does
+not require provider credentials or a running Ollama service. Lefthook runs
+Commitlint for commit messages, selects focused tests from staged files before
+a commit, and runs the deterministic gate before a push.
 
 ## Offline benchmark
 

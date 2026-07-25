@@ -22,6 +22,13 @@ function response(data) {
   return { data }
 }
 
+async function controlResponse(parts) {
+  const result = await createRouterControl().languageModel("control").doGenerate({
+    prompt: [{ role: "user", content: parts }],
+  })
+  return result.content[0]?.text
+}
+
 function fakeSessions(initial = {}) {
   const sessions = structuredClone(initial)
   const updates = []
@@ -96,7 +103,11 @@ test("commands persist routing mode and explicit profile, then apply real sessio
     profileOverride: "restricted",
   })
   assert.deepEqual(store.sessions["session-1"].permission, restrictedPolicy.permissions)
-  assert.match(output.parts[0].text, /mode: auto.*profile: restricted/i)
+  assert.deepEqual(
+    output.parts.filter((part) => part.synthetic !== true),
+    [{ type: "text", text: "/router-restricted" }],
+  )
+  assert.match(await controlResponse(output.parts), /mode: auto.*profile: restricted/i)
   assert.equal(await runtime.routingAgent("session-1", "router"), "router-auto")
 })
 
@@ -134,7 +145,14 @@ test("router-status reports state without mutating session permissions", async (
   assert.deepEqual(store.sessions["session-1"].permission, [
     { permission: "read", pattern: "*", action: "allow" },
   ])
-  assert.match(output.parts[0].text, /^Router status\. mode: adaptive \| profile: restricted$/)
+  assert.deepEqual(
+    output.parts.filter((part) => part.synthetic !== true),
+    [{ type: "text", text: "/router-status" }],
+  )
+  assert.equal(
+    await controlResponse(output.parts),
+    "Router status. mode: adaptive | profile: restricted",
+  )
 })
 
 test("router-uninstall delegates arguments without reading or mutating session state", async () => {
@@ -192,10 +210,14 @@ test("router-uninstall delegates arguments without reading or mutating session s
   assert.deepEqual(store.sessions["session-1"].permission, [
     { permission: "*", pattern: "*", action: "allow" },
   ])
-  assert.deepEqual(output.parts, [{
-    type: "text",
-    text: "Uninstall preview. Run /router-uninstall confirmation-token to continue.",
-  }])
+  assert.deepEqual(
+    output.parts.filter((part) => part.synthetic !== true),
+    [{ type: "text", text: "/router-uninstall confirmation-token" }],
+  )
+  assert.equal(
+    await controlResponse(output.parts),
+    "Uninstall preview. Run /router-uninstall confirmation-token to continue.",
+  )
 })
 
 test("router-uninstall normalizes missing arguments and rejects invalid responses", async () => {
@@ -219,7 +241,11 @@ test("router-uninstall normalizes missing arguments and rejects invalid response
     sessionID: "session-1",
   }, output)
   assert.deepEqual(calls, [""])
-  assert.deepEqual(output.parts, [{ type: "text", text: "Uninstall preview" }])
+  assert.deepEqual(
+    output.parts.filter((part) => part.synthetic !== true),
+    [{ type: "text", text: "/router-uninstall" }],
+  )
+  assert.equal(await controlResponse(output.parts), "Uninstall preview")
 
   await assert.rejects(
     runtime.commandBefore({
@@ -267,7 +293,7 @@ test("restricted Claude uses OpenCode native permission requests and correlates 
   await runtime.chatParams({
     sessionID: "session-1",
     message: { id: "message-1" },
-    model: { providerID: "claude-agent", id: "claude-opus-4-8" },
+    model: { providerID: "claude-agent", id: "claude-opus-5" },
     agent: "claude",
   }, output)
   const pending = output.options.permissionCallback(
@@ -395,7 +421,7 @@ test("turn tracking evicts inactive sessions at its fixed capacity", async () =>
   await runtime.chatParams({
     sessionID: "session-0",
     message: { id: "message-0" },
-    model: { providerID: "claude-agent", id: "claude-opus-4-8" },
+    model: { providerID: "claude-agent", id: "claude-opus-5" },
     agent: "claude",
   }, evictedOutput)
   assert.equal(evictedOutput.options.permissionProfile, undefined)
@@ -404,7 +430,7 @@ test("turn tracking evicts inactive sessions at its fixed capacity", async () =>
   await runtime.chatParams({
     sessionID: "session-1024",
     message: { id: "message-1024" },
-    model: { providerID: "claude-agent", id: "claude-opus-4-8" },
+    model: { providerID: "claude-agent", id: "claude-opus-5" },
     agent: "claude",
   }, activeOutput)
   assert.deepEqual(activeOutput.options.permissionProfile, {
@@ -450,13 +476,24 @@ test("pinned Claude resolves explicit OpenCode agent mentions in a child session
     sessionID: "session-1",
     parts: [
       { type: "text", text: "Revise a implementação." },
-      { type: "agent", name: "reviewer" },
+      {
+        type: "agent",
+        name: "reviewer",
+        id: "prt_mention",
+        sessionID: "session-1",
+        messageID: "msg_1",
+      },
       { type: "file", mime: "text/plain", filename: "notes.txt", url: "file:///notes.txt" },
     ],
   })
 
   assert.equal(parts.some((part) => part.type === "agent"), false)
   assert.match(parts[1].text, /Completed result.*@reviewer.*duas condições/s)
+  // OpenCode rejects a part without identifiers before saving the message.
+  assert.deepEqual(
+    { id: parts[1].id, sessionID: parts[1].sessionID, messageID: parts[1].messageID },
+    { id: "prt_mention", sessionID: "session-1", messageID: "msg_1" },
+  )
   assert.equal(store.sessions["child-1"].parentID, "session-1")
   assert.equal(store.sessions["child-1"].agent, "reviewer")
   assert.deepEqual(calls[0][1].prompt.files, [{
@@ -511,7 +548,7 @@ test("agent mentions and Claude tools obey child depth and permission cancellati
   await runtime.chatParams({
     sessionID: "root",
     message: { id: "message-1" },
-    model: { providerID: "claude-agent", id: "claude-opus-4-8" },
+    model: { providerID: "claude-agent", id: "claude-opus-5" },
     agent: "claude",
   }, output)
   const denied = await output.options.permissionCallback("Read", { file_path: "README.md" }, {})

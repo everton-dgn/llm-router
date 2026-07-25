@@ -15,6 +15,11 @@ import {
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const packagePath = path.join(rootDir, 'package.json')
 
+function readCurrentVersion() {
+  const manifest = JSON.parse(readFileSync(packagePath, 'utf8'))
+  return String(manifest.version ?? '').trim()
+}
+
 function parseArgs(argv) {
   if (
     argv.length !== 3 ||
@@ -120,6 +125,7 @@ function remoteTagExists(tag) {
 export function runReleaseVersionPreview(
   argv = process.argv.slice(2),
   {
+    getCurrentVersion = readCurrentVersion,
     getBaselineTag = tryLatestStableTag,
     getMessages = collectCommitMessages,
     hasLocalTag = tagExists,
@@ -127,8 +133,7 @@ export function runReleaseVersionPreview(
   } = {}
 ) {
   parseArgs(argv)
-  const manifest = JSON.parse(readFileSync(packagePath, 'utf8'))
-  const currentVersion = String(manifest.version ?? '').trim()
+  const currentVersion = getCurrentVersion()
   const baselineTag = getBaselineTag()
   const messages = getMessages({ baselineTag })
   const ignored = collectIgnoredCommits(messages)

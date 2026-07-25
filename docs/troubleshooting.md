@@ -35,8 +35,31 @@ Test the closed contract:
 ./route --classify --json "list the project files"
 ```
 
-The output must be JSON with `schema_version`, `intent`, and `route`. An empty
-response, invalid JSON, or unknown route stops the handoff.
+Successful output must contain exactly the schema 1 decision keys:
+
+```json
+{
+  "schema_version": 1,
+  "intent": "literal_read_only_no_writing",
+  "route": "minimax"
+}
+```
+
+On failure, the command exits with status 2 and writes an exact schema 1 error
+to standard error:
+
+```json
+{
+  "schema_version": 1,
+  "error": {
+    "code": "invalid_classifier_response",
+    "message": "classifier did not return a valid route"
+  }
+}
+```
+
+An empty response, invalid JSON, missing or extra key, or unknown route stops
+the handoff.
 
 ## The model did not change in adaptive mode
 
@@ -100,6 +123,25 @@ opencode models claude-agent
 The installer also checks whether the executable supports the flags required by
 the Agent SDK.
 
+## Claude reports an expired login
+
+`Failed to authenticate: OAuth session expired and could not be refreshed`
+usually means Claude Code read the wrong profile, not that the session ended.
+Each `CLAUDE_CONFIG_DIR` keeps its own credential, and a desktop-launched
+OpenCode does not inherit the shell exports.
+
+Check which profile holds the session, then compare it with the installed
+configuration:
+
+```bash
+CLAUDE_CONFIG_DIR="$HOME/.claude" claude auth status
+grep claudeConfigDir "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.jsonc"
+```
+
+If they differ, reinstall from a shell that exports the intended directory, or
+edit `provider["claude-agent"].options.claudeConfigDir`. If the profile really
+has no session, run `claude auth login` with that same `CLAUDE_CONFIG_DIR`.
+
 ## Claude rejected an attachment or mention
 
 Check the MIME type. The adapter accepts GIF, JPEG, PNG, and WebP images, PDFs,
@@ -110,7 +152,7 @@ Other causes:
 - invalid base64;
 - a declared MIME type that differs from the data URL;
 - a URL that does not use HTTP or HTTPS;
-- an attachment or current message over the 2 MiB budget;
+- an attachment or current message over the 32 MiB budget;
 - more than four `@agent` mentions in one message;
 - a mention of `router` or another managed internal agent;
 - a child session over `max_child_depth`;
@@ -166,7 +208,7 @@ Then lower the limits in the project:
   "models": {
     "minimax-coding-plan/MiniMax-M3": "restricted",
     "zai-coding-plan/glm-5.2": "restricted",
-    "claude-agent/claude-opus-4-8": "restricted",
+    "claude-agent/claude-opus-5": "restricted",
     "openai/gpt-5.6-sol": "restricted"
   },
   "profiles": {
@@ -241,10 +283,14 @@ bash tests/smoke.sh
 bash tests/routing-eval.sh
 bash tests/opencode-bundle.sh
 node --test \
+  tests/route-manifest.test.mjs \
   tests/router-handoff.test.mjs \
   tests/execution-policy.test.mjs \
   tests/router-control.test.mjs \
+  tests/startup-notice.test.mjs \
   tests/claude-agent.test.mjs \
   tests/claude-agent-provider.test.mjs \
-  tests/repo-query.test.mjs
+  tests/repo-query.test.mjs \
+  tests/documentation.test.mjs \
+  tests/uninstall.test.mjs
 ```

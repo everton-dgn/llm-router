@@ -180,7 +180,7 @@ File `$CONFIG_DIR/llm-router.policy.json`:
   "schemaVersion": 1,
   "defaultProfile": "native",
   "models": {
-    "claude-agent/claude-opus-4-8": {
+    "claude-agent/claude-opus-5": {
       "profile": "restricted",
       "limits": {
         "max_steps": 30,
@@ -201,7 +201,7 @@ File `$CONFIG_DIR/llm-router.policy.json`:
   "models": {
     "minimax-coding-plan/MiniMax-M3": "full",
     "zai-coding-plan/glm-5.2": "full",
-    "claude-agent/claude-opus-4-8": "full",
+    "claude-agent/claude-opus-5": "full",
     "openai/gpt-5.6-sol": "full"
   }
 }
@@ -220,7 +220,7 @@ File `.opencode/llm-router.policy.json`:
   "models": {
     "minimax-coding-plan/MiniMax-M3": "restricted",
     "zai-coding-plan/glm-5.2": "restricted",
-    "claude-agent/claude-opus-4-8": "restricted",
+    "claude-agent/claude-opus-5": "restricted",
     "openai/gpt-5.6-sol": "restricted"
   },
   "profiles": {

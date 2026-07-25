@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
 
+import { normalizeAttachmentMediaType } from "./route_manifest.mjs"
 import { updateSessionMetadata } from "./session_metadata.mjs"
 
 export const ROUTER_CONTROL_METADATA_KEY = "llm-router.control"
@@ -28,6 +29,20 @@ const LEGACY_AGENT_MODES = Object.freeze({
 const MAX_AGENT_MENTIONS = 4
 const MAX_AGENT_RESULT_BYTES = 256 * 1024
 const MAX_TRACKED_SESSIONS = 1024
+const CONTROL_RESULT_PREFIX = "<llm-router-control-result>\n"
+
+function replaceCommandResult(input, output, text) {
+  const argumentsText = typeof input.arguments === "string"
+    ? input.arguments.trim()
+    : ""
+  const invocation = `/${input.command}${argumentsText ? ` ${argumentsText}` : ""}`
+  output.parts.splice(
+    0,
+    output.parts.length,
+    { type: "text", text: invocation },
+    { type: "text", text: `${CONTROL_RESULT_PREFIX}${text}`, synthetic: true },
+  )
+}
 
 function responseData(response) {
   if (
@@ -254,7 +269,7 @@ export function createRouterControlRuntime({
       if (typeof text !== "string") {
         throw new TypeError("OpenCode uninstaller must return a text response")
       }
-      output.parts.splice(0, output.parts.length, { type: "text", text })
+      replaceCommandResult(input, output, text)
       return
     }
 
@@ -273,10 +288,11 @@ export function createRouterControlRuntime({
     const effective = await resolveFor({ sessionID: input.sessionID })
     if (!isStatus) await applyPermissions(input.sessionID, effective.policy)
     const profile = state.profileOverride ?? effective.policy.profile
-    output.parts.splice(0, output.parts.length, {
-      type: "text",
-      text: `${isStatus ? "Router status" : "Router control applied"}. mode: ${state.mode} | profile: ${profile}`,
-    })
+    replaceCommandResult(
+      input,
+      output,
+      `${isStatus ? "Router status" : "Router control applied"}. mode: ${state.mode} | profile: ${profile}`,
+    )
     await notify({ mode: state.mode, profile, control: true })
   }
 
@@ -318,11 +334,16 @@ export function createRouterControlRuntime({
       .join("")
     const files = parts
       .filter((part) => part?.type === "file" && typeof part.url === "string")
-      .map((part) => ({
-        uri: part.url,
-        ...(typeof part.filename === "string" ? { name: part.filename } : {}),
-        ...(typeof part.mime === "string" ? { description: part.mime } : {}),
-      }))
+      .map((part) => {
+        // The delegated session receives the same media type the router used to
+        // pick a route, without transport parameters such as charset.
+        const mediaType = normalizeAttachmentMediaType(part.mime)
+        return {
+          uri: part.url,
+          ...(typeof part.filename === "string" ? { name: part.filename } : {}),
+          ...(mediaType ? { description: mediaType } : {}),
+        }
+      })
     const depth = await sessionDepth(sessionID)
 
     const results = await Promise.all(mentions.map(async (mention) => {
@@ -382,7 +403,17 @@ export function createRouterControlRuntime({
     }))
 
     let resultIndex = 0
-    return parts.map((part) => part?.type === "agent" ? results[resultIndex++] : part)
+    // OpenCode validates every part before saving the message and rejects one
+    // without identifiers, so the delegated result inherits them from the
+    // mention it replaces.
+    return parts.map((part) => {
+      if (part?.type !== "agent") return part
+      const result = results[resultIndex++]
+      for (const field of ["id", "sessionID", "messageID"]) {
+        if (typeof part[field] === "string") result[field] = part[field]
+      }
+      return result
+    })
   }
 
   async function countTool(sessionID, toolName, { agentID } = {}) {
