@@ -156,7 +156,6 @@ export default async function llmRouterHandoff({ client, directory }) {
     }),
     resolvePolicy: resolveExecutionPolicy,
     uninstall: (argumentsText) => uninstaller.execute(argumentsText),
-    notify: showRouterToast,
   })
   showStartupNotice(() => client.tui.showToast({
     body: {
