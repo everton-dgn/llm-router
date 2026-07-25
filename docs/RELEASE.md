@@ -18,7 +18,8 @@ The release job performs this sequence:
 3. Reads non-merge Conventional Commits after the latest stable tag.
 4. Derives the next version and generates the matching `CHANGELOG.md` section.
 5. Creates `chore(release): cut vX.Y.Z`, changing only `package.json` and,
-   when needed, `CHANGELOG.md`.
+   when needed, `CHANGELOG.md`. The commit subject stays exact, and its body
+   carries `[skip ci]`.
 6. Pushes a source-specific `automation/release-*` branch and opens a normal
    pull request authored by `github-actions[bot]`.
 7. Revalidates the PR author, repository, base branch, head branch, and exact
@@ -35,6 +36,13 @@ source commit has already passed the full `CI` workflow, and the release commit
 is restricted to deterministic version and changelog output covered by the
 release test suite. The tag points to the normal merge commit on `main`, not to
 the release branch head.
+
+The release commit body carries `[skip ci]` so that no pull-request run is
+created at all. A pull request opened with `GITHUB_TOKEN` produces a run that
+waits for maintainer approval, and a maintainer would only release it after the
+merge, the tag, and the GitHub Release already exist. Audit such a run with
+`gh api /repos/<owner>/<repo>/actions/runs/<id>/attempts/1 --jq '.conclusion'`,
+because the top-level run object hides a retained first attempt.
 
 Commits that do not require a release stop before creating a branch or pull
 request.
@@ -159,8 +167,13 @@ pull requests.
 The automatic workflow creates or updates the GitHub Release directly because
 events created with `GITHUB_TOKEN` do not start another workflow run.
 
-`.github/workflows/release-notes-sync.yml` remains available for a stable tag
-pushed through another trusted path or for an explicit manual repair. It
-requires an annotated tag on either a normal release merge or a compatible
-legacy release commit and applies the same reachability, release-payload,
-base-CI, and remote-tag checks before writing release notes.
+A tag pushed by the release job never starts a second workflow either, so
+`.github/workflows/release-notes-sync.yml` carries no tag trigger.
+
+That workflow remains available as a manual repair tool. Start it from the
+Actions tab through `workflow_dispatch`, pass the stable tag, and enable
+`create_if_missing` when the GitHub Release is absent. It requires an annotated
+tag on either a normal release merge or a compatible legacy release commit and
+applies the same reachability, release-payload, base-CI, and remote-tag checks
+before writing release notes. It rewrites the release body from `CHANGELOG.md`
+at the tagged commit, so it replaces any manual edit.
