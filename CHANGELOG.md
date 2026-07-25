@@ -4,6 +4,13 @@ Notable user-visible changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## 1.1.2 - 2026-07-25
+
+### Fixed
+- **changelog:** Keep generated release notes from freezing the release flow
+- **ci:** Keep release notes sync on manual dispatch and grant actions read
+- **release:** Stop the approval-required run for release pull requests
+
 ## 1.1.1 - 2026-07-25
 
 ### Fixed
@@ -33,5 +40,6 @@ Notable user-visible changes are documented here. The format follows
 - Install the OpenCode bundle with preflight validation, recoverable backups, preserved user configuration and policy, hash-verified legacy cleanup, and idempotent updates.
 - Validate routing, policies, provider transports, installation, benchmarks, and release tooling with deterministic test suites.
 - Prepare public contribution, security, support, CI, documentation, SemVer, changelog, and GitHub Release workflows.
+
 
 
