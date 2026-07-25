@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 import {
@@ -232,4 +233,25 @@ test('fails closed when the remote tag moves after verification', () => {
     ),
     false
   )
+})
+
+test('release notes sync workflow only runs on manual dispatch', async () => {
+  const workflow = await readFile(
+    new URL('../.github/workflows/release-notes-sync.yml', import.meta.url),
+    'utf8'
+  )
+  const onBlock = /^on:\n(?<triggers>(?:[ \t].*\n|\n)*)/mu.exec(workflow)
+  assert.ok(onBlock, 'the workflow must declare an on block')
+  assert.deepEqual(
+    [...onBlock.groups.triggers.matchAll(/^ {2}(\w+):/gmu)].map(
+      match => match[1]
+    ),
+    ['workflow_dispatch']
+  )
+  assert.doesNotMatch(workflow, /github\.ref_name|github\.event_name/u)
+  assert.match(workflow, /permissions:\n\s+actions: read\n\s+contents: write/u)
+  assert.match(workflow, /--print-commit/u)
+  for (const match of workflow.matchAll(/uses:\s+\S+@(\S+)/gu)) {
+    assert.match(match[1], /^[0-9a-f]{40}$/u)
+  }
 })

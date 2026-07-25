@@ -9,8 +9,12 @@ settings, release automation, contribution paths, or public project metadata.
 - Keep the active `main` ruleset that blocks deletion and non-fast-forward
   updates and requires pull requests.
 - Allow only normal merge commits. Do not enable squash or rebase merges.
-- Keep required CI and commit-message checks aligned with the current workflow
-  job names.
+  Either one would move the `[skip ci]` release commit body into the `main`
+  head commit message, which stops the `CI` push run, stops the `workflow_run`
+  trigger, and disables automatic releases with no visible error.
+- Do not require status checks for the `CI` jobs on `main`. The release commit
+  carries `[skip ci]`, and a skipped workflow leaves its checks pending, which
+  would make the release pull request unmergeable.
 - Keep GitHub Actions on read-only default permissions.
 - Enable the repository setting that lets GitHub Actions create and approve
   pull requests. GitHub exposes creation and approval as one setting, although
@@ -70,6 +74,11 @@ Verify recovery behavior after changes: an interrupted run must reuse only
 matching state, stale pre-merge work must be closed and removed, and a retry
 after merge must recover the validated merge commit before creating or
 repairing its tag and GitHub Release.
+
+`.github/workflows/release-notes-sync.yml` is a manual repair path only. Keep
+it on `workflow_dispatch` alone, because a tag pushed with `GITHUB_TOKEN` never
+starts a workflow run, and keep `actions: read` on its job so that the tag
+verification can read the base CI run.
 
 ## Dependency maintenance
 

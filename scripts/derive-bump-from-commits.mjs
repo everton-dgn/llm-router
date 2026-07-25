@@ -28,6 +28,8 @@ const escapedMarkdownPunctuation = new Set([
   '*',
   '[',
   ']',
+  '(',
+  ')',
   '_',
   '|',
   '~'

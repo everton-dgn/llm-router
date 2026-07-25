@@ -100,7 +100,7 @@ test('neutralizes active Markdown, mentions, references, and HTML', () => {
       '## 0.2.0 - 2026-07-23',
       '',
       '### Added',
-      '- **ui\\*\\* &#64;octocat &lt;b&gt;:** Add \\[trusted\\](`https://evil.example`) &#64;team &lt;img src=x&gt; `safe()` `www.evil.test` &#35;42',
+      '- **ui\\*\\* &#64;octocat &lt;b&gt;:** Add \\[trusted\\]\\(`https://evil.example`\\) &#64;team &lt;img src=x&gt; `safe()` `www.evil.test` &#35;42',
       ''
     ].join('\n')
   )
@@ -122,12 +122,28 @@ test('applies the same sanitization to BREAKING CHANGE footer text', () => {
       '',
       '### Changed',
       '- **Breaking (api):** Replace contract',
-      '  read \\[guide\\](`https://evil.example`) &#64;maintainers &lt;script&gt;alert(1)&lt;/script&gt; and keep `client.call()`',
+      '  read \\[guide\\]\\(`https://evil.example`\\) &#64;maintainers &lt;script&gt;alert\\(1\\)&lt;/script&gt; and keep `client.call()`',
       ''
     ].join('\n')
   )
   assert.doesNotMatch(entry, /\]\(https?:\/\//)
   assert.doesNotMatch(entry, /@maintainers|<script>/)
+})
+
+test('neutralizes relative Markdown links so the CHANGELOG keeps resolving', () => {
+  const entry = buildChangelogEntry({
+    date: '2026-07-23',
+    messages: [
+      'fix(docs): correct the [setup guide](docs/missing-file.md) reference',
+      'fix(ui): restore the ![banner](../assets/banner.png) asset'
+    ],
+    version: '0.3.0'
+  })
+
+  const localLinkPattern = /!?\[[^\]]*]\(([^)]+)\)/g
+  assert.deepEqual([...entry.matchAll(localLinkPattern)], [])
+  assert.match(entry, /\\\[setup guide\\\]\\\(docs\/missing-file\.md\\\)/u)
+  assert.match(entry, /!\\\[banner\\\]\\\(\.\.\/assets\/banner\.png\\\)/u)
 })
 
 test('preserves valid backtick spans while sanitizing surrounding text', () => {
