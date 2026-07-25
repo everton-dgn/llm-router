@@ -44,6 +44,23 @@ function replaceCommandResult(input, output, text) {
   )
 }
 
+function controlResultText({ isStatus, nextMode, previous, state, profile }) {
+  if (isStatus) {
+    return `Router status. mode: ${state.mode} | profile: ${profile}`
+  }
+  if (nextMode) {
+    return previous.mode === state.mode
+      ? `Router mode unchanged: ${state.mode} | profile: ${profile}`
+      : `Router mode: ${previous.mode} -> ${state.mode} | profile: ${profile}`
+  }
+  if (previous.profileOverride === state.profileOverride) {
+    return `Router profile unchanged: ${profile} | mode: ${state.mode}`
+  }
+  return previous.profileOverride
+    ? `Router profile: ${previous.profileOverride} -> ${profile} | mode: ${state.mode}`
+    : `Router profile: ${profile} | mode: ${state.mode}`
+}
+
 function responseData(response) {
   if (
     response
@@ -157,7 +174,6 @@ export function createRouterControlRuntime({
   loadPolicy,
   resolvePolicy,
   uninstall,
-  notify = async () => {},
   permissionTimeoutMs = 120_000,
 }) {
   const sessions = exactSessionClient(sessionClient)
@@ -278,6 +294,7 @@ export function createRouterControlRuntime({
     const nextProfile = PROFILE_COMMANDS[input.command]
     if (!isStatus && !nextMode && !nextProfile) return
 
+    const previous = isStatus ? undefined : await controlState(input.sessionID)
     const state = isStatus
       ? await controlState(input.sessionID)
       : await persistControl(input.sessionID, (current) => ({
@@ -291,9 +308,8 @@ export function createRouterControlRuntime({
     replaceCommandResult(
       input,
       output,
-      `${isStatus ? "Router status" : "Router control applied"}. mode: ${state.mode} | profile: ${profile}`,
+      controlResultText({ isStatus, nextMode, previous, state, profile }),
     )
-    await notify({ mode: state.mode, profile, control: true })
   }
 
   async function routingAgent(sessionID, agent) {

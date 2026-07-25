@@ -81,7 +81,6 @@ test("commands persist routing mode and explicit profile, then apply real sessio
       profile: sessionOverride ?? "native",
       permissions: sessionOverride === "restricted" ? restrictedPolicy.permissions : [],
     }),
-    notify: async () => {},
   })
   const output = { parts: [] }
 
@@ -107,8 +106,56 @@ test("commands persist routing mode and explicit profile, then apply real sessio
     output.parts.filter((part) => part.synthetic !== true),
     [{ type: "text", text: "/router-restricted" }],
   )
-  assert.match(await controlResponse(output.parts), /mode: auto.*profile: restricted/i)
+  assert.equal(
+    await controlResponse(output.parts),
+    "Router profile: restricted | mode: auto",
+  )
   assert.equal(await runtime.routingAgent("session-1", "router"), "router-auto")
+})
+
+test("control commands distinguish a real transition from a no-op on the same axis", async () => {
+  const store = fakeSessions({
+    "session-1": { id: "session-1", metadata: {} },
+  })
+  const runtime = createRouterControlRuntime({
+    directory: "/workspace",
+    sessionClient: store.client,
+    v2SessionClient: { permission: {} },
+    loadPolicy: async () => ({}),
+    resolvePolicy: (_policy, { sessionOverride }) => ({
+      ...restrictedPolicy,
+      profile: sessionOverride ?? "native",
+      permissions: [],
+    }),
+  })
+
+  const modeChange = { parts: [] }
+  await runtime.commandBefore({ command: "router-auto", sessionID: "session-1", arguments: "" }, modeChange)
+  assert.equal(
+    await controlResponse(modeChange.parts),
+    "Router mode: adaptive -> auto | profile: native",
+  )
+
+  const modeNoop = { parts: [] }
+  await runtime.commandBefore({ command: "router-auto", sessionID: "session-1", arguments: "" }, modeNoop)
+  assert.equal(
+    await controlResponse(modeNoop.parts),
+    "Router mode unchanged: auto | profile: native",
+  )
+
+  const profileChange = { parts: [] }
+  await runtime.commandBefore({ command: "router-full", sessionID: "session-1", arguments: "" }, profileChange)
+  assert.equal(
+    await controlResponse(profileChange.parts),
+    "Router profile: full | mode: auto",
+  )
+
+  const profileNoop = { parts: [] }
+  await runtime.commandBefore({ command: "router-full", sessionID: "session-1", arguments: "" }, profileNoop)
+  assert.equal(
+    await controlResponse(profileNoop.parts),
+    "Router profile unchanged: full | mode: auto",
+  )
 })
 
 test("router-status reports state without mutating session permissions", async () => {
@@ -130,9 +177,7 @@ test("router-status reports state without mutating session permissions", async (
     sessionClient: store.client,
     v2SessionClient: { permission: {} },
     loadPolicy: async () => ({}),
-    resolvePolicy: () => restrictedPolicy,
-    notify: async () => {},
-  })
+    resolvePolicy: () => restrictedPolicy,  })
   const output = { parts: [] }
 
   await runtime.commandBefore({
@@ -184,9 +229,6 @@ test("router-uninstall delegates arguments without reading or mutating session s
     uninstall: async (argumentsText) => {
       calls.push(argumentsText)
       return "Uninstall preview. Run /router-uninstall confirmation-token to continue."
-    },
-    notify: async () => {
-      throw new Error("router-uninstall must not send router-control notifications")
     },
   })
   const output = { parts: [{ type: "text", text: "stale" }] }
@@ -284,9 +326,7 @@ test("restricted Claude uses OpenCode native permission requests and correlates 
       },
     },
     loadPolicy: async () => ({}),
-    resolvePolicy: () => restrictedPolicy,
-    notify: async () => {},
-  })
+    resolvePolicy: () => restrictedPolicy,  })
   runtime.rememberTurn("session-1", "message-1", restrictedPolicy)
   const output = { options: {} }
 
@@ -340,9 +380,7 @@ test("turn limits block excess OpenCode steps and tool calls", async () => {
     sessionClient: store.client,
     v2SessionClient: { permission: {} },
     loadPolicy: async () => ({}),
-    resolvePolicy: () => restrictedPolicy,
-    notify: async () => {},
-  })
+    resolvePolicy: () => restrictedPolicy,  })
   runtime.rememberTurn("session-1", "message-1", restrictedPolicy)
   const input = {
     sessionID: "session-1",
@@ -369,9 +407,7 @@ test("turn tracking keeps only the active message for a session", async () => {
     sessionClient: store.client,
     v2SessionClient: { permission: {} },
     loadPolicy: async () => ({}),
-    resolvePolicy: () => restrictedPolicy,
-    notify: async () => {},
-  })
+    resolvePolicy: () => restrictedPolicy,  })
   const loosePolicy = {
     ...restrictedPolicy,
     limits: { ...restrictedPolicy.limits, max_steps: 3 },
@@ -403,9 +439,7 @@ test("turn tracking evicts inactive sessions at its fixed capacity", async () =>
     sessionClient: store.client,
     v2SessionClient: { permission: {} },
     loadPolicy: async () => ({}),
-    resolvePolicy: () => restrictedPolicy,
-    notify: async () => {},
-  })
+    resolvePolicy: () => restrictedPolicy,  })
   const fullPolicy = {
     profile: "full",
     source: "defaults",
