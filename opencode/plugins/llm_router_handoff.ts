@@ -1,4 +1,5 @@
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client"
+import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -19,12 +20,23 @@ import {
 } from "../lib/execution_policy.mjs"
 import { createOpenCodeV2ClientFromLegacyTransport } from "../lib/opencode_transport.mjs"
 import { assertClassifierRequestSize } from "../lib/route_contract.mjs"
+import {
+  parseRouteManifest,
+  parseRouteManifestOverride,
+} from "../lib/route_manifest.mjs"
 import { createRouterControlRuntime } from "../lib/router_control.mjs"
+import { createRouterAnnouncer } from "../lib/router_feedback.mjs"
+import { UNSUPPORTED_MEDIA_TYPE_ERROR_CODE } from "../lib/routing_policy.mjs"
 import { updateSessionMetadata } from "../lib/session_metadata.mjs"
+import {
+  showStartupNotice,
+  STARTUP_NOTICE_MESSAGE,
+} from "../lib/startup_notice.mjs"
 import { createOpenCodeUninstaller } from "../lib/uninstall.mjs"
 
 const ROUTER_PATH = __LLM_ROUTER_PATH_LITERAL__
 const ROUTER_TIMEOUT_MS = 120_000
+const MANIFEST_TIMEOUT_MS = 10_000
 const CHECKPOINT_TIMEOUT_MS = 30_000
 const CONFIG_DIR = fileURLToPath(new URL("..", import.meta.url))
 const POLICY_DEFAULTS_PATH = fileURLToPath(
@@ -43,6 +55,49 @@ function responseData(response) {
   return response
 }
 
+async function applyProjectRouteOverride(manifest, directory) {
+  const overridePath = join(directory, ".opencode", "llm-router.routes.json")
+  let raw
+  try {
+    raw = await readFile(overridePath, "utf8")
+  } catch (error) {
+    if (error?.code === "ENOENT") return manifest
+    throw error
+  }
+  return parseRouteManifestOverride(raw, manifest, overridePath)
+}
+
+async function loadRouteManifest(directory) {
+  const child = Bun.spawn([ROUTER_PATH, "--manifest", "--json"], {
+    cwd: directory,
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  let timedOut = false
+  const timeout = setTimeout(() => {
+    timedOut = true
+    child.kill()
+  }, MANIFEST_TIMEOUT_MS)
+
+  let stdout
+  let stderr
+  let exitCode
+  try {
+    ;[stdout, stderr, exitCode] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ])
+  } finally {
+    clearTimeout(timeout)
+  }
+  if (timedOut) throw new Error(`llm-router manifest timed out after ${MANIFEST_TIMEOUT_MS}ms`)
+  if (exitCode !== 0) {
+    throw new Error(`llm-router manifest failed with exit ${exitCode}: ${stderr.trim() || stdout.trim()}`)
+  }
+  return parseRouteManifest(stdout)
+}
+
 export default async function llmRouterHandoff({ client, directory }) {
   const v2Client = createOpenCodeV2ClientFromLegacyTransport({
     legacyClient: client,
@@ -50,8 +105,14 @@ export default async function llmRouterHandoff({ client, directory }) {
     directory,
   })
   const uninstaller = await createOpenCodeUninstaller({ configDir: CONFIG_DIR })
+  const manifest = await applyProjectRouteOverride(
+    await loadRouteManifest(directory),
+    directory,
+  )
 
-  async function showRouterToast({ mode, profile, target, control = false }) {
+  const announcer = createRouterAnnouncer()
+
+  async function showRouterToast({ mode, profile, target }) {
     const destination = target
       ? `${target.providerID}/${target.modelID}`
       : "configuration updated"
@@ -60,7 +121,22 @@ export default async function llmRouterHandoff({ client, directory }) {
         title: "llm-router",
         message: `${mode} -> ${destination} · ${profile}`,
         variant: "info",
-        duration: control ? 2500 : 3500,
+        // A slash command always confirms itself. Routing repeats the same
+        // state on most messages, so its toast fires only on a change. Both
+        // stay short: the notice is a glance, not something to read through.
+        duration: 3000,
+      },
+      query: { directory },
+    })
+  }
+
+  async function showRouterAlert(message, variant) {
+    await client.tui.showToast({
+      body: {
+        title: "llm-router",
+        message,
+        variant,
+        duration: 6000,
       },
       query: { directory },
     })
@@ -79,6 +155,15 @@ export default async function llmRouterHandoff({ client, directory }) {
     uninstall: (argumentsText) => uninstaller.execute(argumentsText),
     notify: showRouterToast,
   })
+  showStartupNotice(() => client.tui.showToast({
+    body: {
+      title: "llm-router",
+      message: STARTUP_NOTICE_MESSAGE,
+      variant: "info",
+      duration: 5000,
+    },
+    query: { directory },
+  }))
 
   async function classify(request) {
     assertClassifierRequestSize(request)
@@ -116,7 +201,17 @@ export default async function llmRouterHandoff({ client, directory }) {
   const handoff = createDirectModelHandoff({
     classify,
     client: v2Client,
-    announce: async () => {},
+    manifest,
+    // The routing status toast already reports the destination, so only a
+    // forced fallback earns its own message.
+    announce: async ({ mediaFallback }) => {
+      if (!mediaFallback) return
+      await showRouterAlert(
+        `${mediaFallback.from} -> ${mediaFallback.to}: `
+        + `${mediaFallback.unsupported.join(", ")} not supported`,
+        "warning",
+      )
+    },
   })
 
   async function readLegacyContext(sessionID) {
@@ -251,7 +346,20 @@ export default async function llmRouterHandoff({ client, directory }) {
       const selectedAgent = input.agent ?? output.message?.agent
       if (!isManagedRouterAgent(selectedAgent)) return
       const routingAgent = await control.routingAgent(input.sessionID, selectedAgent)
-      await handoff["chat.message"]({ ...input, agent: routingAgent }, output)
+      try {
+        await handoff["chat.message"]({ ...input, agent: routingAgent }, output)
+      } catch (error) {
+        // No route reads these attachments, so the message stops before any
+        // worker sees it and the reason stays visible.
+        if (error?.code === UNSUPPORTED_MEDIA_TYPE_ERROR_CODE) {
+          try {
+            await showRouterAlert(error.message, "error")
+          } catch {
+            // A failed toast must not hide the routing error itself.
+          }
+        }
+        throw error
+      }
       if (!output.message?.model || !output.message?.agent) return
       if (
         output.message.model.providerID === "claude-agent"
@@ -271,15 +379,20 @@ export default async function llmRouterHandoff({ client, directory }) {
         modelID: output.message.model.modelID,
       })
       const described = await control.describe(input.sessionID, routingAgent)
+      const state = {
+        mode: described.mode,
+        profile: effective.policy.profile,
+        providerID: output.message.model.providerID,
+        modelID: output.message.model.modelID,
+      }
       try {
-        await showRouterToast({
-          mode: described.mode,
-          profile: effective.policy.profile,
-          target: {
-            providerID: output.message.model.providerID,
-            modelID: output.message.model.modelID,
-          },
-        })
+        if (announcer.changed(input.sessionID, state)) {
+          await showRouterToast({
+            mode: state.mode,
+            profile: state.profile,
+            target: { providerID: state.providerID, modelID: state.modelID },
+          })
+        }
       } catch {
         // Visual feedback must never block the selected worker.
       }

@@ -156,11 +156,13 @@ capture_claude_help_in_tty() {
   script_path=$(command -v script || true)
   [[ -n "$script_path" ]] || return 1
 
+  # script(1) reads the terminal attributes of its own stdin. An installer
+  # started from a pipe or socket makes that call fail, so stdin is detached.
   if "$script_path" --version 2>/dev/null | grep -qi 'util-linux'; then
     printf -v command '%q --help' "$CLAUDE_PATH"
-    "$script_path" -q -e -c "$command" /dev/null 2>&1
+    "$script_path" -q -e -c "$command" /dev/null </dev/null 2>&1
   else
-    "$script_path" -q /dev/null "$CLAUDE_PATH" --help 2>&1
+    "$script_path" -q /dev/null "$CLAUDE_PATH" --help </dev/null 2>&1
   fi
 }
 
@@ -179,6 +181,21 @@ for required_flag in "${CLAUDE_REQUIRED_FLAGS[@]}"; do
   fi
 done
 
+# OpenCode starts from a desktop app that does not inherit the shell exports, so
+# the Claude profile is resolved here and pinned in the configuration. Without
+# it, Claude Code reads a profile with no session and reports the login as
+# expired on every handoff.
+CLAUDE_CONFIG_DIR_VALUE=${CLAUDE_CONFIG_DIR:-${HOME:?HOME is required}/.claude}
+case "$CLAUDE_CONFIG_DIR_VALUE" in
+  /*) ;;
+  *) fail "CLAUDE_CONFIG_DIR must be an absolute path: $CLAUDE_CONFIG_DIR_VALUE" ;;
+esac
+CLAUDE_AUTH_STATUS=$(CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR_VALUE" "$CLAUDE_PATH" auth status 2>/dev/null || true)
+if ! grep -q '"loggedIn"[[:space:]]*:[[:space:]]*true' <<< "$CLAUDE_AUTH_STATUS"; then
+  printf 'warning: Claude Code is not signed in for %s. Run: CLAUDE_CONFIG_DIR=%s claude auth login\n' \
+    "$CLAUDE_CONFIG_DIR_VALUE" "$CLAUDE_CONFIG_DIR_VALUE" >&2
+fi
+
 preserve_runtime_files() {
   if [[ -n "$PENDING_TARGET" && -e "$PENDING_TARGET" ]]; then
     mv "$PENDING_TARGET" \
@@ -193,6 +210,27 @@ trap preserve_runtime_files EXIT
 
 RENDER_DIR=$(mktemp -d "${TMPDIR:-/tmp}/llm-router-opencode.XXXXXX")
 mkdir -p "$RENDER_DIR/tools" "$RENDER_DIR/lib" "$RENDER_DIR/plugins" "$RENDER_DIR/providers"
+"$ROUTER_PATH" --manifest --json | tee "$RENDER_DIR/route-manifest.json" >/dev/null \
+  || fail "cannot load the validated route manifest"
+if ! "$NODE_PATH" --input-type=module - \
+  "$SCRIPT_DIR/lib/route_manifest.mjs" \
+  "$RENDER_DIR/route-manifest.json" <<'NODE'
+import { readFileSync } from "node:fs"
+import { pathToFileURL } from "node:url"
+
+const manifestModule = await import(pathToFileURL(process.argv[2]))
+const raw = readFileSync(process.argv[3], "utf8")
+const value = JSON.parse(raw)
+if (value.schema_version !== manifestModule.ROUTE_MANIFEST_SCHEMA_VERSION) {
+  throw new Error(
+    `route manifest must use schema_version ${manifestModule.ROUTE_MANIFEST_SCHEMA_VERSION}`,
+  )
+}
+manifestModule.parseRouteManifest(raw)
+NODE
+then
+  fail "route manifest output is invalid"
+fi
 cp "$SCRIPT_DIR/package.json" "$RENDER_DIR/package.required.json"
 cp "$SCRIPT_DIR/lib/claude_agent.mjs" "$RENDER_DIR/lib/claude_agent.mjs"
 cp "$SCRIPT_DIR/lib/claude_context.mjs" "$RENDER_DIR/lib/claude_context.mjs"
@@ -205,9 +243,12 @@ cp "$SCRIPT_DIR/lib/uninstall.mjs" "$RENDER_DIR/lib/uninstall.mjs"
 cp "$SCRIPT_DIR/lib/opencode_transport.mjs" "$RENDER_DIR/lib/opencode_transport.mjs"
 cp "$SCRIPT_DIR/lib/repo_query.mjs" "$RENDER_DIR/lib/repo_query.mjs"
 cp "$SCRIPT_DIR/lib/router_control.mjs" "$RENDER_DIR/lib/router_control.mjs"
+cp "$SCRIPT_DIR/lib/router_feedback.mjs" "$RENDER_DIR/lib/router_feedback.mjs"
 cp "$SCRIPT_DIR/lib/route_contract.mjs" "$RENDER_DIR/lib/route_contract.mjs"
+cp "$SCRIPT_DIR/lib/route_manifest.mjs" "$RENDER_DIR/lib/route_manifest.mjs"
 cp "$SCRIPT_DIR/lib/routing_policy.mjs" "$RENDER_DIR/lib/routing_policy.mjs"
 cp "$SCRIPT_DIR/lib/session_metadata.mjs" "$RENDER_DIR/lib/session_metadata.mjs"
+cp "$SCRIPT_DIR/lib/startup_notice.mjs" "$RENDER_DIR/lib/startup_notice.mjs"
 cp "$SCRIPT_DIR/tools/repo_query.ts" "$RENDER_DIR/tools/repo_query.ts"
 cp "$SCRIPT_DIR/plugins/llm_router_handoff.ts" "$RENDER_DIR/plugins/llm_router_handoff.ts"
 cp "$SCRIPT_DIR/providers/claude_agent_provider.mjs" "$RENDER_DIR/providers/claude_agent_provider.mjs"
@@ -237,10 +278,60 @@ ROUTER_PATH_VALUE="$ROUTER_PATH" "$NODE_PATH" -e '
 "$JQ_PATH" \
   --arg provider_url "$PROVIDER_URL" \
   --arg control_provider_url "$CONTROL_PROVIDER_URL" \
-  --arg claude_path "$CLAUDE_PATH" '
-  .provider["claude-agent"].npm = $provider_url
+  --arg claude_path "$CLAUDE_PATH" \
+  --arg claude_config_dir "$CLAUDE_CONFIG_DIR_VALUE" \
+  --slurpfile manifest "$RENDER_DIR/route-manifest.json" '
+  .agent as $agent_templates
+  | .agent = (
+      .agent
+      | with_entries(select(.key | startswith("router")))
+    )
+  | .provider["claude-agent"].npm = $provider_url
   | .provider["claude-agent"].options.claudePath = $claude_path
+  | .provider["claude-agent"].options.claudeConfigDir = $claude_config_dir
   | .provider["router-control"].npm = $control_provider_url
+  | reduce $manifest[0].routes[] as $route (.;
+      ($route.target.providerID) as $provider_id
+      | ($route.target.modelID) as $model_id
+      | ($route.display_name // $route.id) as $display_name
+      | .agent[$route.target.agent] = (
+          ($agent_templates[$route.target.agent] // {
+            description: "\($display_name) worker managed by llm-router.",
+            mode: "subagent",
+            steps: 32,
+            prompt: "Handle the user request directly. Inspect relevant sources, keep changes scoped, validate the result, and do not route again."
+          })
+          + {model: "\($provider_id)/\($model_id)"}
+        )
+      | if (.provider[$provider_id].models? | type) == "object" then
+          .provider[$provider_id].models[$model_id] = (
+            (.provider[$provider_id].models[$model_id] // {name: $display_name})
+            + {
+                attachment: (($route.acceptedMediaTypes // []) | length > 0),
+                modalities: {
+                  input: (
+                    ["text"] + [
+                      ($route.acceptedMediaTypes // [])[]
+                      | if startswith("image/") then "image"
+                        elif . == "application/pdf" then "pdf"
+                        elif startswith("audio/") then "audio"
+                        elif startswith("video/") then "video"
+                        else empty
+                        end
+                    ] | unique
+                  ),
+                  output: ["text"]
+                }
+              }
+          )
+        elif (.provider[$provider_id].whitelist? | type) == "array" then
+          .provider[$provider_id].whitelist |= (
+            if index($model_id) == null then . + [$model_id] else . end
+          )
+        else
+          .
+        end
+    )
 ' "$SCRIPT_DIR/opencode.jsonc" | tee "$RENDER_DIR/opencode.required.json" >/dev/null
 
 "$JQ_PATH" empty "$RENDER_DIR/opencode.required.json" >/dev/null 2>&1 \
@@ -250,10 +341,18 @@ if [[ -e "$CONFIG_DIR/opencode.jsonc" ]]; then
     || fail "refusing to replace symlink: $CONFIG_DIR/opencode.jsonc"
   [[ -f "$CONFIG_DIR/opencode.jsonc" ]] \
     || fail "refusing to replace non-file: $CONFIG_DIR/opencode.jsonc"
-  "$NODE_PATH" "$CONFIG_MERGER" \
-    --current "$CONFIG_DIR/opencode.jsonc" \
-    --required "$RENDER_DIR/opencode.required.json" \
-    --output "$RENDER_DIR/opencode.jsonc" \
+  CONFIG_MERGER_ARGS=(
+    --current "$CONFIG_DIR/opencode.jsonc"
+    --required "$RENDER_DIR/opencode.required.json"
+    --output "$RENDER_DIR/opencode.jsonc"
+  )
+  if [[ -e "$CONFIG_DIR/llm-router.install-state.json" ]]; then
+    [[ -f "$CONFIG_DIR/llm-router.install-state.json" \
+      && ! -L "$CONFIG_DIR/llm-router.install-state.json" ]] \
+      || fail "refusing to read invalid installation state: $CONFIG_DIR/llm-router.install-state.json"
+    CONFIG_MERGER_ARGS+=(--state "$CONFIG_DIR/llm-router.install-state.json")
+  fi
+  "$NODE_PATH" "$CONFIG_MERGER" "${CONFIG_MERGER_ARGS[@]}" \
     || fail "cannot merge the existing OpenCode configuration"
 else
   cp "$RENDER_DIR/opencode.required.json" "$RENDER_DIR/opencode.jsonc"
@@ -464,9 +563,12 @@ SOURCES=(
   "$RENDER_DIR/lib/opencode_transport.mjs"
   "$RENDER_DIR/lib/repo_query.mjs"
   "$RENDER_DIR/lib/route_contract.mjs"
+  "$RENDER_DIR/lib/route_manifest.mjs"
   "$RENDER_DIR/lib/router_control.mjs"
+  "$RENDER_DIR/lib/router_feedback.mjs"
   "$RENDER_DIR/lib/routing_policy.mjs"
   "$RENDER_DIR/lib/session_metadata.mjs"
+  "$RENDER_DIR/lib/startup_notice.mjs"
   "$RENDER_DIR/tools/repo_query.ts"
   "$RENDER_DIR/plugins/llm_router_handoff.ts"
   "$RENDER_DIR/providers/claude_agent_provider.mjs"
@@ -475,30 +577,16 @@ SOURCES=(
   "$RENDER_DIR/llm-router.policy.schema.json"
   "$RENDER_DIR/opencode.jsonc"
 )
-TARGETS=(
-  "$CONFIG_DIR/package.json"
-  "$CONFIG_DIR/lib/adaptive_routing.mjs"
-  "$CONFIG_DIR/lib/claude_agent.mjs"
-  "$CONFIG_DIR/lib/claude_context.mjs"
-  "$CONFIG_DIR/lib/claude_checkpoint.mjs"
-  "$CONFIG_DIR/lib/direct_handoff.mjs"
-  "$CONFIG_DIR/lib/execution_policy.mjs"
-  "$CONFIG_DIR/lib/install_state.mjs"
-  "$CONFIG_DIR/lib/uninstall.mjs"
-  "$CONFIG_DIR/lib/opencode_transport.mjs"
-  "$CONFIG_DIR/lib/repo_query.mjs"
-  "$CONFIG_DIR/lib/route_contract.mjs"
-  "$CONFIG_DIR/lib/router_control.mjs"
-  "$CONFIG_DIR/lib/routing_policy.mjs"
-  "$CONFIG_DIR/lib/session_metadata.mjs"
-  "$CONFIG_DIR/tools/repo_query.ts"
-  "$CONFIG_DIR/plugins/llm_router_handoff.ts"
-  "$CONFIG_DIR/providers/claude_agent_provider.mjs"
-  "$CONFIG_DIR/providers/router_control_provider.mjs"
-  "$CONFIG_DIR/llm-router.policy.defaults.json"
-  "$CONFIG_DIR/llm-router.policy.schema.json"
-  "$CONFIG_DIR/opencode.jsonc"
-)
+# Every managed file keeps its path inside the configuration directory, so the
+# targets are derived instead of listed. A second list would pair a source with
+# the wrong target whenever one of them gained an entry.
+TARGETS=()
+for source in "${SOURCES[@]}"; do
+  case "$source" in
+    "$RENDER_DIR"/*) TARGETS+=("$CONFIG_DIR/${source#"$RENDER_DIR"/}") ;;
+    *) fail "managed source outside the render directory: $source" ;;
+  esac
+done
 RETIRED_TARGETS=(
   "$CONFIG_DIR/lib/prompt_guard.mjs"
   "$CONFIG_DIR/lib/stage_tools.mjs"

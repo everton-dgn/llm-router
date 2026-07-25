@@ -7,6 +7,7 @@ REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 INSTALLER="$REPO_ROOT/opencode/install.sh"
 POLICY="$REPO_ROOT/opencode/lib/routing_policy.mjs"
 CONTRACT="$REPO_ROOT/opencode/lib/route_contract.mjs"
+ROUTE_MANIFEST="$REPO_ROOT/opencode/lib/route_manifest.mjs"
 CHECKPOINT="$REPO_ROOT/opencode/lib/claude_checkpoint.mjs"
 SESSION_METADATA="$REPO_ROOT/opencode/lib/session_metadata.mjs"
 ADAPTIVE_ROUTING="$REPO_ROOT/opencode/lib/adaptive_routing.mjs"
@@ -76,8 +77,27 @@ write_compatible_claude() {
     '    "  --system-prompt <prompt>"' \
     '  exit 0' \
     'fi' \
+    'if [ "${1:-}" = "auth" ] && [ "${2:-}" = "status" ]; then' \
+    '  printf "%s\n" "{\"loggedIn\": true, \"authMethod\": \"claude.ai\"}"' \
+    '  exit 0' \
+    'fi' \
     'exit 0' | tee "$target" >/dev/null
   chmod +x "$target"
+}
+
+write_signed_out_claude() {
+  local target=$1
+  write_compatible_claude "$target"
+  printf '%s\n' \
+    '#!/bin/sh' \
+    'if [ "${1:-}" = "auth" ] && [ "${2:-}" = "status" ]; then' \
+    '  printf "%s\n" "{\"loggedIn\": false, \"authMethod\": \"none\"}"' \
+    '  exit 1' \
+    'fi' \
+    "exec \"$target.help\" \"\$@\"" | tee "$target.signed-out" >/dev/null
+  cp "$target" "$target.help"
+  mv "$target.signed-out" "$target"
+  chmod +x "$target" "$target.help"
 }
 
 write_tty_only_claude() {
@@ -106,6 +126,10 @@ write_tty_only_claude() {
     '  else' \
     '    printf "%s\n" "Usage: claude [options]" "  --agents <json>"' \
     '  fi' \
+    '  exit 0' \
+    'fi' \
+    'if [ "${1:-}" = "auth" ] && [ "${2:-}" = "status" ]; then' \
+    '  printf "%s\n" "{\"loggedIn\": true, \"authMethod\": \"claude.ai\"}"' \
     '  exit 0' \
     'fi' \
     'exit 0' | tee "$target" >/dev/null
@@ -142,7 +166,7 @@ jq -e '
   and .agent.glm.mode == "subagent"
   and .agent.claude.mode == "subagent"
   and .agent.codex.mode == "subagent"
-  and .agent.claude.model == "claude-agent/claude-opus-4-8"
+  and .agent.claude.model == "claude-agent/claude-opus-5"
   and (.agent.minimax | has("permission") | not)
   and (.agent.glm | has("permission") | not)
   and (.agent.claude | has("permission") | not)
@@ -150,7 +174,10 @@ jq -e '
   and .provider["claude-agent"].npm == "__CLAUDE_AGENT_PROVIDER_URL__"
   and .provider["claude-agent"].name == "Claude Agent SDK"
   and .provider["claude-agent"].options.claudePath == "__CLAUDE_CODE_PATH__"
-  and .provider["claude-agent"].models["claude-opus-4-8"].limit == {"context":200000,"output":32000}
+  and .provider["claude-agent"].options.effort == "xhigh"
+  and .provider["claude-agent"].models["claude-opus-5"].limit == {"context":1000000,"output":64000}
+  and .provider["claude-agent"].models["claude-opus-5"].attachment == true
+  and .provider["claude-agent"].models["claude-opus-5"].modalities == {"input":["image","pdf","text"],"output":["text"]}
   and .provider["router-control"].npm == "__ROUTER_CONTROL_PROVIDER_URL__"
   and (.command | keys | sort) == ["router-adaptive", "router-auto", "router-full", "router-native", "router-pinned", "router-restricted", "router-status", "router-uninstall"]
   and ([.command[] | .subtask] | all(. == false))
@@ -171,6 +198,7 @@ done
 
 assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" '"--classify", "--json", "--", request'
 assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'client.tui.showToast'
+assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'announcer.changed(input.sessionID, state)'
 assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'createDirectModelHandoff({'
 assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'createOpenCodeV2ClientFromLegacyTransport({'
 assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'client: v2Client,'
@@ -192,11 +220,16 @@ if grep -E 'persistDirectModelSelection|switchModel' \
 fi
 assert_contains "$REPO_ROOT/opencode/lib/opencode_transport.mjs" 'const transport = legacyClient?._client'
 assert_contains "$REPO_ROOT/opencode/lib/opencode_transport.mjs" 'fetch: config.fetch'
+assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'UNSUPPORTED_MEDIA_TYPE_ERROR_CODE'
+assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'not supported'
+assert_contains "$REPO_ROOT/opencode/lib/direct_handoff.mjs" 'attachmentMediaTypes: mediaTypes'
+assert_contains "$REPO_ROOT/opencode/lib/route_manifest.mjs" 'acceptedMediaTypes'
 assert_contains "$REPO_ROOT/opencode/lib/direct_handoff.mjs" 'output.message.agent = selection.target.agent'
 assert_contains "$REPO_ROOT/opencode/lib/direct_handoff.mjs" 'output.message.model = {'
 assert_contains "$REPO_ROOT/opencode/lib/direct_handoff.mjs" 'MANUAL_TARGET_METADATA_KEY'
 assert_contains "$REPO_ROOT/opencode/lib/direct_handoff.mjs" 'updateSessionMetadata({'
 assert_contains "$REPO_ROOT/opencode/lib/direct_handoff.mjs" '{ sessionID, agent: "router-manual" }'
+assert_contains "$REPO_ROOT/opencode/plugins/llm_router_handoff.ts" 'message: STARTUP_NOTICE_MESSAGE'
 assert_contains "$REPO_ROOT/opencode/lib/claude_context.mjs" 'message?.type === "user"'
 assert_contains "$REPO_ROOT/opencode/lib/claude_context.mjs" 'message?.type !== "assistant"'
 assert_contains "$REPO_ROOT/opencode/lib/claude_context.mjs" 'message.error !== undefined'
@@ -210,7 +243,7 @@ assert_contains "$CHECKPOINT" 'CLAUDE_CHECKPOINT_METADATA_KEY'
 assert_contains "$CHECKPOINT" 'createClaudeCheckpointLifecycle'
 assert_contains "$CHECKPOINT" 'response?.data?.data'
 assert_contains "$REPO_ROOT/opencode/providers/claude_agent_provider.mjs" 'specificationVersion: "v3"'
-assert_contains "$REPO_ROOT/opencode/providers/claude_agent_provider.mjs" 'CLAUDE_MAX_INPUT_BYTES = 2 * 1024 * 1024'
+assert_contains "$REPO_ROOT/opencode/providers/claude_agent_provider.mjs" 'CLAUDE_MAX_INPUT_BYTES = 32 * 1024 * 1024'
 assert_contains "$REPO_ROOT/opencode/providers/claude_agent_provider.mjs" 'maxOutputBytes'
 assert_contains "$REPO_ROOT/opencode/providers/claude_agent_provider.mjs" 'from "@anthropic-ai/claude-agent-sdk"'
 assert_contains "$REPO_ROOT/opencode/lib/claude_agent.mjs" 'pathToClaudeCodeExecutable: claudePath'
@@ -225,15 +258,22 @@ jq -e '.dependencies == {"@anthropic-ai/claude-agent-sdk":"0.3.218","@opencode-a
 jq -e '
   .verification.rules[]
   | select(.name == "llm-router-opencode-tests")
+  | . as $rule
   | .gates[]
   | select(.type == "command" and .argv[0:2] == ["node", "--test"])
-  | (.argv | index("tests/router-handoff.test.mjs")) != null
+  | ($rule.match.changed_any | index("tests/route-manifest.test.mjs")) != null
+    and ($rule.match.changed_any | index("tests/startup-notice.test.mjs")) != null
+    and (.argv | index("tests/router-handoff.test.mjs")) != null
     and (.argv | index("tests/claude-agent.test.mjs")) != null
     and (.argv | index("tests/claude-agent-provider.test.mjs")) != null
     and (.argv | index("tests/execution-policy.test.mjs")) != null
     and (.argv | index("tests/router-control.test.mjs")) != null
+    and (.argv | index("tests/route-manifest.test.mjs")) != null
     and (.argv | index("tests/repo-query.test.mjs")) != null
+    and (.argv | index("tests/startup-notice.test.mjs")) != null
     and (.argv | index("tests/uninstall.test.mjs")) != null
+    and (.untrusted_if_changed | index("tests/route-manifest.test.mjs")) != null
+    and (.untrusted_if_changed | index("tests/startup-notice.test.mjs")) != null
     and (.argv | index("tests/router-prompt-guard.test.mjs")) == null
 ' "$VERIFICATION_CONFIG" >/dev/null || fail "OpenCode verification gate does not run the current Node test suite"
 
@@ -266,11 +306,30 @@ if (received.fetch !== inProcessFetch) throw new Error("shim lost in-process fet
 if (received.directory !== "/workspace") throw new Error("shim lost directory")
 NODE
 
-"$NODE_PATH" --input-type=module - "$POLICY" "$CONTRACT" <<'NODE'
+"$NODE_PATH" --input-type=module - \
+  "$POLICY" \
+  "$CONTRACT" \
+  "$ROUTE_MANIFEST" \
+  "$REPO_ROOT/route" <<'NODE'
+import { execFileSync } from "node:child_process"
 import { pathToFileURL } from "node:url"
 
 const policy = await import(pathToFileURL(process.argv[2]))
 const contract = await import(pathToFileURL(process.argv[3]))
+const routeManifest = await import(pathToFileURL(process.argv[4]))
+const manifest = routeManifest.parseRouteManifest(execFileSync(
+  process.argv[5],
+  ["--manifest", "--json"],
+  { encoding: "utf8" },
+))
+if (manifest.schema_version !== 2) {
+  throw new Error("route --manifest did not generate schema version 2")
+}
+for (const routing of manifest.routing) {
+  if (typeof routing.route !== "string" || !routing.route) {
+    throw new Error(`manifest intent ${routing.intent} does not define a route`)
+  }
+}
 
 const routeCases = [
   ["minimax", "crie router-proof.txt com conteúdo exato", "glm"],
@@ -291,14 +350,14 @@ const claude = policy.routeTarget("claude")
 if (JSON.stringify(claude) !== JSON.stringify({
   agent: "claude",
   providerID: "claude-agent",
-  modelID: "claude-opus-4-8",
+  modelID: "claude-opus-5",
 })) throw new Error("Claude target is not the local Agent SDK provider")
 
 const parsed = contract.parseClassifierResult(JSON.stringify({
   schema_version: 1,
   intent: "literal_read_only_no_writing",
   route: "minimax",
-}))
+}), manifest)
 if (parsed.route !== "minimax") throw new Error("valid classifier result was not parsed")
 if (contract.assertClassifierRequestSize("small request") !== 13) {
   throw new Error("classifier request size was not measured in UTF-8 bytes")
@@ -313,13 +372,32 @@ if (!oversizedRequestRejected) throw new Error("oversized classifier request was
 
 for (const invalid of [
   "not-json",
-  JSON.stringify({ schema_version: 2, intent: "x", route: "glm" }),
-  JSON.stringify({ schema_version: 1, intent: "x", route: "other" }),
-  JSON.stringify({ schema_version: 1, intent: "x", route: "glm", extra: true }),
+  JSON.stringify({
+    schema_version: 2,
+    intent: "literal_read_only_no_writing",
+    route: "minimax",
+  }),
+  JSON.stringify({
+    schema_version: 1,
+    intent: "literal_read_only_no_writing",
+    route: "minimax",
+    difficulty: "simple",
+  }),
+  JSON.stringify({
+    schema_version: 1,
+    intent: "literal_read_only_no_writing",
+    route: "missing",
+  }),
+  JSON.stringify({
+    schema_version: 1,
+    intent: "literal_read_only_no_writing",
+    route: "minimax",
+    extra: true,
+  }),
 ]) {
   let rejected = false
   try {
-    contract.parseClassifierResult(invalid)
+    contract.parseClassifierResult(invalid, manifest)
   } catch {
     rejected = true
   }
@@ -344,6 +422,30 @@ bash "$INSTALLER" \
   --router-path "$REPO_ROOT/route" \
   --claude-path "$TTY_ONLY_CLAUDE" >/dev/null \
   || fail "installer rejected Claude flags that are visible only in a TTY"
+# script(1) fails with "tcgetattr/ioctl" when its stdin is not a terminal, which
+# is what CI runners and agent shells hand to the installer.
+: > "$FIXTURE/empty-stdin"
+bash "$INSTALLER" \
+  --dry-run \
+  --config-dir "$FIXTURE/tty-help-detached-config" \
+  --backup-root "$FIXTURE/tty-help-detached-backups" \
+  --router-path "$REPO_ROOT/route" \
+  --claude-path "$TTY_ONLY_CLAUDE" >/dev/null <"$FIXTURE/empty-stdin" \
+  || fail "installer rejected TTY-only Claude flags when stdin is not a terminal"
+
+# A profile without a session makes Claude Code answer every handoff with an
+# expired-login error, so the installer says so instead of failing later.
+SIGNED_OUT_CLAUDE="$FIXTURE/signed-out-claude"
+write_signed_out_claude "$SIGNED_OUT_CLAUDE"
+SIGNED_OUT_WARNING=$(bash "$INSTALLER" \
+  --dry-run \
+  --config-dir "$FIXTURE/signed-out-config" \
+  --backup-root "$FIXTURE/signed-out-backups" \
+  --router-path "$REPO_ROOT/route" \
+  --claude-path "$SIGNED_OUT_CLAUDE" 2>&1 >/dev/null) \
+  || fail "installer failed instead of warning about a signed-out Claude profile"
+grep -F 'claude auth login' <<< "$SIGNED_OUT_WARNING" >/dev/null \
+  || fail "installer did not report the signed-out Claude profile"
 [[ ! -e "$FIXTURE/tty-help-config" ]] || fail "TTY help dry-run created target config"
 [[ ! -e "$FIXTURE/tty-help-backups" ]] || fail "TTY help dry-run created backups"
 
@@ -369,6 +471,29 @@ fi
   || fail "incompatible Claude CLI created the target config"
 [[ ! -e "$FIXTURE/incompatible-backups" ]] \
   || fail "incompatible Claude CLI created backups"
+
+UNSUPPORTED_MANIFEST="$FIXTURE/unsupported-manifest.json"
+"$REPO_ROOT/route" --manifest --json \
+  | jq '.schema_version = 3' \
+  | tee "$UNSUPPORTED_MANIFEST" >/dev/null
+UNSUPPORTED_MANIFEST_ROUTE="$FIXTURE/unsupported-manifest-route"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'cat "$(dirname "$0")/unsupported-manifest.json"' \
+  | tee "$UNSUPPORTED_MANIFEST_ROUTE" >/dev/null
+chmod +x "$UNSUPPORTED_MANIFEST_ROUTE"
+if UNSUPPORTED_MANIFEST_OUTPUT=$(bash "$INSTALLER" \
+  --dry-run \
+  --config-dir "$FIXTURE/unsupported-manifest-config" \
+  --backup-root "$FIXTURE/unsupported-manifest-backups" \
+  --router-path "$UNSUPPORTED_MANIFEST_ROUTE" \
+  --claude-path "$CLAUDE_PATH" 2>&1); then
+  fail "installer accepted a route executable with an unsupported manifest version"
+fi
+[[ "$UNSUPPORTED_MANIFEST_OUTPUT" == *"route manifest must use schema_version 2"* ]] \
+  || fail "unsupported manifest did not report the version guard"
+[[ ! -e "$FIXTURE/unsupported-manifest-config" ]] \
+  || fail "unsupported manifest created the target config"
 
 mkdir -p "$CONFIG_DIR/tools" "$CONFIG_DIR/plugins" "$CONFIG_DIR/lib" "$CONFIG_DIR/providers"
 printf '%s\n' '{"previous":true}' | tee "$CONFIG_DIR/opencode.jsonc" >/dev/null
@@ -423,6 +548,15 @@ FIRST_OUTPUT=$(bash "$INSTALLER" \
 
 assert_contains "$CONFIG_DIR/plugins/llm_router_handoff.ts" "const ROUTER_PATH = \"$REPO_ROOT/route\""
 assert_contains "$CONFIG_DIR/tools/delegate_task.ts" 'custom user tool'
+# Named comparisons only cover the files someone remembered to list. This one
+# covers every copied helper, so a new library that the installer forgets, or a
+# source paired with the wrong target, fails here.
+for source in "$REPO_ROOT"/opencode/lib/*.mjs "$REPO_ROOT"/opencode/providers/*.mjs; do
+  installed="$CONFIG_DIR/${source#"$REPO_ROOT"/opencode/}"
+  [[ -e "$installed" ]] || fail "installer did not copy $(basename "$source")"
+  cmp -s "$source" "$installed" || fail "installed file differs from its source: $(basename "$source")"
+done
+
 cmp -s "$REPO_ROOT/opencode/lib/direct_handoff.mjs" "$CONFIG_DIR/lib/direct_handoff.mjs" || fail "installed handoff helper differs"
 cmp -s "$REPO_ROOT/opencode/lib/adaptive_routing.mjs" "$CONFIG_DIR/lib/adaptive_routing.mjs" || fail "installed adaptive routing helper differs"
 cmp -s "$REPO_ROOT/opencode/lib/execution_policy.mjs" "$CONFIG_DIR/lib/execution_policy.mjs" || fail "installed execution policy helper differs"
@@ -432,24 +566,29 @@ cmp -s "$REPO_ROOT/opencode/lib/router_control.mjs" "$CONFIG_DIR/lib/router_cont
 cmp -s "$REPO_ROOT/opencode/lib/claude_context.mjs" "$CONFIG_DIR/lib/claude_context.mjs" || fail "installed Claude context helper differs"
 cmp -s "$REPO_ROOT/opencode/lib/claude_checkpoint.mjs" "$CONFIG_DIR/lib/claude_checkpoint.mjs" || fail "installed Claude checkpoint helper differs"
 cmp -s "$REPO_ROOT/opencode/lib/session_metadata.mjs" "$CONFIG_DIR/lib/session_metadata.mjs" || fail "installed session metadata helper differs"
+cmp -s "$REPO_ROOT/opencode/lib/startup_notice.mjs" "$CONFIG_DIR/lib/startup_notice.mjs" || fail "installed startup notice helper differs"
+cmp -s "$REPO_ROOT/opencode/lib/router_feedback.mjs" "$CONFIG_DIR/lib/router_feedback.mjs" || fail "installed router feedback helper differs"
 cmp -s "$REPO_ROOT/opencode/lib/opencode_transport.mjs" "$CONFIG_DIR/lib/opencode_transport.mjs" || fail "installed OpenCode transport helper differs"
+cmp -s "$REPO_ROOT/opencode/lib/route_manifest.mjs" "$CONFIG_DIR/lib/route_manifest.mjs" || fail "installed route manifest helper differs"
 cmp -s "$REPO_ROOT/opencode/lib/claude_agent.mjs" "$CONFIG_DIR/lib/claude_agent.mjs" || fail "installed Claude helper differs"
 cmp -s "$REPO_ROOT/opencode/providers/claude_agent_provider.mjs" "$CONFIG_DIR/providers/claude_agent_provider.mjs" || fail "installed Claude provider differs"
 cmp -s "$REPO_ROOT/opencode/providers/router_control_provider.mjs" "$CONFIG_DIR/providers/router_control_provider.mjs" || fail "installed control provider differs"
 cmp -s "$REPO_ROOT/opencode/llm-router.policy.defaults.json" "$CONFIG_DIR/llm-router.policy.defaults.json" || fail "installed policy defaults differ"
 cmp -s "$REPO_ROOT/opencode/llm-router.policy.schema.json" "$CONFIG_DIR/llm-router.policy.schema.json" || fail "installed policy schema differs"
 cmp -s "$REPO_ROOT/opencode/llm-router.policy.defaults.json" "$CONFIG_DIR/llm-router.policy.json" || fail "initial user policy differs from defaults"
-jq -e --arg provider "file://$CONFIG_DIR/providers/claude_agent_provider.mjs" --arg control "file://$CONFIG_DIR/providers/router_control_provider.mjs" --arg claude "$CLAUDE_PATH" '
+jq -e --arg provider "file://$CONFIG_DIR/providers/claude_agent_provider.mjs" --arg control "file://$CONFIG_DIR/providers/router_control_provider.mjs" --arg claude "$CLAUDE_PATH" --arg claude_config_dir "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" '
   .provider["claude-agent"].npm == $provider
   and .provider["router-control"].npm == $control
   and .provider["claude-agent"].options.claudePath == $claude
-  and .provider["claude-agent"].models["claude-opus-4-8"].limit == {"context":200000,"output":32000}
+  and .provider["claude-agent"].options.claudeConfigDir == $claude_config_dir
+  and .provider["claude-agent"].options.effort == "xhigh"
+  and .provider["claude-agent"].models["claude-opus-5"].limit == {"context":1000000,"output":64000}
   and .previous == true
   and .default_agent == "router"
   and .agent.router.mode == "primary"
   and .agent["router-auto"].mode == "subagent"
   and .agent["router-manual"].mode == "subagent"
-  and .agent.claude.model == "claude-agent/claude-opus-4-8"
+  and .agent.claude.model == "claude-agent/claude-opus-5"
   and (.command | keys | sort) == ["router-adaptive", "router-auto", "router-full", "router-native", "router-pinned", "router-restricted", "router-status", "router-uninstall"]
   and ([.command[] | .subtask] | all(. == false))
 ' "$CONFIG_DIR/opencode.jsonc" >/dev/null || fail "installed Claude provider config is invalid"
@@ -642,6 +781,7 @@ ATOMIC_AFTER=$(shasum -a 256 "$ATOMIC_CONFIG/opencode.jsonc" "$ATOMIC_CONFIG/pac
 RELATIVE_ROUTE="$FIXTURE/relative-route"
 RELATIVE_CLAUDE="$FIXTURE/relative-claude"
 cp "$REPO_ROOT/route" "$RELATIVE_ROUTE"
+cp "$REPO_ROOT/config.json" "$FIXTURE/config.json"
 cp "$CLAUDE_PATH" "$RELATIVE_CLAUDE"
 chmod +x "$RELATIVE_ROUTE"
 chmod +x "$RELATIVE_CLAUDE"
@@ -654,6 +794,137 @@ assert_contains "$FIXTURE/relative-config/plugins/llm_router_handoff.ts" "const 
 assert_contains "$FIXTURE/relative-config/opencode.jsonc" "file://$RELATIVE_ROOT/relative-config/providers/claude_agent_provider.mjs"
 assert_contains "$FIXTURE/relative-config/opencode.jsonc" "file://$RELATIVE_ROOT/relative-config/providers/router_control_provider.mjs"
 assert_contains "$FIXTURE/relative-config/opencode.jsonc" "$RELATIVE_ROOT/relative-claude"
+
+COMPAT_ROUTE_ROOT="$FIXTURE/compatible-manifest-router"
+mkdir -p "$COMPAT_ROUTE_ROOT"
+cp "$REPO_ROOT/route" "$COMPAT_ROUTE_ROOT/route"
+chmod +x "$COMPAT_ROUTE_ROOT/route"
+for COMPAT_SCHEMA in 1 2; do
+  jq --argjson schema "$COMPAT_SCHEMA" '
+    .schema_version = $schema
+  ' "$REPO_ROOT/config.json" | tee "$COMPAT_ROUTE_ROOT/config.json" >/dev/null
+  COMPAT_MANIFEST=$("$COMPAT_ROUTE_ROOT/route" --manifest --json)
+  jq -e '
+    .schema_version == 2
+    and (.routing | length > 0)
+    and all(.routing[]; .route | type == "string" and length > 0)
+  ' <<<"$COMPAT_MANIFEST" >/dev/null \
+    || fail "schema v$COMPAT_SCHEMA config did not normalize to a schema v2 manifest"
+  bash "$INSTALLER" \
+    --config-dir "$FIXTURE/schema-v$COMPAT_SCHEMA-config" \
+    --backup-root "$FIXTURE/schema-v$COMPAT_SCHEMA-backups" \
+    --router-path "$COMPAT_ROUTE_ROOT/route" \
+    --claude-path "$CLAUDE_PATH" >/dev/null
+  jq -e '
+    .agent.minimax.model == "minimax-coding-plan/MiniMax-M3"
+    and .agent.glm.model == "zai-coding-plan/glm-5.2"
+    and .agent.claude.model == "claude-agent/claude-opus-5"
+    and .agent.codex.model == "openai/gpt-5.6-sol"
+  ' "$FIXTURE/schema-v$COMPAT_SCHEMA-config/opencode.jsonc" >/dev/null \
+    || fail "schema v$COMPAT_SCHEMA compatibility did not generate the legacy agents"
+done
+
+CUSTOM_ROUTE_ROOT="$FIXTURE/custom-router"
+CUSTOM_CONFIG_DIR="$FIXTURE/custom-route-config"
+mkdir -p "$CUSTOM_ROUTE_ROOT"
+cp "$REPO_ROOT/route" "$CUSTOM_ROUTE_ROOT/route"
+chmod +x "$CUSTOM_ROUTE_ROOT/route"
+jq '
+  .routes += [{
+    id: "custom",
+    display_name: "Custom Worker",
+    order: 4,
+    target: {
+      agent: "custom-worker",
+      providerID: "openai",
+      modelID: "gpt-5.6-mini"
+    },
+    capabilities: {
+      canExecuteCommands: true,
+      canHandleNonLiteralText: true,
+      canMutateProject: true,
+      canReadRepository: true,
+      canUseAgentMentions: true,
+      canUseAttachments: true,
+      canUseExternalTools: true
+    },
+    acceptedMediaTypes: ["image/*", "text/plain"]
+  }, {
+    id: "custom-claude",
+    display_name: "Custom Claude",
+    order: 5,
+    target: {
+      agent: "custom-claude",
+      providerID: "claude-agent",
+      modelID: "claude-custom"
+    },
+    capabilities: {
+      canExecuteCommands: true,
+      canHandleNonLiteralText: true,
+      canMutateProject: true,
+      canReadRepository: true,
+      canUseAgentMentions: true,
+      canUseAttachments: true,
+      canUseExternalTools: true
+    },
+    acceptedMediaTypes: ["application/pdf", "image/png"]
+  }]
+  | .routing += [{
+      intent: "custom_work",
+      route: "custom",
+      help: "custom work",
+      description: "custom work"
+    }, {
+      intent: "custom_claude_work",
+      route: "custom-claude",
+      help: "custom Claude work",
+      description: "custom Claude work"
+    }]
+' "$REPO_ROOT/config.json" | tee "$CUSTOM_ROUTE_ROOT/config.json" >/dev/null
+bash "$INSTALLER" \
+  --config-dir "$CUSTOM_CONFIG_DIR" \
+  --backup-root "$FIXTURE/custom-route-backups" \
+  --router-path "$CUSTOM_ROUTE_ROOT/route" \
+  --claude-path "$CLAUDE_PATH" >/dev/null
+jq -e '
+  .agent["custom-worker"].model == "openai/gpt-5.6-mini"
+  and .agent["custom-worker"].mode == "subagent"
+  and .agent["custom-claude"].model == "claude-agent/claude-custom"
+  and .agent["custom-claude"].mode == "subagent"
+  and .provider["claude-agent"].models["claude-custom"].name == "Custom Claude"
+  and .provider["claude-agent"].models["claude-custom"].attachment == true
+  and .provider["claude-agent"].models["claude-custom"].modalities
+    == {"input":["image","pdf","text"],"output":["text"]}
+  and .provider["zai-coding-plan"].models["glm-5.2"].attachment == false
+  and .provider["zai-coding-plan"].models["glm-5.2"].modalities
+    == {"input":["text"],"output":["text"]}
+' "$CUSTOM_CONFIG_DIR/opencode.jsonc" >/dev/null \
+  || fail "manifest routes did not generate their OpenCode agents and models"
+
+jq '
+  .agent["custom-claude"].description = "user-customized worker"
+' "$CUSTOM_CONFIG_DIR/opencode.jsonc" \
+  | tee "$CUSTOM_CONFIG_DIR/opencode.updated.jsonc" >/dev/null
+mv "$CUSTOM_CONFIG_DIR/opencode.updated.jsonc" "$CUSTOM_CONFIG_DIR/opencode.jsonc"
+cp "$REPO_ROOT/config.json" "$CUSTOM_ROUTE_ROOT/config.json"
+bash "$INSTALLER" \
+  --config-dir "$CUSTOM_CONFIG_DIR" \
+  --backup-root "$FIXTURE/custom-route-backups" \
+  --router-path "$CUSTOM_ROUTE_ROOT/route" \
+  --claude-path "$CLAUDE_PATH" >/dev/null
+jq -e '
+  (.agent | has("custom-worker") | not)
+  and .agent["custom-claude"].description == "user-customized worker"
+' "$CUSTOM_CONFIG_DIR/opencode.jsonc" >/dev/null \
+  || fail "route removal did not clean unchanged agents and preserve user-modified agents"
+jq -e '
+  all(
+    .managedConfig[];
+    .path != ["agent", "custom-worker"]
+      and .path != ["agent", "custom-claude"]
+  )
+' "$CUSTOM_CONFIG_DIR/llm-router.install-state.json" >/dev/null \
+  || fail "route removal left retired agents in the installation state"
 
 CANONICAL_ROOT="$FIXTURE/canonical-root"
 ALIASED_ROOT="$FIXTURE/aliased-root"
@@ -682,6 +953,7 @@ SPECIAL_ROUTE="$SPECIAL_ROOT/route 'quoted' \"double\" \\backslash"
 SPECIAL_CLAUDE="$SPECIAL_ROOT/claude 'quoted' \"double\" \\backslash"
 mkdir -p "$SPECIAL_ROOT"
 cp "$REPO_ROOT/route" "$SPECIAL_ROUTE"
+cp "$REPO_ROOT/config.json" "$SPECIAL_ROOT/config.json"
 chmod +x "$SPECIAL_ROUTE"
 write_compatible_claude "$SPECIAL_CLAUDE"
 
