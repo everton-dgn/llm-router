@@ -33,10 +33,110 @@ async function collectMarkdownFiles(directory) {
   return files
 }
 
+const fencePattern = /^((?:[ \t]*>)*)[ \t]{0,3}(`{3,}|~{3,})(.*)$/
+const blockquotePrefixPattern = /^(?:[ \t]*>)*/
+
+function blockquoteDepth(line) {
+  return (blockquotePrefixPattern.exec(line)[0].match(/>/g) ?? []).length
+}
+
+function maskInlineCode(text) {
+  let masked = ""
+  let cursor = 0
+
+  while (cursor < text.length) {
+    const opening = text.indexOf("`", cursor)
+    if (opening === -1) {
+      masked += text.slice(cursor)
+      break
+    }
+    masked += text.slice(cursor, opening)
+
+    let runLength = 1
+    while (text[opening + runLength] === "`") {
+      runLength += 1
+    }
+    const delimiter = "`".repeat(runLength)
+
+    let searchFrom = opening + runLength
+    let closing = -1
+    while (searchFrom < text.length) {
+      const candidate = text.indexOf(delimiter, searchFrom)
+      if (candidate === -1) {
+        break
+      }
+      let candidateLength = runLength
+      while (text[candidate + candidateLength] === "`") {
+        candidateLength += 1
+      }
+      if (candidateLength === runLength) {
+        closing = candidate
+        break
+      }
+      searchFrom = candidate + candidateLength
+    }
+
+    if (closing === -1) {
+      masked += text.slice(opening)
+      break
+    }
+    masked += text
+      .slice(opening, closing + runLength)
+      .replace(/[^\n]/g, " ")
+    cursor = closing + runLength
+  }
+
+  return masked
+}
+
+function stripCodeSpans(markdown) {
+  const kept = []
+  let fence = null
+
+  for (const line of markdown.split("\n")) {
+    const match = fencePattern.exec(line)
+
+    if (fence) {
+      // A fence opened inside a blockquote ends with that blockquote level.
+      if (fence.depth > 0 && blockquoteDepth(line) < fence.depth) {
+        fence = null
+      } else {
+        if (
+          match &&
+          match[2][0] === fence.delimiter[0] &&
+          match[2].length >= fence.delimiter.length &&
+          match[3].trim() === ""
+        ) {
+          fence = null
+        }
+        kept.push("")
+        continue
+      }
+    }
+
+    // A backtick fence cannot carry a backtick in its info string, so a line
+    // such as ```lang` opens no block and must keep its links visible.
+    if (match && !(match[2][0] === "`" && match[3].includes("`"))) {
+      fence = { delimiter: match[2], depth: blockquoteDepth(match[1]) }
+      kept.push("")
+      continue
+    }
+
+    kept.push(line)
+  }
+
+  // A code span never crosses a blank line, so mask one paragraph at a time.
+  return kept
+    .join("\n")
+    .split(/\n[ \t]*\n/)
+    .map(maskInlineCode)
+    .join("\n\n")
+}
+
 function localLinkTargets(markdown) {
   const targets = []
   const pattern = /!?\[[^\]]*]\(([^)]+)\)/g
-  for (const match of markdown.matchAll(pattern)) {
+  for (const match of stripCodeSpans(markdown).matchAll(pattern)) {
     const raw = match[1].trim().replace(/^<|>$/g, "")
     const target = raw.split(/\s+(?=["'])/, 1)[0]
     if (
@@ -90,6 +190,101 @@ function markdownAnchors(markdown) {
 
   return anchors
 }
+
+test("link detection ignores inline code and fenced blocks", () => {
+  assert.deepEqual(localLinkTargets("read [guide](docs/RELEASE.md) now"), [
+    "docs/RELEASE.md",
+  ])
+  assert.deepEqual(localLinkTargets("mention `[setup](docs/missing.md)` here"), [])
+  assert.deepEqual(
+    localLinkTargets("keep ``a `nested` [x](docs/missing.md)`` intact"),
+    [],
+  )
+  assert.deepEqual(
+    localLinkTargets(
+      ["```md", "[sample](docs/missing.md)", "```", "[real](docs/README.md)"].join(
+        "\n",
+      ),
+    ),
+    ["docs/README.md"],
+  )
+  assert.deepEqual(localLinkTargets("unmatched ` [x](docs/missing.md)"), [
+    "docs/missing.md",
+  ])
+  assert.deepEqual(
+    localLinkTargets("escaped \\[setup guide\\]\\(docs/missing.md\\) stays inert"),
+    [],
+  )
+})
+
+test("link detection survives fences in containers and spans across lines", () => {
+  // A backtick info string opens no fence, so later links stay visible.
+  assert.deepEqual(
+    localLinkTargets(["```lang`", "[real](docs/README.md)"].join("\n")),
+    ["docs/README.md"],
+  )
+  // A closing delimiter must stand alone, so the block stays open here.
+  assert.deepEqual(
+    localLinkTargets(
+      ["```", "``` js", "[sample](docs/missing.md)", "```"].join("\n"),
+    ),
+    [],
+  )
+  assert.deepEqual(
+    localLinkTargets(
+      ["- item:", "  ```md", "  [sample](docs/missing.md)", "  ```"].join("\n"),
+    ),
+    [],
+  )
+  assert.deepEqual(
+    localLinkTargets(
+      ["> ```md", "> [sample](docs/missing.md)", "> ```"].join("\n"),
+    ),
+    [],
+  )
+  assert.deepEqual(
+    localLinkTargets(["spanning `code", "[sample](docs/missing.md)` tail"].join("\n")),
+    [],
+  )
+  assert.deepEqual(
+    localLinkTargets(
+      ["spanning `code", "[sample](docs/missing.md)` tail", "[real](docs/README.md)"].join(
+        "\n",
+      ),
+    ),
+    ["docs/README.md"],
+  )
+})
+
+test("link detection keeps quotes and paragraphs apart", () => {
+  // A fence inside a blockquote ends with the blockquote itself.
+  assert.deepEqual(
+    localLinkTargets(
+      ["> ```", "> literal code", "", "[real](docs/README.md)"].join("\n"),
+    ),
+    ["docs/README.md"],
+  )
+  // Leaving a nested quote level ends the fence opened at that level.
+  assert.deepEqual(
+    localLinkTargets(
+      ["> > ```", "> > literal", "> [real](docs/README.md)"].join("\n"),
+    ),
+    ["docs/README.md"],
+  )
+  // A code span never pairs across a blank line.
+  assert.deepEqual(
+    localLinkTargets(
+      [
+        "unmatched ` in one paragraph",
+        "",
+        "[real](docs/README.md)",
+        "",
+        "closing ` in another paragraph",
+      ].join("\n"),
+    ),
+    ["docs/README.md"],
+  )
+})
 
 test("all local Markdown links and fragments resolve", async () => {
   const failures = []
