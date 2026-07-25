@@ -1,9 +1,6 @@
 name: Release notes sync
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       tag:
@@ -24,6 +21,7 @@ jobs:
   sync:
     runs-on: ubuntu-24.04
     permissions:
+      actions: read
       contents: write
 
     steps:
@@ -41,28 +39,25 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          EVENT_NAME: ${{ github.event_name }}
-          REF: ${{ github.ref }}
-          INPUT_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+          INPUT_TAG: ${{ inputs.tag }}
           INPUT_CREATE_IF_MISSING: ${{ inputs.create_if_missing }}
         shell: bash
         run: |
           set -euo pipefail
-          args=(--repo "$REPOSITORY")
-
-          if [ -n "${INPUT_TAG:-}" ]; then
-            args+=(--tag "$INPUT_TAG")
-          fi
 
           expected_commit="$(
             node scripts/verify-release-tag.mjs \
               --tag "${INPUT_TAG:?release tag is required}" \
               --print-commit
           )"
-          args+=(--expected-commit "$expected_commit")
 
-          if [[ "$EVENT_NAME" == "push" && "$REF" == refs/tags/* ]] ||
-             [[ "${INPUT_CREATE_IF_MISSING:-false}" == "true" ]]; then
+          args=(
+            --repo "$REPOSITORY"
+            --tag "$INPUT_TAG"
+            --expected-commit "$expected_commit"
+          )
+
+          if [[ "${INPUT_CREATE_IF_MISSING:-false}" == "true" ]]; then
             args+=(--create-if-missing)
           fi
 
