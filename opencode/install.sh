@@ -12,6 +12,7 @@ CLAUDE_PATH=""
 RENDER_DIR=""
 PENDING_TARGET=""
 BACKUP_DIR=""
+PROVIDER_LOOKUP_TIMEOUT=20
 
 show_help() {
   cat <<'HELP'
@@ -353,18 +354,35 @@ UNDECLARED_PROVIDERS=$("$JQ_PATH" -r \
 ' "$RENDER_DIR/opencode.required.json")
 if [[ -n "$UNDECLARED_PROVIDERS" ]]; then
   OPENCODE_PATH=$(command -v opencode || true)
+  # coreutils is not part of a stock macOS, so the lookup is bounded when the
+  # command is available and runs unbounded otherwise.
+  TIMEOUT_PATH=$(command -v timeout || command -v gtimeout || true)
   for provider_id in $UNDECLARED_PROVIDERS; do
     if [[ -z "$OPENCODE_PATH" ]]; then
       printf 'warning: route provider %s is not declared by the bundle and OpenCode is not on PATH to confirm it exists\n' \
         "$provider_id" >&2
       continue
     fi
-    # The output is captured first because pipefail would hide the match
-    # behind the exit status of a failing lookup.
-    provider_lookup=$("$OPENCODE_PATH" models "$provider_id" 2>&1 || true)
-    if grep -qi 'provider not found' <<< "$provider_lookup"; then
-      fail "route provider is unknown to OpenCode: $provider_id"
+    # A provider OpenCode resolves is answered with its model list and a zero
+    # status, so the status carries the verdict and no error wording is parsed.
+    provider_lookup_status=0
+    if [[ -n "$TIMEOUT_PATH" ]]; then
+      provider_lookup=$("$TIMEOUT_PATH" "$PROVIDER_LOOKUP_TIMEOUT" "$OPENCODE_PATH" models "$provider_id" 2>&1) \
+        || provider_lookup_status=$?
+    else
+      provider_lookup=$("$OPENCODE_PATH" models "$provider_id" 2>&1) || provider_lookup_status=$?
     fi
+    case "$provider_lookup_status" in
+      0) ;;
+      124)
+        fail "OpenCode did not answer within ${PROVIDER_LOOKUP_TIMEOUT}s about route provider: $provider_id"
+        ;;
+      *)
+        printf 'error: OpenCode does not resolve route provider: %s\n' "$provider_id" >&2
+        printf '%s\n' "$provider_lookup" >&2
+        exit 1
+        ;;
+    esac
   done
 fi
 if [[ -e "$CONFIG_DIR/opencode.jsonc" ]]; then
