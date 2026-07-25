@@ -176,17 +176,6 @@ test("forwards the configured reasoning effort to the Agent SDK", () => {
   })
 
   assert.equal(options.effort, "xhigh")
-  assert.equal(
-    buildClaudeAgentOptions({
-      abortController: new AbortController(),
-      cwd: process.cwd(),
-      claudePath: process.execPath,
-      model: "claude-opus-5",
-      claudeConfigDir: "/safe/home/.claude",
-      parentEnv: { HOME: "/safe/home", PATH: "/safe/bin" },
-    }).env.CLAUDE_CONFIG_DIR,
-    "/safe/home/.claude",
-  )
   assert.throws(
     () => buildClaudeAgentOptions({
       abortController: new AbortController(),
@@ -448,6 +437,17 @@ test("pins the configured Claude profile directory in the child environment", ()
     "/safe/home/.claude",
   )
   assert.equal("CLAUDE_CONFIG_DIR" in buildClaudeEnvironment(parentEnv), false)
+  assert.equal(
+    buildClaudeAgentOptions({
+      abortController: new AbortController(),
+      cwd: process.cwd(),
+      claudePath: process.execPath,
+      model: "claude-opus-5",
+      claudeConfigDir: "/safe/home/.claude",
+      parentEnv,
+    }).env.CLAUDE_CONFIG_DIR,
+    "/safe/home/.claude",
+  )
   assert.throws(
     () => buildClaudeEnvironment(parentEnv, { configDir: "relative/.claude" }),
     /config directory must be an absolute path/,

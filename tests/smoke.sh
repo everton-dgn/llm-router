@@ -90,15 +90,15 @@ jq -e '
   and [.routes[].id] == ["minimax", "glm", "claude", "codex"]
   and [.routes[].order] == [0, 1, 2, 3]
   and (.routing | all(.route | type == "string" and length > 0))
-  and (
-    .routing[]
-    | select(.intent == "translation_simple_brainstorm_docs_or_intermediate_work")
-    | .route == "glm"
+  and any(
+    .routing[];
+    .intent == "translation_simple_brainstorm_docs_or_intermediate_work"
+    and .route == "glm"
   )
-  and (
-    .routing[]
-    | select(.intent == "review_security_hard_engineering_or_technical_writing")
-    | .route == "codex"
+  and any(
+    .routing[];
+    .intent == "review_security_hard_engineering_or_technical_writing"
+    and .route == "codex"
   )
   and (.routes | all(
     (.target | keys | sort) == ["agent", "modelID", "providerID"]

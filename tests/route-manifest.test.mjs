@@ -19,6 +19,7 @@ import {
   attachmentMediaTypes,
   enforceMediaCompatibleRoute,
   enforceMinimumRoute,
+  NO_COMPATIBLE_ROUTE_ERROR_CODE,
   minimumCompatibleRoute,
   routeCapabilities,
   routeSupportsRequest,
@@ -382,7 +383,57 @@ test("minimum route promotion starts above the selected order and fails closed",
   })
   assert.throws(
     () => enforceMinimumRoute("only", "", { hasAttachments: true }, noCompatible),
-    /no compatible route available above: only/,
+    (error) => (
+      /no compatible route available above: only/.test(error.message)
+      && error.code === NO_COMPATIBLE_ROUTE_ERROR_CODE
+    ),
+  )
+})
+
+// The attachments alone are routable here, so naming this a media rejection
+// would blame the wrong cause. It still stops the message, and the plugin needs
+// a code to explain the stop instead of failing silently.
+test("a capability gap with routable attachments carries its own error code", () => {
+  const literalOnly = (id, order, mediaTypes) => ({
+    ...route(id, order),
+    capabilities: { ...route(id, order).capabilities, canHandleNonLiteralText: false },
+    acceptedMediaTypes: mediaTypes,
+  })
+
+  const selectedAcceptsMedia = normalizeRouteManifest({
+    schema_version: 2,
+    routes: [literalOnly("literal", 0, ["video/mp4"])],
+    routing: [{ intent: "default", route: "literal" }],
+  })
+  assert.throws(
+    () => enforceMinimumRoute(
+      "literal",
+      "brainstorm five ideas",
+      { hasAttachments: true, attachmentMediaTypes: ["video/mp4"] },
+      selectedAcceptsMedia,
+    ),
+    (error) => error.code === NO_COMPATIBLE_ROUTE_ERROR_CODE,
+  )
+
+  const anotherRouteAcceptsMedia = normalizeRouteManifest({
+    schema_version: 2,
+    routes: [
+      literalOnly("literal", 0, ["image/png"]),
+      literalOnly("video", 1, ["video/mp4"]),
+    ],
+    routing: [{ intent: "default", route: "literal" }],
+  })
+  assert.throws(
+    () => enforceMinimumRoute(
+      "literal",
+      "brainstorm five ideas",
+      { hasAttachments: true, attachmentMediaTypes: ["video/mp4"] },
+      anotherRouteAcceptsMedia,
+    ),
+    (error) => (
+      error.code === NO_COMPATIBLE_ROUTE_ERROR_CODE
+      && error.mediaTypes.includes("video/mp4")
+    ),
   )
 })
 

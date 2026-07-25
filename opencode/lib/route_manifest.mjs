@@ -365,6 +365,14 @@ function legacyManifest(value) {
     )
     return [id, route.display_name]
   }))
+  // A legacy config only renames the fixed routes below. An unknown id means
+  // the user configured a route that will never exist, so it fails instead of
+  // being dropped without a word.
+  for (const id of displayNames.keys()) {
+    if (!legacyRoutes.some((route) => route.id === id)) {
+      throw new Error(`legacy route config names an unknown route: ${id}`)
+    }
+  }
   const routes = legacyRoutes.map((route) => ({
     ...route,
     display_name: typeof displayNames.get(route.id) === "string"

@@ -1,4 +1,5 @@
 import { query as claudeQuery } from "@anthropic-ai/claude-agent-sdk"
+import path from "node:path"
 
 import {
   CLAUDE_TIMEOUT_MS,
@@ -215,7 +216,7 @@ function runtimeOptions(callOptions, providerName, defaults) {
   const claudeConfigDir = provided.claudeConfigDir ?? defaults.claudeConfigDir
   if (
     claudeConfigDir !== undefined
-    && (typeof claudeConfigDir !== "string" || !claudeConfigDir.startsWith("/"))
+    && (typeof claudeConfigDir !== "string" || !path.isAbsolute(claudeConfigDir))
   ) {
     throw new Error("Claude adapter claudeConfigDir must be an absolute path")
   }

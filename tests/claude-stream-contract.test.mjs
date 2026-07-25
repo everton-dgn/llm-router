@@ -19,6 +19,7 @@ import { serializeClaudePrompt } from "../opencode/providers/claude_agent_provid
 
 const CLAUDE_PATH = process.env.LLM_ROUTER_CLAUDE_PATH ?? "claude"
 const CLAUDE_TIMEOUT_MS = 120_000
+const CLAUDE_VERSION_TIMEOUT_MS = 10_000
 
 const CLAUDE_ARGS = [
   "--print",
@@ -95,11 +96,23 @@ async function claudeIsAvailable() {
   }
 }
 
+// The probe runs before every test here, so a wedged binary would hang the
+// whole suite. It is bounded like the runs it guards.
 function runClaudeVersion() {
   return new Promise((resolve, reject) => {
     const child = spawn(CLAUDE_PATH, ["--version"], { stdio: ["ignore", "ignore", "ignore"] })
-    child.on("error", reject)
-    child.on("close", (code) => resolve({ code }))
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL")
+      reject(new Error(`Claude Code did not report a version within ${CLAUDE_VERSION_TIMEOUT_MS}ms`))
+    }, CLAUDE_VERSION_TIMEOUT_MS)
+    child.on("error", (error) => {
+      clearTimeout(timeout)
+      reject(error)
+    })
+    child.on("close", (code) => {
+      clearTimeout(timeout)
+      resolve({ code })
+    })
   })
 }
 

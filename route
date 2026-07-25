@@ -260,7 +260,7 @@ build_manifest() {
     return 3
   fi
   local manifest_bytes
-  manifest_bytes=$(LC_ALL=C; printf '%s' "$manifest" | wc -c | tr -d ' ')
+  manifest_bytes=$(LC_ALL=C printf '%s' "$manifest" | wc -c | tr -d ' ')
   if (( manifest_bytes > MAX_MANIFEST_BYTES )); then
     printf 'error: route manifest exceeds %s bytes\n' "$MAX_MANIFEST_BYTES" >&2
     return 3
@@ -434,7 +434,7 @@ if [[ "$SUMMARIZE" == true ]]; then
   [[ "$MAX_REQUEST_BYTES" =~ ^[0-9]+$ && "$MAX_REQUEST_BYTES" -gt 0 ]] || checkpoint_error \
     "invalid_summary_config" \
     "checkpoint.max_request_bytes must be a positive integer"
-  CHECKPOINT_INPUT_BYTES=$(LC_ALL=C; printf '%s' "$CHECKPOINT_INPUT" | wc -c | tr -d ' ')
+  CHECKPOINT_INPUT_BYTES=$(LC_ALL=C printf '%s' "$CHECKPOINT_INPUT" | wc -c | tr -d ' ')
   (( CHECKPOINT_INPUT_BYTES <= MAX_REQUEST_BYTES )) || checkpoint_error \
     "summary_input_too_large" \
     "checkpoint input exceeds ${MAX_REQUEST_BYTES} bytes"
@@ -495,7 +495,7 @@ EOF
   [[ -n "$SUMMARY" ]] || checkpoint_error \
     "invalid_summary_response" \
     "local summarizer did not return a valid summary"
-  SUMMARY_BYTES=$(LC_ALL=C; printf '%s' "$SUMMARY" | wc -c | tr -d ' ')
+  SUMMARY_BYTES=$(LC_ALL=C printf '%s' "$SUMMARY" | wc -c | tr -d ' ')
   (( SUMMARY_BYTES <= MAX_SUMMARY_BYTES )) || checkpoint_error \
     "summary_too_large" \
     "local summary exceeds ${MAX_SUMMARY_BYTES} bytes"
@@ -504,7 +504,7 @@ EOF
 fi
 
 # Intents in Plano format (one line per preference: {name, description}).
-ROUTES=$(jq -c '.routing[] | {name:.intent, description}' <<<"$MANIFEST_JSON")
+ROUTES=$(jq -c '.routing[] | {name:.intent} + (if .description then {description} else {} end)' <<<"$MANIFEST_JSON")
 # Generation options and schema restricted to exactly one configured intent.
 OPTS=$(jq -c '.options // {temperature:0, num_predict:32}' "$CONFIG")
 SCHEMA=$(jq -c '{type:"object",properties:{route:{type:"array",minItems:1,maxItems:1,items:{type:"string",enum:[.routing[].intent]}}},required:["route"],additionalProperties:false}' <<<"$MANIFEST_JSON")

@@ -26,7 +26,10 @@ import {
 } from "../lib/route_manifest.mjs"
 import { createRouterControlRuntime } from "../lib/router_control.mjs"
 import { createRouterAnnouncer } from "../lib/router_feedback.mjs"
-import { UNSUPPORTED_MEDIA_TYPE_ERROR_CODE } from "../lib/routing_policy.mjs"
+import {
+  NO_COMPATIBLE_ROUTE_ERROR_CODE,
+  UNSUPPORTED_MEDIA_TYPE_ERROR_CODE,
+} from "../lib/routing_policy.mjs"
 import { updateSessionMetadata } from "../lib/session_metadata.mjs"
 import {
   showStartupNotice,
@@ -349,9 +352,13 @@ export default async function llmRouterHandoff({ client, directory }) {
       try {
         await handoff["chat.message"]({ ...input, agent: routingAgent }, output)
       } catch (error) {
-        // No route reads these attachments, so the message stops before any
-        // worker sees it and the reason stays visible.
-        if (error?.code === UNSUPPORTED_MEDIA_TYPE_ERROR_CODE) {
+        // The message stops before any worker sees it, either because no
+        // route reads the attachments or because none also supports the
+        // request, so the reason stays visible instead of failing silently.
+        if ([
+          UNSUPPORTED_MEDIA_TYPE_ERROR_CODE,
+          NO_COMPATIBLE_ROUTE_ERROR_CODE,
+        ].includes(error?.code)) {
           try {
             await showRouterAlert(error.message, "error")
           } catch {

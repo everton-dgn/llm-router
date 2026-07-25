@@ -446,6 +446,33 @@ SIGNED_OUT_WARNING=$(bash "$INSTALLER" \
   || fail "installer failed instead of warning about a signed-out Claude profile"
 grep -F 'claude auth login' <<< "$SIGNED_OUT_WARNING" >/dev/null \
   || fail "installer did not report the signed-out Claude profile"
+# A route pointing at a provider neither the bundle nor OpenCode knows would
+# install cleanly and only fail when the user reached that route.
+UNKNOWN_PROVIDER_ROUTER="$FIXTURE/unknown-provider-route"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'if [ "${1:-}" = "--manifest" ]; then' \
+  '  cat "$LLM_ROUTER_TEST_MANIFEST"' \
+  '  exit 0' \
+  'fi' \
+  'exit 0' | tee "$UNKNOWN_PROVIDER_ROUTER" >/dev/null
+chmod +x "$UNKNOWN_PROVIDER_ROUTER"
+"$REPO_ROOT/route" --manifest --json \
+  | jq '.routes[0].target.providerID = "provider-that-does-not-exist"' \
+  > "$FIXTURE/unknown-provider-manifest.json"
+if command -v opencode >/dev/null 2>&1; then
+  UNKNOWN_PROVIDER_ERROR=$(LLM_ROUTER_TEST_MANIFEST="$FIXTURE/unknown-provider-manifest.json" \
+    bash "$INSTALLER" \
+    --dry-run \
+    --config-dir "$FIXTURE/unknown-provider-config" \
+    --backup-root "$FIXTURE/unknown-provider-backups" \
+    --router-path "$UNKNOWN_PROVIDER_ROUTER" \
+    --claude-path "$CLAUDE_PATH" 2>&1 >/dev/null) \
+    && fail "installer accepted a route provider OpenCode does not know"
+  grep -F 'provider-that-does-not-exist' <<< "$UNKNOWN_PROVIDER_ERROR" >/dev/null \
+    || fail "installer did not name the unknown route provider"
+fi
+
 [[ ! -e "$FIXTURE/tty-help-config" ]] || fail "TTY help dry-run created target config"
 [[ ! -e "$FIXTURE/tty-help-backups" ]] || fail "TTY help dry-run created backups"
 
@@ -557,22 +584,6 @@ for source in "$REPO_ROOT"/opencode/lib/*.mjs "$REPO_ROOT"/opencode/providers/*.
   cmp -s "$source" "$installed" || fail "installed file differs from its source: $(basename "$source")"
 done
 
-cmp -s "$REPO_ROOT/opencode/lib/direct_handoff.mjs" "$CONFIG_DIR/lib/direct_handoff.mjs" || fail "installed handoff helper differs"
-cmp -s "$REPO_ROOT/opencode/lib/adaptive_routing.mjs" "$CONFIG_DIR/lib/adaptive_routing.mjs" || fail "installed adaptive routing helper differs"
-cmp -s "$REPO_ROOT/opencode/lib/execution_policy.mjs" "$CONFIG_DIR/lib/execution_policy.mjs" || fail "installed execution policy helper differs"
-cmp -s "$REPO_ROOT/opencode/lib/install_state.mjs" "$CONFIG_DIR/lib/install_state.mjs" || fail "installed state helper differs"
-cmp -s "$REPO_ROOT/opencode/lib/uninstall.mjs" "$CONFIG_DIR/lib/uninstall.mjs" || fail "installed uninstall helper differs"
-cmp -s "$REPO_ROOT/opencode/lib/router_control.mjs" "$CONFIG_DIR/lib/router_control.mjs" || fail "installed router control helper differs"
-cmp -s "$REPO_ROOT/opencode/lib/claude_context.mjs" "$CONFIG_DIR/lib/claude_context.mjs" || fail "installed Claude context helper differs"
-cmp -s "$REPO_ROOT/opencode/lib/claude_checkpoint.mjs" "$CONFIG_DIR/lib/claude_checkpoint.mjs" || fail "installed Claude checkpoint helper differs"
-cmp -s "$REPO_ROOT/opencode/lib/session_metadata.mjs" "$CONFIG_DIR/lib/session_metadata.mjs" || fail "installed session metadata helper differs"
-cmp -s "$REPO_ROOT/opencode/lib/startup_notice.mjs" "$CONFIG_DIR/lib/startup_notice.mjs" || fail "installed startup notice helper differs"
-cmp -s "$REPO_ROOT/opencode/lib/router_feedback.mjs" "$CONFIG_DIR/lib/router_feedback.mjs" || fail "installed router feedback helper differs"
-cmp -s "$REPO_ROOT/opencode/lib/opencode_transport.mjs" "$CONFIG_DIR/lib/opencode_transport.mjs" || fail "installed OpenCode transport helper differs"
-cmp -s "$REPO_ROOT/opencode/lib/route_manifest.mjs" "$CONFIG_DIR/lib/route_manifest.mjs" || fail "installed route manifest helper differs"
-cmp -s "$REPO_ROOT/opencode/lib/claude_agent.mjs" "$CONFIG_DIR/lib/claude_agent.mjs" || fail "installed Claude helper differs"
-cmp -s "$REPO_ROOT/opencode/providers/claude_agent_provider.mjs" "$CONFIG_DIR/providers/claude_agent_provider.mjs" || fail "installed Claude provider differs"
-cmp -s "$REPO_ROOT/opencode/providers/router_control_provider.mjs" "$CONFIG_DIR/providers/router_control_provider.mjs" || fail "installed control provider differs"
 cmp -s "$REPO_ROOT/opencode/llm-router.policy.defaults.json" "$CONFIG_DIR/llm-router.policy.defaults.json" || fail "installed policy defaults differ"
 cmp -s "$REPO_ROOT/opencode/llm-router.policy.schema.json" "$CONFIG_DIR/llm-router.policy.schema.json" || fail "installed policy schema differs"
 cmp -s "$REPO_ROOT/opencode/llm-router.policy.defaults.json" "$CONFIG_DIR/llm-router.policy.json" || fail "initial user policy differs from defaults"

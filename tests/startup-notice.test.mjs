@@ -26,10 +26,23 @@ test("startup notice does not wait for an unavailable TUI", async () => {
 })
 
 test("startup notice absorbs asynchronous TUI failures", async () => {
-  showStartupNotice(async () => {
-    throw new Error("TUI unavailable")
-  })
+  let called = false
+  const rejections = []
+  const trackRejection = (reason) => rejections.push(reason)
+  process.on("unhandledRejection", trackRejection)
 
-  await Promise.resolve()
-  await Promise.resolve()
+  try {
+    showStartupNotice(async () => {
+      called = true
+      throw new Error("TUI unavailable")
+    })
+
+    await Promise.resolve()
+    await Promise.resolve()
+  } finally {
+    process.off("unhandledRejection", trackRejection)
+  }
+
+  assert.equal(called, true)
+  assert.deepEqual(rejections, [])
 })

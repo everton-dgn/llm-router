@@ -329,6 +329,8 @@ ROUTER_PATH_VALUE="$ROUTER_PATH" "$NODE_PATH" -e '
             if index($model_id) == null then . + [$model_id] else . end
           )
         else
+          # A provider the bundle does not declare may still be one OpenCode
+          # resolves on its own, so the route is kept and reported below.
           .
         end
     )
@@ -336,6 +338,35 @@ ROUTER_PATH_VALUE="$ROUTER_PATH" "$NODE_PATH" -e '
 
 "$JQ_PATH" empty "$RENDER_DIR/opencode.required.json" >/dev/null 2>&1 \
   || fail "rendered required OpenCode configuration is invalid"
+
+# A route may target a provider the bundle does not declare, because OpenCode
+# resolves some on its own. Asking OpenCode separates that case from a typo in
+# the manifest, which would otherwise install cleanly and only fail when the
+# user reaches that route.
+UNDECLARED_PROVIDERS=$("$JQ_PATH" -r \
+  --slurpfile manifest "$RENDER_DIR/route-manifest.json" '
+  (.provider // {} | keys) as $declared
+  | [$manifest[0].routes[].target.providerID]
+  | unique
+  | map(select(. as $id | $declared | index($id) | not))
+  | join(" ")
+' "$RENDER_DIR/opencode.required.json")
+if [[ -n "$UNDECLARED_PROVIDERS" ]]; then
+  OPENCODE_PATH=$(command -v opencode || true)
+  for provider_id in $UNDECLARED_PROVIDERS; do
+    if [[ -z "$OPENCODE_PATH" ]]; then
+      printf 'warning: route provider %s is not declared by the bundle and OpenCode is not on PATH to confirm it exists\n' \
+        "$provider_id" >&2
+      continue
+    fi
+    # The output is captured first because pipefail would hide the match
+    # behind the exit status of a failing lookup.
+    provider_lookup=$("$OPENCODE_PATH" models "$provider_id" 2>&1 || true)
+    if grep -qi 'provider not found' <<< "$provider_lookup"; then
+      fail "route provider is unknown to OpenCode: $provider_id"
+    fi
+  done
+fi
 if [[ -e "$CONFIG_DIR/opencode.jsonc" ]]; then
   [[ ! -L "$CONFIG_DIR/opencode.jsonc" ]] \
     || fail "refusing to replace symlink: $CONFIG_DIR/opencode.jsonc"

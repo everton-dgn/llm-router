@@ -162,6 +162,7 @@ export function requiredRouteCapabilities(
 
 export const UNKNOWN_ATTACHMENT_MEDIA_TYPE = "application/octet-stream"
 export const UNSUPPORTED_MEDIA_TYPE_ERROR_CODE = "unsupported_media_type"
+export const NO_COMPATIBLE_ROUTE_ERROR_CODE = "no_compatible_route"
 
 // An attachment with no usable media type keeps a stable identity, so only a
 // route that declares that type explicitly can receive it.
@@ -193,6 +194,17 @@ export function unsupportedRouteMediaTypes(
 
 function routeAcceptsEveryMediaType(route, mediaTypes) {
   return mediaTypes.every((mediaType) => routeAcceptsMediaType(route, mediaType))
+}
+
+// A capability gap is not a media rejection: some route does accept every
+// attachment, so reusing the media code would name the wrong cause. It still
+// stops the message before any worker, so it carries a code of its own and the
+// plugin can explain the stop instead of failing silently.
+function noCompatibleRouteError(message, mediaTypes = []) {
+  const error = new Error(message)
+  error.code = NO_COMPATIBLE_ROUTE_ERROR_CODE
+  if (mediaTypes.length > 0) error.mediaTypes = mediaTypes
+  return error
 }
 
 function unsupportedMediaTypeError(manifest, mediaTypes) {
@@ -287,7 +299,7 @@ export function minimumCompatibleRoute(
   if (route) return route.id
   const mediaTypes = requestMediaTypes(options)
   if (mediaTypes.length > 0) throw unsupportedMediaTypeError(manifest, mediaTypes)
-  throw new Error("no compatible route available for request")
+  throw noCompatibleRouteError("no compatible route available for request")
 }
 
 export function enforceMinimumRoute(
@@ -318,8 +330,12 @@ export function enforceMinimumRoute(
     if (!manifest.routes.some((candidate) => routeAcceptsEveryMediaType(candidate, mediaTypes))) {
       throw unsupportedMediaTypeError(manifest, mediaTypes)
     }
+    throw noCompatibleRouteError(
+      `no route accepts ${mediaTypes.join(", ")} and also supports the request`,
+      mediaTypes,
+    )
   }
-  throw new Error(`no compatible route available above: ${route}`)
+  throw noCompatibleRouteError(`no compatible route available above: ${route}`)
 }
 
 export function routeTarget(route, manifest = LEGACY_ROUTE_MANIFEST) {

@@ -997,7 +997,7 @@ test("pinned reclassifies when its stored route has been removed from the manife
   })
   const hooks = createDirectModelHandoff({
     client: store.client,
-    classify: classifier("replacement", "test_intent", "simple"),
+    classify: classifier("replacement", "test_intent"),
     manifest,
   })
   const message = userMessage("novo pedido", "router")

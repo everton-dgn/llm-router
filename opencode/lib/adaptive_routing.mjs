@@ -207,13 +207,18 @@ export function transitionRoutingState({
     })
   }
 
-  if (!routeSupportsSelectedRequest(
-    current.currentRoute,
-    recommendedRoute,
-    request,
-    requirements,
-    manifest,
-  )) {
+  // Only a real switch resets the turn accounting, so the compatibility check
+  // runs after the same-route branch.
+  if (
+    current.currentRoute !== recommendedRoute
+    && !routeSupportsSelectedRequest(
+      current.currentRoute,
+      recommendedRoute,
+      request,
+      requirements,
+      manifest,
+    )
+  ) {
     return baseState({
       sessionID,
       mode,

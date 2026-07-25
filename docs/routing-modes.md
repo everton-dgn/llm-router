@@ -46,8 +46,10 @@ cheapest compatible route.
 An attachment with no usable media type is treated as
 `application/octet-stream`, so it only reaches a route that declares that type.
 When no route accepts every attachment, the message stops before any worker
-runs and the TUI shows the rejected media types. A forced fallback also shows
-one toast, for example:
+runs and the TUI shows the rejected media types. A request the attachments
+alone do not block also stops when no route both reads them and satisfies the
+request; the TUI reports that case too, without calling it a media rejection.
+A forced fallback also shows one toast, for example:
 
 ```text
 glm -> claude: image/png not supported
