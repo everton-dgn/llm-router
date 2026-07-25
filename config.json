@@ -1,4 +1,5 @@
 {
+  "schema_version": 2,
   "model": "hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M",
   "endpoint": "http://localhost:11434/api/chat",
   "options": {
@@ -45,20 +46,99 @@
   ],
   "routes": [
     {
-      "name": "claude",
-      "display_name": "Claude Opus 4.8 (dynamic effort)"
+      "id": "minimax",
+      "display_name": "MiniMax M3",
+      "order": 0,
+      "target": {
+        "agent": "minimax",
+        "providerID": "minimax-coding-plan",
+        "modelID": "MiniMax-M3"
+      },
+      "capabilities": {
+        "canExecuteCommands": false,
+        "canHandleNonLiteralText": false,
+        "canMutateProject": false,
+        "canReadRepository": true,
+        "canUseAgentMentions": false,
+        "canUseAttachments": true,
+        "canUseExternalTools": false
+      },
+      "acceptedMediaTypes": [
+        "image/*",
+        "text/plain",
+        "video/*"
+      ]
     },
     {
-      "name": "codex",
-      "display_name": "GPT-5.6 Sol (xhigh)"
+      "id": "glm",
+      "display_name": "GLM 5.2",
+      "order": 1,
+      "target": {
+        "agent": "glm",
+        "providerID": "zai-coding-plan",
+        "modelID": "glm-5.2"
+      },
+      "capabilities": {
+        "canExecuteCommands": true,
+        "canHandleNonLiteralText": true,
+        "canMutateProject": true,
+        "canReadRepository": true,
+        "canUseAgentMentions": true,
+        "canUseAttachments": false,
+        "canUseExternalTools": true
+      },
+      "acceptedMediaTypes": []
     },
     {
-      "name": "minimax",
-      "display_name": "MiniMax M3"
+      "id": "claude",
+      "display_name": "Claude Opus 5 (xhigh)",
+      "order": 2,
+      "target": {
+        "agent": "claude",
+        "providerID": "claude-agent",
+        "modelID": "claude-opus-5"
+      },
+      "capabilities": {
+        "canExecuteCommands": true,
+        "canHandleNonLiteralText": true,
+        "canMutateProject": true,
+        "canReadRepository": true,
+        "canUseAgentMentions": true,
+        "canUseAttachments": true,
+        "canUseExternalTools": true
+      },
+      "acceptedMediaTypes": [
+        "application/pdf",
+        "image/gif",
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "text/plain"
+      ]
     },
     {
-      "name": "glm",
-      "display_name": "GLM 5.2"
+      "id": "codex",
+      "display_name": "GPT-5.6 Sol (xhigh)",
+      "order": 3,
+      "target": {
+        "agent": "codex",
+        "providerID": "openai",
+        "modelID": "gpt-5.6-sol"
+      },
+      "capabilities": {
+        "canExecuteCommands": true,
+        "canHandleNonLiteralText": true,
+        "canMutateProject": true,
+        "canReadRepository": true,
+        "canUseAgentMentions": true,
+        "canUseAttachments": true,
+        "canUseExternalTools": true
+      },
+      "acceptedMediaTypes": [
+        "application/pdf",
+        "image/*",
+        "text/plain"
+      ]
     }
   ],
   "verification": {
@@ -79,14 +159,22 @@
             "config.json",
             "tests/smoke.sh"
           ],
-          "commands_all": ["bash", "uv"]
+          "commands_all": [
+            "bash",
+            "uv"
+          ]
         },
         "gates": [
           {
             "type": "command",
-            "argv": ["bash", "tests/smoke.sh"],
+            "argv": [
+              "bash",
+              "tests/smoke.sh"
+            ],
             "cwd": "{project_root}",
-            "untrusted_if_changed": ["tests/smoke.sh"],
+            "untrusted_if_changed": [
+              "tests/smoke.sh"
+            ],
             "timeout_seconds": 180
           },
           {
@@ -102,7 +190,9 @@
               "tests/test_stage_verifier.py"
             ],
             "cwd": "{project_root}",
-            "untrusted_if_changed": ["tests/test_stage_verifier.py"],
+            "untrusted_if_changed": [
+              "tests/test_stage_verifier.py"
+            ],
             "timeout_seconds": 180
           }
         ]
@@ -128,17 +218,29 @@
             "tests/repo-query.test.mjs",
             "tests/router-control.test.mjs",
             "tests/router-handoff.test.mjs",
+            "tests/route-manifest.test.mjs",
+            "tests/startup-notice.test.mjs",
             "tests/uninstall.test.mjs",
             "tests/opencode-bundle.sh"
           ],
-          "commands_all": ["bash", "bun", "node", "uv"]
+          "commands_all": [
+            "bash",
+            "bun",
+            "node",
+            "uv"
+          ]
         },
         "gates": [
           {
             "type": "command",
-            "argv": ["bash", "tests/opencode-bundle.sh"],
+            "argv": [
+              "bash",
+              "tests/opencode-bundle.sh"
+            ],
             "cwd": "{project_root}",
-            "untrusted_if_changed": ["tests/opencode-bundle.sh"],
+            "untrusted_if_changed": [
+              "tests/opencode-bundle.sh"
+            ],
             "timeout_seconds": 180
           },
           {
@@ -151,7 +253,9 @@
               "tests/claude-agent-provider.test.mjs",
               "tests/execution-policy.test.mjs",
               "tests/router-control.test.mjs",
+              "tests/route-manifest.test.mjs",
               "tests/repo-query.test.mjs",
+              "tests/startup-notice.test.mjs",
               "tests/uninstall.test.mjs"
             ],
             "cwd": "{project_root}",
@@ -161,7 +265,9 @@
               "tests/claude-agent-provider.test.mjs",
               "tests/execution-policy.test.mjs",
               "tests/router-control.test.mjs",
+              "tests/route-manifest.test.mjs",
               "tests/repo-query.test.mjs",
+              "tests/startup-notice.test.mjs",
               "tests/uninstall.test.mjs"
             ],
             "timeout_seconds": 180
@@ -183,7 +289,9 @@
             "qeval/*.py",
             "tests/test_quality_eval.py"
           ],
-          "commands_all": ["uv"]
+          "commands_all": [
+            "uv"
+          ]
         },
         "gates": [
           {
@@ -199,7 +307,9 @@
               "tests/test_quality_eval.py"
             ],
             "cwd": "{project_root}",
-            "untrusted_if_changed": ["tests/test_quality_eval.py"],
+            "untrusted_if_changed": [
+              "tests/test_quality_eval.py"
+            ],
             "timeout_seconds": 180
           }
         ]
@@ -207,7 +317,11 @@
       {
         "name": "pnpm-tests",
         "match": {
-          "files_all": ["package.json", "pnpm-lock.yaml", "node_modules"],
+          "files_all": [
+            "package.json",
+            "pnpm-lock.yaml",
+            "node_modules"
+          ],
           "changed_any": [
             "package.json",
             "pnpm-lock.yaml",
@@ -228,20 +342,29 @@
             "**/*.vue",
             "**/*.svelte"
           ],
-          "commands_all": ["pnpm"],
+          "commands_all": [
+            "pnpm"
+          ],
           "json_keys_all": [
             {
               "path": "package.json",
-              "keys": ["scripts.test"]
+              "keys": [
+                "scripts.test"
+              ]
             }
           ]
         },
         "gates": [
           {
             "type": "command",
-            "argv": ["pnpm", "test"],
+            "argv": [
+              "pnpm",
+              "test"
+            ],
             "cwd": "{project_root}",
-            "env": {"CI": "1"},
+            "env": {
+              "CI": "1"
+            },
             "untrusted_if_changed": [
               "package.json",
               "pnpm-lock.yaml",
@@ -258,8 +381,16 @@
       {
         "name": "python-pytest",
         "match": {
-          "files_all": ["tests", ".venv"],
-          "files_any": ["pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"],
+          "files_all": [
+            "tests",
+            ".venv"
+          ],
+          "files_any": [
+            "pyproject.toml",
+            "pytest.ini",
+            "setup.cfg",
+            "tox.ini"
+          ],
           "changed_any": [
             "pyproject.toml",
             "uv.lock",
@@ -270,15 +401,29 @@
             "*.py",
             "**/*.py"
           ],
-          "commands_all": ["uv"]
+          "commands_all": [
+            "uv"
+          ]
         },
         "gates": [
           {
             "type": "command",
-            "argv": ["uv", "run", "--no-sync", "pytest"],
+            "argv": [
+              "uv",
+              "run",
+              "--no-sync",
+              "pytest"
+            ],
             "cwd": "{project_root}",
-            "env": {"CI": "1"},
-            "error_exit_codes": [2, 3, 4, 5],
+            "env": {
+              "CI": "1"
+            },
+            "error_exit_codes": [
+              2,
+              3,
+              4,
+              5
+            ],
             "untrusted_if_changed": [
               "pyproject.toml",
               "pytest.ini",
@@ -296,16 +441,30 @@
       {
         "name": "rust-tests",
         "match": {
-          "files_all": ["Cargo.toml"],
-          "changed_any": ["Cargo.toml", "Cargo.lock", "*.rs", "**/*.rs"],
-          "commands_all": ["cargo"]
+          "files_all": [
+            "Cargo.toml"
+          ],
+          "changed_any": [
+            "Cargo.toml",
+            "Cargo.lock",
+            "*.rs",
+            "**/*.rs"
+          ],
+          "commands_all": [
+            "cargo"
+          ]
         },
         "gates": [
           {
             "type": "command",
-            "argv": ["cargo", "test"],
+            "argv": [
+              "cargo",
+              "test"
+            ],
             "cwd": "{project_root}",
-            "env": {"CI": "1"},
+            "env": {
+              "CI": "1"
+            },
             "untrusted_if_changed": [
               "Cargo.toml",
               "Cargo.lock",
@@ -318,16 +477,31 @@
       {
         "name": "go-tests",
         "match": {
-          "files_all": ["go.mod"],
-          "changed_any": ["go.mod", "go.sum", "*.go", "**/*.go"],
-          "commands_all": ["go"]
+          "files_all": [
+            "go.mod"
+          ],
+          "changed_any": [
+            "go.mod",
+            "go.sum",
+            "*.go",
+            "**/*.go"
+          ],
+          "commands_all": [
+            "go"
+          ]
         },
         "gates": [
           {
             "type": "command",
-            "argv": ["go", "test", "./..."],
+            "argv": [
+              "go",
+              "test",
+              "./..."
+            ],
             "cwd": "{project_root}",
-            "env": {"CI": "1"},
+            "env": {
+              "CI": "1"
+            },
             "untrusted_if_changed": [
               "go.mod",
               "go.sum",

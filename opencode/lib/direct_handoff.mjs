@@ -8,12 +8,25 @@ import {
   transitionRoutingState,
 } from "./adaptive_routing.mjs"
 import {
+  attachmentMediaTypes,
+  enforceMediaCompatibleRoute,
   enforceMinimumRoute,
+  minimumCompatibleRoute,
+  routeSupportsRequest,
   routeTarget,
+  unsupportedRouteMediaTypes,
 } from "./routing_policy.mjs"
+import {
+  LEGACY_ROUTE_MANIFEST,
+  normalizeAttachmentMediaType,
+  routeManifestEntry,
+  routeManifestEntryForAgent,
+} from "./route_manifest.mjs"
 import { updateSessionMetadata } from "./session_metadata.mjs"
 
 export const MANUAL_TARGET_METADATA_KEY = "llm-router.manual.target"
+
+const MAX_TRACKED_MEDIA_NOTICES = 256
 
 function exactUserRequest(parts) {
   return parts
@@ -22,32 +35,89 @@ function exactUserRequest(parts) {
     .join("")
 }
 
-function classifyRequest(classify, request, requirements) {
+function dataURLMediaType(url) {
+  if (typeof url !== "string" || !url.startsWith("data:")) return ""
+  return url.slice("data:".length).split(",", 1)[0].split(";", 1)[0]
+}
+
+function partMediaType(part) {
+  const declared = normalizeAttachmentMediaType(part.mime)
+  if (declared) return declared
+  return dataURLMediaType(part.url)
+}
+
+function exactAttachmentMediaTypes(parts) {
+  return attachmentMediaTypes(
+    parts.filter((part) => part.type === "file").map(partMediaType),
+  )
+}
+
+function mediaFallbackBetween(intendedRoute, route, mediaTypes, manifest) {
+  if (!intendedRoute || intendedRoute === route || mediaTypes.length === 0) return
+  if (!routeManifestEntry(manifest, intendedRoute)) return
+  const unsupported = unsupportedRouteMediaTypes(intendedRoute, mediaTypes, manifest)
+  if (unsupported.length === 0) return
+  return { from: intendedRoute, to: route, unsupported }
+}
+
+// The same forced fallback repeated on consecutive messages is one event for
+// the user, so only its first message carries a notice.
+function pendingMediaNotice(notices, sessionID, fallback) {
+  if (!fallback) {
+    notices.delete(sessionID)
+    return
+  }
+  const notice = `${fallback.from}->${fallback.to}:${fallback.unsupported.join(",")}`
+  if (notices.get(sessionID) === notice) return
+  if (notices.size >= MAX_TRACKED_MEDIA_NOTICES) notices.clear()
+  notices.set(sessionID, notice)
+  return fallback
+}
+
+function classifyRequest(classify, request, requirements, manifest) {
   return Promise.resolve(classify(request)).then((result) => {
     const raw = typeof result === "string" ? result : result?.stdout
     if (typeof raw !== "string") {
       throw new Error("llm-router returned no classifier output")
     }
 
-    const classified = parseClassifierResult(raw.trim())
-    const route = enforceMinimumRoute(classified.route, request, requirements)
-    return { classified, route, target: routeTarget(route) }
+    const classified = parseClassifierResult(raw.trim(), manifest)
+    const route = enforceMinimumRoute(
+      classified.route,
+      request,
+      requirements,
+      manifest,
+    )
+    return {
+      classified,
+      intendedRoute: classified.route,
+      route,
+      target: routeTarget(route, manifest),
+    }
   })
 }
 
-function selectRequest(classify, request, requirements) {
+function selectRequest(classify, request, requirements, manifest, sessionRoute) {
   if (
     request.length === 0
     && (requirements.hasAgentMentions || requirements.hasAttachments)
   ) {
-    const route = "claude"
+    // A message carrying only files keeps the session on its current route
+    // whenever that route can read every attachment.
+    const reusable = sessionRoute !== undefined
+      && routeManifestEntry(manifest, sessionRoute) !== undefined
+      && routeSupportsRequest(sessionRoute, request, requirements, manifest)
+    const route = reusable
+      ? sessionRoute
+      : minimumCompatibleRoute(request, requirements, manifest)
     return Promise.resolve({
       classified: undefined,
+      intendedRoute: sessionRoute ?? route,
       route,
-      target: routeTarget(route),
+      target: routeTarget(route, manifest),
     })
   }
-  return classifyRequest(classify, request, requirements)
+  return classifyRequest(classify, request, requirements, manifest)
 }
 
 function requireSessionReader(client) {
@@ -89,7 +159,7 @@ function sessionMetadata(session) {
   return session.metadata
 }
 
-function storedManualTarget(metadata, sessionID) {
+function storedManualTarget(metadata, sessionID, manifest) {
   const stored = metadata[MANUAL_TARGET_METADATA_KEY]
   if (stored === undefined) return
   if (!stored || typeof stored !== "object" || Array.isArray(stored)) {
@@ -102,15 +172,27 @@ function storedManualTarget(metadata, sessionID) {
   if (!stored.target || typeof stored.target !== "object" || Array.isArray(stored.target)) {
     throw new Error("OpenCode session has an invalid manual routing target")
   }
+  if (
+    typeof stored.target.agent !== "string"
+    || !stored.target.agent
+    || typeof stored.target.providerID !== "string"
+    || !stored.target.providerID
+    || typeof stored.target.modelID !== "string"
+    || !stored.target.modelID
+  ) {
+    throw new Error("OpenCode session has an invalid manual routing target")
+  }
 
-  const target = routeTarget(stored.target.agent)
+  const route = routeManifestEntryForAgent(manifest, stored.target.agent)
+  if (!route) return { route: undefined, target: undefined }
+  const target = route.target
   if (
     stored.target.providerID !== target.providerID
     || stored.target.modelID !== target.modelID
   ) {
-    throw new Error("OpenCode session has an invalid manual routing target")
+    return { route: undefined, target: undefined }
   }
-  return target
+  return { route: route.id, target }
 }
 
 async function sessionState(client, sessionID) {
@@ -141,7 +223,9 @@ async function persistRoutingState({
   mode,
   recommendedRoute,
   request,
+  requirements,
   adaptivePolicy,
+  manifest,
 }) {
   const sessionClient = requireRoutingSessionClient(client)
   const nextMetadata = await updateSessionMetadata({
@@ -160,19 +244,23 @@ async function persistRoutingState({
       )
     },
     update: (currentMetadata) => {
-      const stored = readRoutingState(currentMetadata, sessionID)
+      const stored = readRoutingState(currentMetadata, sessionID, manifest)
       const legacy = mode === "pinned"
-        ? storedManualTarget(currentMetadata, sessionID)
+        ? storedManualTarget(currentMetadata, sessionID, manifest)
         : undefined
       const state = transitionRoutingState({
         state: stored,
         sessionID,
         mode,
-        recommendedRoute: mode === "pinned" && stored?.mode === "pinned"
+        recommendedRoute: mode === "pinned"
+          && stored?.mode === "pinned"
+          && stored.currentRoute
           ? stored.currentRoute
-          : legacy?.agent ?? recommendedRoute,
+          : legacy?.route ?? recommendedRoute,
         request,
+        requirements,
         policy: adaptivePolicy,
+        manifest,
       })
       return {
         ...currentMetadata,
@@ -192,29 +280,38 @@ async function selectForMode({
   agent,
   request,
   requirements,
+  mediaTypes,
   sessionID,
   adaptivePolicy,
+  manifest,
 }) {
   requireRoutingSessionClient(client)
-  const storedState = readRoutingState(metadata, sessionID)
+  const storedState = readRoutingState(metadata, sessionID, manifest)
   const legacyTarget = mode === "pinned"
-    ? storedManualTarget(metadata, sessionID)
+    ? storedManualTarget(metadata, sessionID, manifest)
     : undefined
   const pinnedRoute = storedState?.mode === "pinned"
     ? storedState.currentRoute
-    : legacyTarget?.agent
+    : legacyTarget?.route
   let recommended
   let reused = false
   if (mode === "pinned" && pinnedRoute) {
-    const target = routeTarget(pinnedRoute)
+    const target = routeTarget(pinnedRoute, manifest)
     recommended = {
       classified: undefined,
+      intendedRoute: pinnedRoute,
       route: pinnedRoute,
       target,
     }
     reused = true
   } else {
-    recommended = await selectRequest(classify, request, requirements)
+    recommended = await selectRequest(
+      classify,
+      request,
+      requirements,
+      manifest,
+      storedState?.currentRoute,
+    )
   }
 
   if (mode === "pinned" && agent === "router-manual") {
@@ -227,15 +324,29 @@ async function selectForMode({
     mode,
     recommendedRoute: recommended.route,
     request,
+    requirements,
     adaptivePolicy,
+    manifest,
   })
-  const route = nextState.currentRoute
+  // A pinned session keeps its stored route: an incompatible attachment only
+  // borrows a compatible route for this single message.
+  const route = enforceMediaCompatibleRoute(
+    nextState.currentRoute,
+    mediaTypes,
+    manifest,
+  )
   return {
     classified: recommended.classified,
     recommendedRoute: recommended.route,
     reused: reused || route !== recommended.route,
     route,
-    target: routeTarget(route),
+    target: routeTarget(route, manifest),
+    mediaFallback: mediaFallbackBetween(
+      recommended.intendedRoute,
+      route,
+      mediaTypes,
+      manifest,
+    ),
   }
 }
 
@@ -244,10 +355,12 @@ export function createDirectModelHandoff({
   client,
   announce = async () => {},
   adaptivePolicy,
+  manifest = LEGACY_ROUTE_MANIFEST,
 }) {
   if (typeof classify !== "function") throw new TypeError("classify must be a function")
   if (typeof announce !== "function") throw new TypeError("announce must be a function")
   const adaptiveThresholds = normalizeAdaptiveRoutingPolicy(adaptivePolicy)
+  const mediaNotices = new Map()
 
   return {
     "chat.message": async (input, output) => {
@@ -255,9 +368,11 @@ export function createDirectModelHandoff({
       if (!isManagedRouterAgent(agent)) return
 
       const request = exactUserRequest(output.parts)
+      const mediaTypes = exactAttachmentMediaTypes(output.parts)
       const requirements = {
         hasAgentMentions: output.parts.some((part) => part.type === "agent"),
         hasAttachments: output.parts.some((part) => part.type === "file"),
+        attachmentMediaTypes: mediaTypes,
       }
       if (
         request.length === 0
@@ -266,8 +381,8 @@ export function createDirectModelHandoff({
       ) return
 
       const state = await sessionState(client, input.sessionID)
-      const storedState = readRoutingState(state.metadata, input.sessionID)
-      const legacyTarget = storedManualTarget(state.metadata, input.sessionID)
+      const storedState = readRoutingState(state.metadata, input.sessionID, manifest)
+      const legacyTarget = storedManualTarget(state.metadata, input.sessionID, manifest)
       const mode = resolveRoutingMode({
         agent,
         state: storedState,
@@ -282,8 +397,10 @@ export function createDirectModelHandoff({
         agent,
         request,
         requirements,
+        mediaTypes,
         sessionID: input.sessionID,
         adaptivePolicy: adaptiveThresholds,
+        manifest,
       })
 
       output.message.agent = selection.target.agent
@@ -293,7 +410,16 @@ export function createDirectModelHandoff({
       }
 
       try {
-        await announce({ mode, ...selection })
+        await announce({
+          mode,
+          ...selection,
+          sessionID: input.sessionID,
+          mediaFallback: pendingMediaNotice(
+            mediaNotices,
+            input.sessionID,
+            selection.mediaFallback,
+          ),
+        })
       } catch {
         // A UI notification must never block the selected model from running.
       }

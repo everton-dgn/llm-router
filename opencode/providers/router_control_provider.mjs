@@ -3,6 +3,7 @@ const emptyUsage = Object.freeze({
   outputTokens: Object.freeze({ total: 0, text: 0, reasoning: 0 }),
   raw: Object.freeze({}),
 })
+const CONTROL_RESULT_PREFIX = "<llm-router-control-result>\n"
 
 function controlText(prompt) {
   if (!Array.isArray(prompt)) throw new Error("router-control prompt must be an array")
@@ -10,10 +11,12 @@ function controlText(prompt) {
   if (!current || !Array.isArray(current.content)) {
     throw new Error("router-control prompt has no current user message")
   }
-  const text = current.content
+  const parts = current.content
     .filter((part) => part?.type === "text" && typeof part.text === "string")
-    .map((part) => part.text)
-    .join("")
+  const result = parts.findLast((part) => part.text.startsWith(CONTROL_RESULT_PREFIX))
+  const text = result
+    ? result.text.slice(CONTROL_RESULT_PREFIX.length)
+    : parts.map((part) => part.text).join("")
   if (!text.trim()) throw new Error("router-control prompt has no text response")
   return text
 }

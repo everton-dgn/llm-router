@@ -8,6 +8,7 @@
 # Usage:
 #   route "prompt"                    # human-readable output
 #   route --classify --json "prompt"  # stable contract for integrations
+#   route --manifest --json            # validated route manifest
 #   route --summarize --json           # safe checkpoint via JSON on stdin
 #
 # Requires the model configured in config.json to be downloaded in Ollama, for example:
@@ -15,17 +16,268 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG="$SCRIPT_DIR/config.json"
+CONFIG="${LLM_ROUTER_CONFIG:-$SCRIPT_DIR/config.json}"
+MAX_MANIFEST_BYTES=$((256 * 1024))
 [[ -f "$CONFIG" ]] || { echo "error: config not found at $CONFIG" >&2; exit 3; }
 jq empty "$CONFIG" 2>/dev/null || { echo "error: invalid config.json ($CONFIG)" >&2; exit 3; }
 
+build_manifest() {
+  local manifest
+  if ! manifest=$(jq -ce '
+    def capability_keys: [
+      "canExecuteCommands",
+      "canHandleNonLiteralText",
+      "canMutateProject",
+      "canReadRepository",
+      "canUseAgentMentions",
+      "canUseAttachments",
+      "canUseExternalTools"
+    ];
+    def legacy_routes: [
+      {
+        id: "minimax",
+        display_name: "MiniMax M3",
+        order: 0,
+        target: {
+          agent: "minimax",
+          providerID: "minimax-coding-plan",
+          modelID: "MiniMax-M3"
+        },
+        capabilities: {
+          canExecuteCommands: false,
+          canHandleNonLiteralText: false,
+          canMutateProject: false,
+          canReadRepository: true,
+          canUseAgentMentions: false,
+          canUseAttachments: true,
+          canUseExternalTools: false
+        },
+        acceptedMediaTypes: [
+          "image/*",
+          "text/plain",
+          "video/*"
+        ]
+      },
+      {
+        id: "glm",
+        display_name: "GLM 5.2",
+        order: 1,
+        target: {
+          agent: "glm",
+          providerID: "zai-coding-plan",
+          modelID: "glm-5.2"
+        },
+        capabilities: {
+          canExecuteCommands: true,
+          canHandleNonLiteralText: true,
+          canMutateProject: true,
+          canReadRepository: true,
+          canUseAgentMentions: true,
+          canUseAttachments: false,
+          canUseExternalTools: true
+        },
+        acceptedMediaTypes: []
+      },
+      {
+        id: "claude",
+        display_name: "Claude Opus 5 (xhigh)",
+        order: 2,
+        target: {
+          agent: "claude",
+          providerID: "claude-agent",
+          modelID: "claude-opus-5"
+        },
+        capabilities: {
+          canExecuteCommands: true,
+          canHandleNonLiteralText: true,
+          canMutateProject: true,
+          canReadRepository: true,
+          canUseAgentMentions: true,
+          canUseAttachments: true,
+          canUseExternalTools: true
+        },
+        acceptedMediaTypes: [
+          "application/pdf",
+          "image/gif",
+          "image/jpeg",
+          "image/png",
+          "image/webp",
+          "text/plain"
+        ]
+      },
+      {
+        id: "codex",
+        display_name: "GPT-5.6 Sol (xhigh)",
+        order: 3,
+        target: {
+          agent: "codex",
+          providerID: "openai",
+          modelID: "gpt-5.6-sol"
+        },
+        capabilities: {
+          canExecuteCommands: true,
+          canHandleNonLiteralText: true,
+          canMutateProject: true,
+          canReadRepository: true,
+          canUseAgentMentions: true,
+          canUseAttachments: true,
+          canUseExternalTools: true
+        },
+        acceptedMediaTypes: [
+          "application/pdf",
+          "image/*",
+          "text/plain"
+        ]
+      }
+    ];
+    def fail($code; $message):
+      error("route_manifest_error[\($code)]: \($message)");
+    def non_empty_string:
+      type == "string" and test("\\S");
+    def accepted_media_types:
+      (.acceptedMediaTypes // []);
+    def valid_media_type:
+      type == "string"
+      and (length <= 256)
+      and test("^[a-z0-9][a-z0-9.+_-]*/(\\*|[a-z0-9][a-z0-9.+_-]*)$");
+    def covered_by_wildcard:
+      . as $accepted
+      | any($accepted[];
+          . as $entry
+          | ($entry | endswith("/*") | not)
+          and any($accepted[];
+            . as $wildcard
+            | ($wildcard | endswith("/*"))
+            and ($entry | startswith($wildcard[:-1]))
+          )
+        );
+    def reserved_agents: [
+      "router",
+      "router-auto",
+      "router-manual",
+      "router-adaptive",
+      "router-control"
+    ];
+    def valid_routing($route_ids):
+      if (.routing | type) != "array" or (.routing | length) == 0 then
+        fail("invalid_routing"; "routing must be a non-empty array")
+      elif all(.routing[];
+        .route as $route
+        | (.intent | non_empty_string)
+        and ($route | non_empty_string)
+        and ($route_ids | index($route) != null)
+      ) | not then
+        fail("invalid_routing"; "routing entries must reference known routes")
+      elif ([.routing[].intent] | length) != ([.routing[].intent] | unique | length) then
+        fail("duplicate_intent"; "routing intent values must be unique")
+      else
+        .
+      end;
+    if (has("schema_version") | not) or .schema_version == 1 then
+      . as $config
+      | legacy_routes as $legacy
+      | ($legacy | map(.id)) as $route_ids
+      | valid_routing($route_ids)
+      | {
+          schema_version: 2,
+          routes: ($legacy | map(
+            . as $route
+            | .display_name = (
+                [
+                  $config.routes[]?
+                  | select((.id // .name) == $route.id)
+                  | .display_name
+                  | select(type == "string")
+                ][0] // $route.display_name
+              )
+          )),
+          routing: $config.routing
+        }
+    elif .schema_version != 2 then
+      fail("unsupported_schema_version"; "schema_version must be 2")
+    elif (.routes | type) != "array" or (.routes | length) == 0 then
+      fail("invalid_routes"; "routes must be a non-empty array")
+    elif all(.routes[]; (.id | non_empty_string)) | not then
+      fail("invalid_route_id"; "every route id must be a non-empty string")
+    elif all(.routes[]; (.display_name | non_empty_string)) | not then
+      fail("invalid_display_name"; "every route display_name must be a non-empty string")
+    elif ([.routes[].id] | length) != ([.routes[].id] | unique | length) then
+      fail("duplicate_route_id"; "route id values must be unique")
+    elif all(.routes[]; (.order | type == "number" and floor == . and . >= 0)) | not then
+      fail("invalid_order"; "every route order must be a non-negative integer")
+    elif ([.routes[].order] | length) != ([.routes[].order] | unique | length) then
+      fail("duplicate_order"; "route order values must be unique")
+    elif all(.routes[];
+      (.target | type) == "object"
+      and ((.target | keys | sort) == ["agent", "modelID", "providerID"])
+      and (.target.agent | non_empty_string)
+      and (.target.providerID | non_empty_string)
+      and (.target.modelID | non_empty_string)
+    ) | not then
+      fail("invalid_target"; "every route target must contain agent, providerID and modelID")
+    elif ([.routes[].target.agent] | length)
+      != ([.routes[].target.agent] | unique | length) then
+      fail("duplicate_target_agent"; "route target agent values must be unique")
+    elif any(.routes[].target.agent;
+      . as $agent | reserved_agents | index($agent) != null) then
+      fail("reserved_target_agent"; "route target agent values must not use router control agents")
+    elif all(.routes[];
+      (.capabilities | type) == "object"
+      and ((.capabilities | keys | sort) == (capability_keys | sort))
+      and all(.capabilities[]; type == "boolean")
+    ) | not then
+      fail("invalid_capabilities"; "every route must declare the seven boolean capabilities")
+    elif all(.routes[];
+      (accepted_media_types | type) == "array"
+      and all(accepted_media_types[]; valid_media_type)
+    ) | not then
+      fail("invalid_accepted_media_types"; "acceptedMediaTypes must list lowercase type/subtype or type/* values")
+    elif any(.routes[];
+      (accepted_media_types | length) != (accepted_media_types | unique | length)
+    ) then
+      fail("duplicate_accepted_media_type"; "acceptedMediaTypes values must be unique per route")
+    elif any(.routes[]; accepted_media_types | covered_by_wildcard) then
+      fail("redundant_accepted_media_type"; "an accepted media type must not repeat a wildcard already declared")
+    elif any(.routes[];
+      .capabilities.canUseAttachments != ((accepted_media_types | length) > 0)
+    ) then
+      fail("inconsistent_accepted_media_types"; "canUseAttachments and acceptedMediaTypes must describe the same route")
+    else
+      (.routes | map(.id)) as $route_ids
+      | valid_routing($route_ids)
+      | {
+          schema_version: 2,
+          routes: (
+            .routes
+            | sort_by(.order)
+            | map(.acceptedMediaTypes = accepted_media_types)
+          ),
+          routing: .routing
+        }
+    end
+  ' "$CONFIG" 2>&1); then
+    printf 'error: invalid route manifest: %s\n' "$manifest" >&2
+    return 3
+  fi
+  local manifest_bytes
+  manifest_bytes=$(LC_ALL=C printf '%s' "$manifest" | wc -c | tr -d ' ')
+  if (( manifest_bytes > MAX_MANIFEST_BYTES )); then
+    printf 'error: route manifest exceeds %s bytes\n' "$MAX_MANIFEST_BYTES" >&2
+    return 3
+  fi
+  printf '%s\n' "$manifest"
+}
+
 show_help() {
   local command_name
+  local manifest
   command_name="$(basename "$0")"
+  manifest=$(build_manifest) || exit $?
 
   cat <<EOF
 Usage: $command_name "prompt"
      $command_name --classify --json "prompt"
+     $command_name --manifest --json
      $command_name --summarize --json < checkpoint.json
      $command_name help
      $command_name --help
@@ -33,6 +285,7 @@ Usage: $command_name "prompt"
 Outputs:
   default               Classifies and displays the route in human-readable format.
   --classify --json     Returns the versioned JSON contract for integrations.
+  --manifest --json     Returns the validated route manifest without calling Ollama.
   --summarize --json    Summarizes sanitized context received only through stdin.
 
 Routes:
@@ -40,9 +293,9 @@ EOF
   jq -r '
     .routing[] as $routing
     | .routes[]
-    | select(.name == $routing.route)
+    | select(.id == $routing.route)
     | "  \($routing.route): \(.display_name)\n    \($routing.help)"
-  ' "$CONFIG"
+  ' <<<"$manifest"
   cat <<EOF
 
 Examples:
@@ -56,6 +309,7 @@ EOF
 }
 
 CLASSIFY=false
+MANIFEST=false
 SUMMARIZE=false
 JSON_OUTPUT=false
 PROMPT=""
@@ -68,6 +322,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --classify)
       CLASSIFY=true
+      shift
+      ;;
+    --manifest)
+      MANIFEST=true
       shift
       ;;
     --summarize)
@@ -99,17 +357,26 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "$CLASSIFY" == true && "$SUMMARIZE" == true ]]; then
-  echo "error: --classify and --summarize are mutually exclusive" >&2
+MODE_COUNT=0
+[[ "$CLASSIFY" == true ]] && ((MODE_COUNT += 1))
+[[ "$MANIFEST" == true ]] && ((MODE_COUNT += 1))
+[[ "$SUMMARIZE" == true ]] && ((MODE_COUNT += 1))
+if (( MODE_COUNT > 1 )); then
+  echo "error: --classify, --manifest and --summarize are mutually exclusive" >&2
   exit 1
 fi
 
-if [[ "$JSON_OUTPUT" == true && "$CLASSIFY" != true && "$SUMMARIZE" != true ]]; then
-  echo "error: --json requires --classify or --summarize" >&2
+if [[ "$JSON_OUTPUT" == true && "$CLASSIFY" != true && "$MANIFEST" != true && "$SUMMARIZE" != true ]]; then
+  echo "error: --json requires --classify, --manifest or --summarize" >&2
   exit 1
 fi
 
-if [[ "$SUMMARIZE" == true ]]; then
+if [[ "$MANIFEST" == true ]]; then
+  [[ "$JSON_OUTPUT" == true ]] || { echo "error: --manifest requires --json" >&2; exit 1; }
+  [[ -z "$PROMPT" ]] || { echo "error: --manifest does not accept a prompt" >&2; exit 1; }
+  build_manifest
+  exit $?
+elif [[ "$SUMMARIZE" == true ]]; then
   [[ "$JSON_OUTPUT" == true ]] || { echo "error: --summarize requires --json" >&2; exit 1; }
   [[ -z "$PROMPT" ]] || { echo "error: --summarize accepts context only through stdin" >&2; exit 1; }
 else
@@ -120,6 +387,7 @@ else
   }
 fi
 
+MANIFEST_JSON=$(build_manifest) || exit $?
 MODEL=$(jq -r '.model' "$CONFIG")
 ENDPOINT=$(jq -r '.endpoint // "http://localhost:11434/api/chat"' "$CONFIG")
 
@@ -166,7 +434,7 @@ if [[ "$SUMMARIZE" == true ]]; then
   [[ "$MAX_REQUEST_BYTES" =~ ^[0-9]+$ && "$MAX_REQUEST_BYTES" -gt 0 ]] || checkpoint_error \
     "invalid_summary_config" \
     "checkpoint.max_request_bytes must be a positive integer"
-  CHECKPOINT_INPUT_BYTES=$(LC_ALL=C; printf '%s' "$CHECKPOINT_INPUT" | wc -c | tr -d ' ')
+  CHECKPOINT_INPUT_BYTES=$(LC_ALL=C printf '%s' "$CHECKPOINT_INPUT" | wc -c | tr -d ' ')
   (( CHECKPOINT_INPUT_BYTES <= MAX_REQUEST_BYTES )) || checkpoint_error \
     "summary_input_too_large" \
     "checkpoint input exceeds ${MAX_REQUEST_BYTES} bytes"
@@ -227,7 +495,7 @@ EOF
   [[ -n "$SUMMARY" ]] || checkpoint_error \
     "invalid_summary_response" \
     "local summarizer did not return a valid summary"
-  SUMMARY_BYTES=$(LC_ALL=C; printf '%s' "$SUMMARY" | wc -c | tr -d ' ')
+  SUMMARY_BYTES=$(LC_ALL=C printf '%s' "$SUMMARY" | wc -c | tr -d ' ')
   (( SUMMARY_BYTES <= MAX_SUMMARY_BYTES )) || checkpoint_error \
     "summary_too_large" \
     "local summary exceeds ${MAX_SUMMARY_BYTES} bytes"
@@ -236,10 +504,10 @@ EOF
 fi
 
 # Intents in Plano format (one line per preference: {name, description}).
-ROUTES=$(jq -c '.routing[] | {name:.intent, description}' "$CONFIG")
+ROUTES=$(jq -c '.routing[] | {name:.intent} + (if .description then {description} else {} end)' <<<"$MANIFEST_JSON")
 # Generation options and schema restricted to exactly one configured intent.
 OPTS=$(jq -c '.options // {temperature:0, num_predict:32}' "$CONFIG")
-SCHEMA=$(jq -c '{type:"object",properties:{route:{type:"array",minItems:1,maxItems:1,items:{type:"string",enum:[.routing[].intent]}}},required:["route"],additionalProperties:false}' "$CONFIG")
+SCHEMA=$(jq -c '{type:"object",properties:{route:{type:"array",minItems:1,maxItems:1,items:{type:"string",enum:[.routing[].intent]}}},required:["route"],additionalProperties:false}' <<<"$MANIFEST_JSON")
 
 # Conversation in the format expected by Plano.
 CONV=$(jq -n --arg p "$PROMPT" '[{role:"user",content:$p}]')
@@ -257,7 +525,7 @@ Match the latest user intent to the single most specific route name and descript
 For mixed intents, route by the requested final deliverable. Planning followed by implementation is implementation, not planning-only. Code review and audit always use the review route.
 Task length does not determine difficulty. Treat every "always", "every", "only", and "never" boundary in the route descriptions as absolute.
 A literal task copies, counts, locates, extracts, or mechanically formats existing data. Summarizing, naming, correcting, documenting, translating, brainstorming, and writing prose are not literal tasks.
-Simple brainstorming and simple documentation, including a CLI reference written from supplied flags, belong to the general simple-or-intermediate route. For a short numbered set of ideas for one known audience, without evaluation, product strategy, or research, select translation_simple_brainstorm_docs_or_intermediate_work exactly. The word "brainstorm" alone never makes a request complex. These tasks are neither literal nor complex creative work.
+Simple brainstorming and simple documentation, including a CLI reference written from supplied flags, belong to the configured general simple-or-intermediate route. For a short numbered set of ideas for one known audience, without evaluation, product strategy, or research, select the route whose description covers simple brainstorming. The word "brainstorm" alone never makes a request complex. These tasks are neither literal nor complex creative work.
 A brief pros-and-cons discussion without architecture, product strategy, or high-stakes planning is simple open discussion. A troubleshooting guide for one known flow is intermediate documentation. Diagnosing a routine HTTP 500 in one controller is ordinary debugging. All three use the general simple-or-intermediate route.
 Engineering technical writing means a standalone audience-facing artifact such as a concept explanation, design memo, incident report, or technically precise social post. Explaining an existing code path or module from inspected code stays in general work unless review, audit, or another hard signal is present.
 Concurrency primitives, lock-free structures, stress or concurrency tests, compiler transformations, races, and deadlocks are hard engineering regardless of prompt length. A request only to plan remediation before implementation stays in complex planning unless it asks for a threat model or security analysis.
@@ -297,13 +565,13 @@ INTENT=$(echo "$RESP" | jq -r '.message.content | fromjson | .route[0] // empty'
   "classifier did not return a valid route"
 
 # Maps the semantic intent to the actual executor.
-ROUTE=$(jq -r --arg intent "$INTENT" '.routing[] | select(.intent == $intent) | .route' "$CONFIG")
+ROUTE=$(jq -r --arg intent "$INTENT" '.routing[] | select(.intent == $intent) | .route' <<<"$MANIFEST_JSON")
 [[ -n "$ROUTE" ]] || classification_error \
   "unknown_intent" \
   "unknown intent: '$INTENT'"
 
 DISPLAY_NAME=$(jq -r --arg route "$ROUTE" \
-  '.routes[] | select(.name == $route) | .display_name // empty' "$CONFIG")
+  '.routes[] | select(.id == $route) | .display_name // empty' <<<"$MANIFEST_JSON")
 [[ -n "$DISPLAY_NAME" ]] || classification_error \
   "unknown_route" \
   "unknown route: '$ROUTE'"

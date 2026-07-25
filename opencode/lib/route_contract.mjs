@@ -1,4 +1,8 @@
-const allowedRoutes = new Set(["minimax", "glm", "claude", "codex"])
+import {
+  LEGACY_ROUTE_MANIFEST,
+  routeManifestEntry,
+} from "./route_manifest.mjs"
+
 const allowedKeys = new Set(["schema_version", "intent", "route"])
 export const MAX_CLASSIFIER_REQUEST_BYTES = 128 * 1024
 
@@ -15,7 +19,7 @@ export function assertClassifierRequestSize(request) {
   return size
 }
 
-export function parseClassifierResult(raw) {
+export function parseClassifierResult(raw, manifest = LEGACY_ROUTE_MANIFEST) {
   let value
   try {
     value = JSON.parse(raw)
@@ -36,8 +40,17 @@ export function parseClassifierResult(raw) {
   if (typeof value.intent !== "string" || value.intent.length === 0) {
     throw new Error("llm-router result has an invalid intent")
   }
-  if (typeof value.route !== "string" || !allowedRoutes.has(value.route)) {
+  if (typeof value.route !== "string" || !routeManifestEntry(manifest, value.route)) {
     throw new Error(`llm-router result has an invalid route: ${String(value.route)}`)
+  }
+  const routing = manifest.routing.find(({ intent }) => intent === value.intent)
+  if (!routing) {
+    throw new Error(`llm-router result has an invalid intent: ${value.intent}`)
+  }
+  if (routing.route !== value.route) {
+    throw new Error(
+      `llm-router intent ${value.intent} must map to route ${routing.route}, got ${value.route}`,
+    )
   }
   return value
 }

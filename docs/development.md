@@ -77,7 +77,7 @@ pnpm test:integration
 ```
 
 `pnpm test` matches the deterministic CI gate. CI omits the live Ollama routing
-evaluation and provider-backed benchmark execution, so it does not require
+evaluations and provider-backed benchmark execution, so it does not require
 MiniMax, Z.AI, Anthropic, or OpenAI credentials.
 
 ## Local Git hooks
@@ -102,6 +102,53 @@ explicit because it requires a local service and model.
 Routing and execution policy are separate contracts. A change to route
 selection must preserve the active execution profile. A policy change must not
 silently change the session's routing mode.
+
+Route definitions belong in `config.json`, not in runtime lookup tables. Each
+schema version 2 route must declare a unique ID, target agent, non-negative
+integer order, complete target, all seven capabilities, and the
+`acceptedMediaTypes` list that matches `canUseAttachments`. Every routing entry
+must declare an `intent` and a `route` that references a declared route:
+
+```json
+{
+  "intent": "translation_simple_brainstorm_docs_or_intermediate_work",
+  "route": "glm"
+}
+```
+
+Route capabilities remain an orthogonal eligibility filter: classification
+selects a route first, then capability checks can promote it without changing
+the classified intent. Attachment media types use the same filter: the manifest
+list is the runtime source of truth, so routing never queries a model catalog
+while a message is being handled.
+
+Configs without `schema_version`, schema 1 configs, and schema 2 configs remain
+compatible. Validate the normalized schema 2 result with:
+
+```bash
+./route --manifest --json
+node --test tests/route-manifest.test.mjs
+```
+
+When route count, order, targets, or capabilities change, also run
+`bash tests/opencode-bundle.sh`. That test verifies that installation generates
+the required OpenCode agents and provider model entries. Keep project overrides
+restrictive: `.opencode/llm-router.routes.json` may only set existing
+capabilities to `false`.
+
+The classifier's exact success contract is:
+
+```json
+{
+  "schema_version": 1,
+  "intent": "translation_simple_brainstorm_docs_or_intermediate_work",
+  "route": "glm"
+}
+```
+
+Its exact error contract uses schema 1 with only `schema_version` and `error`;
+the error object contains only `code` and `message`. Any missing or extra
+success field or unknown route fails closed.
 
 When changing an OpenCode or provider contract:
 

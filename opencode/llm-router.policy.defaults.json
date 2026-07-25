@@ -15,7 +15,7 @@
   "models": {
     "minimax-coding-plan/MiniMax-M3": { "profile": "native" },
     "zai-coding-plan/glm-5.2": { "profile": "native" },
-    "claude-agent/claude-opus-4-8": { "profile": "native" },
+    "claude-agent/claude-opus-5": { "profile": "native" },
     "openai/gpt-5.6-sol": { "profile": "native" }
   },
   "profiles": {

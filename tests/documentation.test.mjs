@@ -9,7 +9,6 @@ const ignoredDirectories = new Set([
   ".claude",
   ".git",
   ".idea",
-  ".serena",
   "logs",
   "node_modules",
   "plans",

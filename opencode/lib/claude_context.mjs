@@ -1,10 +1,13 @@
 // The OpenCode model advertises 200k tokens. This is a transport-memory guard,
-// not a token estimate, and leaves room for SDK message framing.
-export const CLAUDE_SAFE_CONTEXT_MAX_BYTES = (2 * 1024 * 1024) - 4096
-export const CLAUDE_ATTACHMENT_MAX_ENCODED_BYTES = 2 * 1024 * 1024
+// not a token estimate, and leaves room for SDK message framing. The ceiling
+// tracks the 32 MiB request limit Claude documents for attachments.
+export const CLAUDE_SAFE_CONTEXT_MAX_BYTES = (32 * 1024 * 1024) - 4096
+export const CLAUDE_ATTACHMENT_MAX_ENCODED_BYTES = 32 * 1024 * 1024
 
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true })
 const base64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+export const CLAUDE_ATTACHMENT_METADATA_PREFIX = "Attachment filename (untrusted metadata): "
+
 const supportedImageTypes = new Set([
   "image/gif",
   "image/jpeg",
@@ -271,7 +274,7 @@ function withAttachmentMetadata(block, filename) {
   if (!title) return [block]
   if (block.type === "document") return [{ ...block, title }]
   return [
-    { type: "text", text: `Attachment filename (untrusted metadata): ${JSON.stringify(title)}` },
+    { type: "text", text: `${CLAUDE_ATTACHMENT_METADATA_PREFIX}${JSON.stringify(title)}` },
     block,
   ]
 }
@@ -399,6 +402,19 @@ export function normalizeClaudeConversationContent(
 export function visibleClaudeConversationText(content) {
   return normalizeClaudeConversationContent(content)
     .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("")
+}
+
+// OpenCode and the safe projection place the attachment label on different
+// sides of the user text, so identity checks compare the text the user wrote
+// without the labels either side generated.
+export function comparableClaudeUserText(content) {
+  return normalizeClaudeConversationContent(content)
+    .filter((part) => (
+      part.type === "text"
+      && !part.text.startsWith(CLAUDE_ATTACHMENT_METADATA_PREFIX)
+    ))
     .map((part) => part.text)
     .join("")
 }
@@ -532,15 +548,16 @@ export function projectLegacyClaudeContext(response) {
 
 function serializedMessageBytes(message, { contentMaxBytes, maxBytes, shouldQuery }) {
   const contentBudget = contentMaxBytes ?? maxBytes
+  const assistant = message.role === "assistant"
   return boundedClaudeJSONBytes({
-    type: "user",
+    type: assistant ? "assistant" : "user",
     message: {
       role: message.role,
       content: normalizeClaudeConversationContent(message.content, { maxBytes: contentBudget }),
     },
     parent_tool_use_id: null,
-    ...(message.role === "user" ? { origin: { kind: "human" } } : {}),
-    ...(shouldQuery === false ? { shouldQuery: false } : {}),
+    ...(assistant ? {} : { origin: { kind: "human" } }),
+    ...(!assistant && shouldQuery === false ? { shouldQuery: false } : {}),
   }, maxBytes)
 }
 

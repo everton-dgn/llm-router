@@ -1,7 +1,6 @@
 .DS_Store
 .idea/
 .claude/
-.serena/
 logs/
 .venv/
 __pycache__/

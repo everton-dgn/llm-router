@@ -50,19 +50,62 @@ Do not remove the compatibility helper based only on a version number. Confirm
 that the public plugin client exposes session metadata, context, agent
 switching, and updates used by the current implementation.
 
+## Routing schemas
+
+The current `config.json` and normalized route manifest use schema 2. A routing
+entry maps one classifier intent to one route:
+
+```json
+{
+  "intent": "translation_simple_brainstorm_docs_or_intermediate_work",
+  "route": "glm"
+}
+```
+
+The compatibility boundary is:
+
+| Input config | Route definitions | Routing entries | Normalized manifest |
+| --- | --- | --- | --- |
+| Missing `schema_version` or schema 1 | Four legacy routes | One `route` per `intent` | Schema 2 |
+| Schema 2 | Config-driven routes | One `route` per `intent` | Schema 2 |
+
+The classifier wire contract remains separate from the manifest version. A
+successful classification is an exact schema 1 object containing
+`schema_version`, `intent`, and `route`. A failed classification
+is an exact schema 1 object containing `schema_version` and an `error` object
+with `code` and `message`.
+
 ## Provider identifiers
 
-The default route policy expects these exact IDs:
+The shipped route manifest uses these default targets:
 
 ```text
 minimax-coding-plan/MiniMax-M3
 zai-coding-plan/glm-5.2
-claude-agent/claude-opus-4-8
+claude-agent/claude-opus-5
 openai/gpt-5.6-sol
 ```
 
-Changing an ID affects the routing policy, OpenCode configuration, execution
-policy assignments, tests, documentation, and user configuration examples.
+Route and model IDs are read from `config.json`; the runtime does not contain
+this four-target list. The installer generates the corresponding OpenCode agent
+and provider model entries. After adding, removing, or retargeting a route,
+rerun `opencode/install.sh` and restart OpenCode. Removing a route causes a
+stored decision for that route to be reclassified on the next request.
+
+Run `./route --manifest --json` before installation to validate a changed
+manifest without starting Ollama. OpenCode caches the manifest at plugin
+startup. Intent and capability changes in `config.json`, plus changes to
+`.opencode/llm-router.routes.json`, require an OpenCode restart.
+
+## Response-confidence boundary
+
+Response-confidence routing remains a future layer. In OpenCode 1.18.4, the
+post-text plugin hook exposes only the completed `text` for replacement, while
+requesting another model through the SDK sends another session message. The
+current integration therefore has no safe same-turn retry contract that can
+avoid repeating tool calls or project mutations. Keep confidence-based
+deferral out of the runtime until the pinned OpenCode contract provides that
+boundary or the design can prove equivalent safety.
 
 ## Upgrade checklist
 

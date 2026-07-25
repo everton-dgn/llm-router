@@ -79,6 +79,48 @@ test('adds missing managed collections to a minimal configuration', () => {
   assert.equal(merged.disabled_providers, undefined)
 })
 
+test('removes only unchanged stale managed entries from a previous install', () => {
+  const installedWorker = { model: 'custom/old', mode: 'subagent' }
+  const current = JSON.stringify({
+    provider: {},
+    command: {},
+    agent: {
+      'stale-unchanged': installedWorker,
+      'stale-modified': {
+        ...installedWorker,
+        description: 'User customization'
+      },
+      'user-agent': { model: 'user/model' }
+    }
+  })
+  const stateSource = JSON.stringify({
+    managedConfig: [
+      {
+        path: ['agent', 'stale-unchanged'],
+        installedValue: installedWorker
+      },
+      {
+        path: ['agent', 'stale-modified'],
+        installedValue: installedWorker
+      }
+    ]
+  })
+  const preserved = []
+
+  const merged = parse(mergeOpenCodeConfig(current, required, {
+    stateSource,
+    onPreserveStale: (propertyPath) => preserved.push(propertyPath)
+  }))
+
+  assert.equal(merged.agent['stale-unchanged'], undefined)
+  assert.equal(
+    merged.agent['stale-modified'].description,
+    'User customization'
+  )
+  assert.deepEqual(merged.agent['user-agent'], { model: 'user/model' })
+  assert.deepEqual(preserved, [['agent', 'stale-modified']])
+})
+
 test('rejects invalid or structurally incompatible existing JSONC', () => {
   assert.throws(
     () => mergeOpenCodeConfig('{"provider":,}', required),

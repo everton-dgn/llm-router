@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync } from 'node:fs'
+import { isDeepStrictEqual } from 'node:util'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -37,7 +38,40 @@ function assertManagedCollection(config, key, label) {
   return value
 }
 
-export function mergeOpenCodeConfig(currentSource, requiredSource) {
+function staleManagedConfigRecords(stateSource, required) {
+  if (stateSource === undefined) return []
+  const state = parseObject(stateSource, 'Existing llm-router installation state')
+  if (!Array.isArray(state.managedConfig)) {
+    throw new Error('Existing llm-router installation state.managedConfig must be an array')
+  }
+  return state.managedConfig.filter((record, index) => {
+    if (!record || typeof record !== 'object' || Array.isArray(record)) {
+      throw new Error(`Existing llm-router installation state.managedConfig[${index}] must be an object`)
+    }
+    const propertyPath = record.path
+    if (
+      !Array.isArray(propertyPath)
+      || propertyPath.length !== 2
+      || !managedCollections.includes(propertyPath[0])
+      || typeof propertyPath[1] !== 'string'
+      || !propertyPath[1]
+    ) return false
+    return !Object.prototype.hasOwnProperty.call(
+      assertManagedCollection(
+        required,
+        propertyPath[0],
+        'Required llm-router configuration'
+      ),
+      propertyPath[1]
+    )
+  })
+}
+
+export function mergeOpenCodeConfig(
+  currentSource,
+  requiredSource,
+  { stateSource, onPreserveStale = () => {} } = {}
+) {
   const current = parseObject(currentSource, 'Existing OpenCode configuration')
   const required = parseObject(requiredSource, 'Required llm-router configuration')
   const formattingOptions = {
@@ -52,6 +86,19 @@ export function mergeOpenCodeConfig(currentSource, requiredSource) {
       merged,
       modify(merged, propertyPath, value, { formattingOptions })
     )
+  }
+
+  for (const record of staleManagedConfigRecords(stateSource, required)) {
+    const [collection, key] = record.path
+    if (!Object.prototype.hasOwnProperty.call(current[collection] ?? {}, key)) continue
+    if (
+      Object.prototype.hasOwnProperty.call(record, 'installedValue')
+      && isDeepStrictEqual(current[collection][key], record.installedValue)
+    ) {
+      setValue(record.path, undefined)
+    } else {
+      onPreserveStale(record.path)
+    }
   }
 
   if (!Object.prototype.hasOwnProperty.call(current, '$schema')) {
@@ -89,12 +136,12 @@ export function mergeOpenCodeConfig(currentSource, requiredSource) {
 }
 
 function parseArgs(argv) {
-  const options = { current: '', output: '', required: '' }
+  const options = { current: '', output: '', required: '', state: '' }
   for (let index = 0; index < argv.length; index += 1) {
     const option = argv[index]
-    if (!['--current', '--output', '--required'].includes(option)) {
+    if (!['--current', '--output', '--required', '--state'].includes(option)) {
       throw new Error(
-        'Usage: node scripts/merge-opencode-config.mjs --current FILE --required FILE --output FILE'
+        'Usage: node scripts/merge-opencode-config.mjs --current FILE --required FILE --output FILE [--state FILE]'
       )
     }
     const value = argv[index + 1]
@@ -102,7 +149,8 @@ function parseArgs(argv) {
     options[option.slice(2)] = value
     index += 1
   }
-  for (const [key, value] of Object.entries(options)) {
+  for (const key of ['current', 'output', 'required']) {
+    const value = options[key]
     if (!value) throw new Error(`--${key} is required`)
   }
   return options
@@ -112,7 +160,14 @@ function main(argv = process.argv.slice(2)) {
   const options = parseArgs(argv)
   const current = readFileSync(options.current, 'utf8')
   const required = readFileSync(options.required, 'utf8')
-  writeFileSync(options.output, mergeOpenCodeConfig(current, required), 'utf8')
+  const stateSource = options.state ? readFileSync(options.state, 'utf8') : undefined
+  const merged = mergeOpenCodeConfig(current, required, {
+    stateSource,
+    onPreserveStale: (propertyPath) => {
+      console.error(`preserved user-modified stale config: ${propertyPath.join('.')}`)
+    }
+  })
+  writeFileSync(options.output, merged, 'utf8')
 }
 
 const isMainModule = process.argv[1]

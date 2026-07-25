@@ -9,6 +9,10 @@ reproduce the measurements and never participate in OpenCode routing. The
 production runtime uses direct handoff to native providers and the local
 adapter for the official Claude CLI.
 
+Every Claude number below was measured with Claude Opus 4.8, the model the
+bundle shipped at the time. `benchmark_config.json` now points at Claude Opus 5,
+so refreshing the Claude rows requires a new run.
+
 ## V1: initial pilot
 
 This first benchmark compares the four executors configured in `llm-router`.
@@ -82,8 +86,8 @@ No additional call was made.
 
 The six audited failures were:
 
-- MiniMax created `.serena/` in two implementations and two reviews, despite
-  the allowlist and the prohibition against new files.
+- MiniMax created local metadata directories in two implementations and two reviews,
+  despite the allowlist and the prohibition against new files.
 - GLM produced the malformed Portuguese word `répapas` in one translation.
 - Claude wrote the Portuguese word `replicas` without the required accent in
   one translation.
@@ -128,7 +132,7 @@ score.
 - Codex: difficult implementation, deep debugging, audits, and code review.
 
 MiniMax read-only containment was applied after this run in response to the
-four `.serena/` creations. At that point, it had passed only preflight and
+four local metadata directory creations. At that point, it had passed only preflight and
 local tests. V2 below executed 36 real slots with a profile limited to
 `Read,Glob,Grep`.
 

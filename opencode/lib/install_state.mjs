@@ -536,11 +536,11 @@ function writeAtomicState(configDir, previousState, nextState) {
   return nextState
 }
 
-function mergeRecords(existing, incoming, keyOf) {
+function mergeRecords(existing, incoming, keyOf, { retainMissing = true } = {}) {
   const incomingByKey = new Map(incoming.map((record) => [keyOf(record), record]))
-  const merged = existing.map((record) => {
+  const merged = existing.flatMap((record) => {
     const update = incomingByKey.get(keyOf(record))
-    if (!update) return record
+    if (!update) return retainMissing ? [record] : []
     incomingByKey.delete(keyOf(record))
     const mergedRecord = { ...record }
     if (hasOwn(update, "installedValue")) {
@@ -549,7 +549,7 @@ function mergeRecords(existing, incoming, keyOf) {
     if (hasOwn(update, "installedSha256")) {
       mergedRecord.installedSha256 = update.installedSha256
     }
-    return mergedRecord
+    return [mergedRecord]
   })
   merged.push(...incomingByKey.values())
   return merged
@@ -669,6 +669,7 @@ export function prepareInstallState(options) {
       existingState.managedConfig,
       installedConfigRecords(inputs.requiredConfig, currentConfig, false),
       (record) => JSON.stringify(record.path),
+      { retainMissing: false },
     ),
     managedDependencies: mergeRecords(
       existingState.managedDependencies,

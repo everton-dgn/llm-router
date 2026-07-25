@@ -22,7 +22,7 @@
     "test:shell": "bash tests/smoke.sh && bash tests/opencode-bundle.sh",
     "test:integration": "bash tests/routing-eval.sh",
     "test:all": "pnpm test && pnpm test:integration",
-    "test:node": "node --test tests/router-handoff.test.mjs tests/execution-policy.test.mjs tests/router-control.test.mjs tests/claude-agent.test.mjs tests/claude-agent-provider.test.mjs tests/repo-query.test.mjs tests/documentation.test.mjs tests/uninstall.test.mjs",
+    "test:node": "node --test tests/route-manifest.test.mjs tests/router-handoff.test.mjs tests/router-feedback.test.mjs tests/execution-policy.test.mjs tests/router-control.test.mjs tests/startup-notice.test.mjs tests/claude-agent.test.mjs tests/claude-agent-provider.test.mjs tests/claude-stream-contract.test.mjs tests/repo-query.test.mjs tests/documentation.test.mjs tests/uninstall.test.mjs",
     "test:python": "uv run --no-project --no-python-downloads python -m unittest tests/test_stage_verifier.py tests/test_quality_eval.py",
     "release:preflight": "node scripts/release-preflight.mjs",
     "release:next": "pnpm release:preflight && node scripts/set-release-version.mjs --mode auto --print",

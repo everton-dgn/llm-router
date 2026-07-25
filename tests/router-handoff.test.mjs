@@ -2,14 +2,28 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
-  createDirectModelHandoff,
+  createDirectModelHandoff as createDirectModelHandoffBase,
   MANUAL_TARGET_METADATA_KEY,
 } from "../opencode/lib/direct_handoff.mjs"
 import { ROUTING_STATE_METADATA_KEY } from "../opencode/lib/adaptive_routing.mjs"
 import { CLAUDE_CHECKPOINT_METADATA_KEY } from "../opencode/lib/claude_checkpoint.mjs"
 import { createOpenCodeV2ClientFromLegacyTransport } from "../opencode/lib/opencode_transport.mjs"
-import { routeCapabilities } from "../opencode/lib/routing_policy.mjs"
+import {
+  enforceMinimumRoute,
+  routeCapabilities,
+} from "../opencode/lib/routing_policy.mjs"
 import { updateSessionMetadata } from "../opencode/lib/session_metadata.mjs"
+import {
+  LEGACY_ROUTE_MANIFEST,
+  normalizeRouteManifest,
+} from "../opencode/lib/route_manifest.mjs"
+
+function createDirectModelHandoff(options) {
+  return createDirectModelHandoffBase({
+    manifest: LEGACY_ROUTE_MANIFEST,
+    ...options,
+  })
+}
 
 function userMessage(text, agent = "router-auto", sessionID = "session-1") {
   return {
@@ -53,7 +67,7 @@ function routingState({
   }
 }
 
-function classifier(route, intent = "test_intent") {
+function classifier(route, intent = `legacy_${route}`) {
   return async (request) => ({
     request,
     stdout: JSON.stringify({ schema_version: 1, intent, route }),
@@ -63,19 +77,19 @@ function classifier(route, intent = "test_intent") {
 const destinations = [
   ["minimax", "minimax", "minimax-coding-plan", "MiniMax-M3"],
   ["glm", "glm", "zai-coding-plan", "glm-5.2"],
-  ["claude", "claude", "claude-agent", "claude-opus-4-8"],
+  ["claude", "claude", "claude-agent", "claude-opus-5"],
   ["codex", "codex", "openai", "gpt-5.6-sol"],
 ]
 
 test("declares deterministic capabilities for every route", () => {
-  assert.deepEqual(routeCapabilities, {
+  assert.deepEqual(routeCapabilities(LEGACY_ROUTE_MANIFEST), {
     minimax: {
       canExecuteCommands: false,
       canHandleNonLiteralText: false,
       canMutateProject: false,
       canReadRepository: true,
       canUseAgentMentions: false,
-      canUseAttachments: false,
+      canUseAttachments: true,
       canUseExternalTools: false,
     },
     glm: {
@@ -84,7 +98,7 @@ test("declares deterministic capabilities for every route", () => {
       canMutateProject: true,
       canReadRepository: true,
       canUseAgentMentions: true,
-      canUseAttachments: true,
+      canUseAttachments: false,
       canUseExternalTools: true,
     },
     claude: {
@@ -234,7 +248,7 @@ test("auto keeps a mutating request on capable Claude", async () => {
   assert.equal(message.output.message.agent, "claude")
   assert.deepEqual(message.output.message.model, {
     providerID: "claude-agent",
-    modelID: "claude-opus-4-8",
+    modelID: "claude-opus-5",
   })
 })
 
@@ -248,7 +262,7 @@ test("auto preserves Claude for a negated mutation", async () => {
   assert.equal(message.output.message.agent, "claude")
   assert.deepEqual(message.output.message.model, {
     providerID: "claude-agent",
-    modelID: "claude-opus-4-8",
+    modelID: "claude-opus-5",
   })
 })
 
@@ -468,7 +482,7 @@ test("auto keeps a Claude attachment without adding it to the classifier prompt"
   assert.equal(message.output.message.agent, "claude")
 })
 
-test("auto routes a file-only message without invoking the classifier", async () => {
+test("auto routes a file-only image to Claude without classifying", async () => {
   const store = memorySessionClient({ "session-1": { agent: "router-auto", metadata: {} } })
   const hooks = createDirectModelHandoff({
     classify: () => {
@@ -479,9 +493,9 @@ test("auto routes a file-only message without invoking the classifier", async ()
   const message = userMessage("")
   message.output.parts.push({
     type: "file",
-    filename: "private-report.txt",
-    mime: "text/plain",
-    url: "data:text/plain,private-content",
+    filename: "private-image.png",
+    mime: "image/png",
+    url: "data:image/png;base64,cHJpdmF0ZQ==",
   })
 
   await hooks["chat.message"](message.input, message.output)
@@ -508,7 +522,7 @@ test("auto keeps a Claude agent mention without adding it to the classifier prom
   assert.equal(message.output.message.agent, "claude")
 })
 
-test("auto routes an agent-only message without invoking the classifier", async () => {
+test("auto routes an agent-only message to the first compatible worker without classifying", async () => {
   const store = memorySessionClient({ "session-1": { agent: "router-auto", metadata: {} } })
   const hooks = createDirectModelHandoff({
     classify: () => {
@@ -521,7 +535,7 @@ test("auto routes an agent-only message without invoking the classifier", async 
 
   await hooks["chat.message"](message.input, message.output)
 
-  assert.equal(message.output.message.agent, "claude")
+  assert.equal(message.output.message.agent, "glm")
 })
 
 test("auto preserves explanatory mentions of repository and web operations", async () => {
@@ -536,9 +550,14 @@ test("auto preserves explanatory mentions of repository and web operations", asy
   assert.equal(message.output.message.agent, "claude")
 })
 
-for (const [label, text, extraPart] of [
+for (const [label, text, extraPart, expectedAgent = "glm"] of [
   ["web research", "pesquise na web a previsão do tempo atual"],
-  ["attachments", "analise o anexo", { type: "file", filename: "report.txt" }],
+  [
+    "attachments",
+    "analise o anexo",
+    { type: "file", filename: "report.txt", mime: "text/plain" },
+    "claude",
+  ],
   ["command execution", "rode os testes deste projeto"],
   ["non-literal analysis", "explique o fluxo deste módulo"],
   ["creative text", "create three product ideas"],
@@ -548,7 +567,7 @@ for (const [label, text, extraPart] of [
   ["literal-looking Portuguese product naming", "liste cinco nomes para o produto"],
   ["text correction", "corrija este texto"],
 ]) {
-  test(`auto promotes MiniMax for ${label} to GLM`, async () => {
+  test(`auto promotes MiniMax for ${label} to ${expectedAgent}`, async () => {
     const store = memorySessionClient({ "session-1": { agent: "router-auto", metadata: {} } })
     const hooks = createDirectModelHandoff({ classify: classifier("minimax"), client: store.client })
     const message = userMessage(text)
@@ -556,7 +575,7 @@ for (const [label, text, extraPart] of [
 
     await hooks["chat.message"](message.input, message.output)
 
-    assert.equal(message.output.message.agent, "glm")
+    assert.equal(message.output.message.agent, expectedAgent)
   })
 }
 
@@ -939,6 +958,63 @@ test("pinned persists the first target and reuses it for the session", async () 
   )
 })
 
+test("pinned reclassifies when its stored route has been removed from the manifest", async () => {
+  const manifest = normalizeRouteManifest({
+    schema_version: 2,
+    routes: [{
+      id: "replacement",
+      display_name: "Replacement",
+      order: 0,
+      target: {
+        agent: "replacement-agent",
+        providerID: "replacement-provider",
+        modelID: "replacement-model",
+      },
+      capabilities: {
+        canExecuteCommands: true,
+        canHandleNonLiteralText: true,
+        canMutateProject: true,
+        canReadRepository: true,
+        canUseAgentMentions: true,
+        canUseAttachments: true,
+        canUseExternalTools: true,
+      },
+      acceptedMediaTypes: ["text/plain"],
+    }],
+    routing: [{ intent: "test_intent", route: "replacement" }],
+  })
+  const store = memorySessionClient({
+    "session-1": {
+      agent: "router",
+      metadata: {
+        [ROUTING_STATE_METADATA_KEY]: routingState({
+          mode: "pinned",
+          currentRoute: "removed",
+          turnsOnCurrent: 3,
+        }),
+      },
+    },
+  })
+  const hooks = createDirectModelHandoff({
+    client: store.client,
+    classify: classifier("replacement", "test_intent"),
+    manifest,
+  })
+  const message = userMessage("novo pedido", "router")
+
+  await hooks["chat.message"](message.input, message.output)
+
+  assert.equal(message.output.message.agent, "replacement-agent")
+  assert.deepEqual(message.output.message.model, {
+    providerID: "replacement-provider",
+    modelID: "replacement-model",
+  })
+  assert.deepEqual(
+    store.sessions["session-1"].metadata[ROUTING_STATE_METADATA_KEY],
+    routingState({ mode: "pinned", currentRoute: "replacement" }),
+  )
+})
+
 test("pinned persists the capable target selected for its first request", async () => {
   const store = memorySessionClient({ "session-1": { agent: "router-manual", metadata: {} } })
   const hooks = createDirectModelHandoff({
@@ -964,7 +1040,7 @@ test("pinned keeps a mutating request on its fixed legacy Claude target", async 
       target: {
         agent: "claude",
         providerID: "claude-agent",
-        modelID: "claude-opus-4-8",
+        modelID: "claude-opus-5",
       },
     },
   }
@@ -983,7 +1059,7 @@ test("pinned keeps a mutating request on its fixed legacy Claude target", async 
   assert.equal(message.output.message.agent, "claude")
   assert.deepEqual(message.output.message.model, {
     providerID: "claude-agent",
-    modelID: "claude-opus-4-8",
+    modelID: "claude-opus-5",
   })
   assert.deepEqual(store.sessions["session-1"].metadata, {
     ...metadata,
@@ -1036,7 +1112,7 @@ test("router-auto alias overrides an inherited legacy pinned target", async () =
       target: {
         agent: "claude",
         providerID: "claude-agent",
-        modelID: "claude-opus-4-8",
+        modelID: "claude-opus-5",
       },
     },
   }
@@ -1066,7 +1142,7 @@ test("manual allows repository inspection for a fixed Claude target", async () =
       target: {
         agent: "claude",
         providerID: "claude-agent",
-        modelID: "claude-opus-4-8",
+        modelID: "claude-opus-5",
       },
     },
   }
@@ -1102,7 +1178,7 @@ for (const request of ["leia README.md", "abra src/app.ts", "git status"]) {
         target: {
           agent: "claude",
           providerID: "claude-agent",
-          modelID: "claude-opus-4-8",
+          modelID: "claude-opus-5",
         },
       },
     }
@@ -1137,7 +1213,7 @@ test("manual allows command execution for a fixed Claude target", async () => {
       target: {
         agent: "claude",
         providerID: "claude-agent",
-        modelID: "claude-opus-4-8",
+        modelID: "claude-opus-5",
       },
     },
   }
@@ -1165,7 +1241,7 @@ test("manual allows command execution for a fixed Claude target", async () => {
   assert.deepEqual(store.calls.map(([method]) => method), ["get", "get", "update"])
 })
 
-test("pinned selects Claude for a file-only first request without classifying private data", async () => {
+test("pinned selects Claude for a file-only request without classifying private data", async () => {
   const store = memorySessionClient({
     "session-1": { agent: "router-manual", metadata: {} },
   })
@@ -1199,7 +1275,7 @@ test("pinned keeps a file-only request on a fixed Claude target", async () => {
       target: {
         agent: "claude",
         providerID: "claude-agent",
-        modelID: "claude-opus-4-8",
+        modelID: "claude-opus-5",
       },
     },
   }
@@ -1213,7 +1289,11 @@ test("pinned keeps a file-only request on a fixed Claude target", async () => {
     },
   })
   const message = userMessage("", "router-manual")
-  message.output.parts.push({ type: "file", filename: "private-report.txt" })
+  message.output.parts.push({
+    type: "file",
+    filename: "private-report.txt",
+    mime: "text/plain",
+  })
 
   await hooks["chat.message"](message.input, message.output)
 
@@ -1234,7 +1314,7 @@ test("pinned keeps an agent mention on a fixed Claude target", async () => {
       target: {
         agent: "claude",
         providerID: "claude-agent",
-        modelID: "claude-opus-4-8",
+        modelID: "claude-opus-5",
       },
     },
   }
@@ -1396,7 +1476,7 @@ test("manual target inherited by a fork is classified for the new session", asyn
       target: {
         agent: "claude",
         providerID: "claude-agent",
-        modelID: "claude-opus-4-8",
+        modelID: "claude-opus-5",
       },
     },
   }
@@ -1581,6 +1661,32 @@ test("auto classification failures leave the router sentinel selected", async ()
   assert.deepEqual(message.output.message, original)
 })
 
+test("auto rejects stale classifier results before handoff", async () => {
+  const store = memorySessionClient({
+    "session-1": { agent: "router-auto", metadata: { owner: "user" } },
+  })
+  const hooks = createDirectModelHandoff({
+    classify: async () => ({
+      stdout: JSON.stringify({
+        schema_version: 2,
+        intent: "literal",
+        route: "minimax",
+      }),
+    }),
+    client: store.client,
+  })
+  const message = userMessage("pedido")
+  const original = structuredClone(message.output.message)
+
+  await assert.rejects(
+    hooks["chat.message"](message.input, message.output),
+    /unsupported llm-router schema_version: 2/,
+  )
+  assert.deepEqual(message.output.message, original)
+  assert.deepEqual(store.sessions["session-1"].metadata, { owner: "user" })
+  assert.deepEqual(store.calls.map(([method]) => method), ["get"])
+})
+
 test("manual classification failures leave the router sentinel selected", async () => {
   const hooks = createDirectModelHandoff({
     classify: async () => ({ stdout: "not-json" }),
@@ -1608,9 +1714,7 @@ test("classifies the exact non-synthetic user text once", async () => {
   const hooks = createDirectModelHandoff({
     classify: async (request) => {
       received.push(request)
-      return {
-        stdout: JSON.stringify({ schema_version: 1, intent: "literal", route: "minimax" }),
-      }
+      return classifier("minimax")()
     },
     client: store.client,
   })
@@ -1664,4 +1768,406 @@ test("keeps the toast non-blocking after a selection succeeds", async () => {
   await hooks["chat.message"](message.input, message.output)
 
   assert.equal(message.output.message.agent, "glm")
+})
+
+test("keeps a literal read-only question on a literal-only selected route", () => {
+  const questions = [
+    "qual maior arquivo do repo?",
+    "quantas linhas tem o README",
+    "qual o maior arquivo do repositorio",
+    "which file has the most lines?",
+  ]
+  for (const question of questions) {
+    assert.equal(
+      enforceMinimumRoute("minimax", question, {}),
+      "minimax",
+      `expected MiniMax to keep the literal question: ${question}`,
+    )
+  }
+})
+
+test("still promotes MiniMax-forbidden work from a literal-only selected route", () => {
+  const forbidden = [
+    "traduza este README",
+    "resuma este log",
+    "reescreva esta documentacao",
+  ]
+  for (const request of forbidden) {
+    assert.equal(
+      enforceMinimumRoute("minimax", request, {}),
+      "glm",
+      `expected the forbidden-intent veto to survive: ${request}`,
+    )
+  }
+})
+
+test("promotes non-literal work even when a literal-only route was selected", () => {
+  const interpretive = [
+    "explique o que esse codigo faz",
+    "analise estes dados",
+    "compare estas duas abordagens",
+    "avalie os prós e contras",
+  ]
+  for (const request of interpretive) {
+    assert.equal(
+      enforceMinimumRoute("minimax", request, {}),
+      "glm",
+      `expected the non-literal floor to survive a wrong literal intent: ${request}`,
+    )
+  }
+})
+
+function fileMessage(text, mediaTypes, agent = "router-auto", sessionID = "session-1") {
+  const message = userMessage(text, agent, sessionID)
+  for (const [index, mime] of mediaTypes.entries()) {
+    message.output.parts.push({
+      type: "file",
+      filename: `attachment-${index}`,
+      ...(mime === undefined ? {} : { mime }),
+      url: `file:///attachment-${index}`,
+    })
+  }
+  return message
+}
+
+test("auto keeps the classified route when it accepts every attachment", async () => {
+  const announcements = []
+  const store = memorySessionClient({ "session-1": { agent: "router-auto", metadata: {} } })
+  const hooks = createDirectModelHandoff({
+    classify: classifier("claude"),
+    client: store.client,
+    announce: async (event) => { announcements.push(event) },
+  })
+  const message = fileMessage("descreva esta imagem", ["image/png"])
+
+  await hooks["chat.message"](message.input, message.output)
+
+  assert.equal(message.output.message.agent, "claude")
+  assert.deepEqual(announcements.map(({ mediaFallback }) => mediaFallback), [undefined])
+})
+
+test("auto keeps the classified route for several compatible attachments", async () => {
+  const store = memorySessionClient({ "session-1": { agent: "router-auto", metadata: {} } })
+  const hooks = createDirectModelHandoff({
+    classify: classifier("claude"),
+    client: store.client,
+  })
+  const message = fileMessage("compare os anexos", [
+    "image/png",
+    "application/pdf",
+    "text/plain",
+  ])
+
+  await hooks["chat.message"](message.input, message.output)
+
+  assert.equal(message.output.message.agent, "claude")
+})
+
+test("auto leaves a route that cannot read one of the attachments", async () => {
+  const announcements = []
+  const store = memorySessionClient({ "session-1": { agent: "router-auto", metadata: {} } })
+  const hooks = createDirectModelHandoff({
+    classify: classifier("glm"),
+    client: store.client,
+    announce: async (event) => { announcements.push(event) },
+  })
+  const message = fileMessage("resuma o anexo", ["text/plain", "image/png"])
+
+  await hooks["chat.message"](message.input, message.output)
+
+  assert.equal(message.output.message.agent, "claude")
+  assert.deepEqual(announcements.map(({ mediaFallback }) => mediaFallback), [
+    { from: "glm", to: "claude", unsupported: ["text/plain", "image/png"] },
+  ])
+})
+
+test("auto reports the forced fallback once per repeated attachment", async () => {
+  const announcements = []
+  const store = memorySessionClient({ "session-1": { agent: "router-auto", metadata: {} } })
+  const hooks = createDirectModelHandoff({
+    classify: classifier("glm"),
+    client: store.client,
+    announce: async (event) => { announcements.push(event) },
+  })
+  const first = fileMessage("resuma o anexo", ["image/png"])
+  const second = fileMessage("e agora descreva as cores", ["image/png"])
+  const third = userMessage("obrigado")
+  const fourth = fileMessage("mais uma imagem", ["image/png"])
+
+  await hooks["chat.message"](first.input, first.output)
+  await hooks["chat.message"](second.input, second.output)
+  await hooks["chat.message"](third.input, third.output)
+  await hooks["chat.message"](fourth.input, fourth.output)
+
+  assert.deepEqual(
+    announcements.map(({ route, mediaFallback }) => [route, mediaFallback?.unsupported]),
+    [
+      ["claude", ["image/png"]],
+      ["claude", undefined],
+      ["glm", undefined],
+      ["claude", ["image/png"]],
+    ],
+  )
+})
+
+test("a failing fallback notice never blocks the selected worker", async () => {
+  const store = memorySessionClient({ "session-1": { agent: "router-auto", metadata: {} } })
+  const hooks = createDirectModelHandoff({
+    classify: classifier("glm"),
+    client: store.client,
+    announce: async () => {
+      throw new Error("toast transport is unavailable")
+    },
+  })
+  const message = fileMessage("resuma o anexo", ["image/png"])
+
+  await hooks["chat.message"](message.input, message.output)
+
+  assert.equal(message.output.message.agent, "claude")
+  assert.deepEqual(
+    store.sessions["session-1"].metadata[ROUTING_STATE_METADATA_KEY],
+    routingState({ mode: "auto", currentRoute: "claude" }),
+  )
+})
+
+for (const [label, mediaTypes, expected] of [
+  ["an unsupported media type", ["audio/mpeg"], /no route accepts the attached media types: audio\/mpeg/],
+  ["an unknown media type", [undefined], /no route accepts the attached media types: application\/octet-stream/],
+  [
+    "media types no single route accepts",
+    ["application/pdf", "video/mp4"],
+    /no single route accepts every attached media type: application\/pdf, video\/mp4/,
+  ],
+]) {
+  test(`routing stops before the model on ${label}`, async () => {
+    const store = memorySessionClient({ "session-1": { agent: "router-auto", metadata: {} } })
+    const hooks = createDirectModelHandoff({
+      classify: classifier("claude"),
+      client: store.client,
+    })
+    const message = fileMessage("analise o anexo", mediaTypes)
+
+    await assert.rejects(
+      () => hooks["chat.message"](message.input, message.output),
+      (error) => {
+        assert.equal(error.code, "unsupported_media_type")
+        assert.match(error.message, expected)
+        return true
+      },
+    )
+    assert.equal(message.output.message.agent, "router-auto")
+    assert.equal(
+      store.sessions["session-1"].metadata[ROUTING_STATE_METADATA_KEY],
+      undefined,
+    )
+  })
+}
+
+test("adaptive switches immediately when the current route cannot read the attachment", async () => {
+  const announcements = []
+  const store = memorySessionClient({
+    "session-1": {
+      agent: "router-adaptive",
+      metadata: {
+        [ROUTING_STATE_METADATA_KEY]: routingState({
+          mode: "adaptive",
+          currentRoute: "glm",
+          turnsOnCurrent: 1,
+          cooldownTurnsRemaining: 3,
+        }),
+      },
+    },
+  })
+  const hooks = createDirectModelHandoff({
+    classify: classifier("glm"),
+    client: store.client,
+    announce: async (event) => { announcements.push(event) },
+  })
+  const message = fileMessage("o que aparece aqui", ["image/png"], "router-adaptive")
+
+  await hooks["chat.message"](message.input, message.output)
+
+  assert.equal(message.output.message.agent, "claude")
+  assert.deepEqual(
+    store.sessions["session-1"].metadata[ROUTING_STATE_METADATA_KEY],
+    routingState({
+      mode: "adaptive",
+      currentRoute: "claude",
+      turnsOnCurrent: 1,
+      cooldownTurnsRemaining: 1,
+    }),
+  )
+  assert.deepEqual(announcements.map(({ mediaFallback }) => mediaFallback), [
+    { from: "glm", to: "claude", unsupported: ["image/png"] },
+  ])
+})
+
+test("pinned borrows a compatible route for one message and keeps its pinned route", async () => {
+  const announcements = []
+  const store = memorySessionClient({
+    "session-1": {
+      agent: "router-manual",
+      metadata: {
+        [ROUTING_STATE_METADATA_KEY]: routingState({
+          mode: "pinned",
+          currentRoute: "glm",
+          turnsOnCurrent: 2,
+        }),
+      },
+    },
+  })
+  const hooks = createDirectModelHandoff({
+    classify: () => {
+      throw new Error("a pinned session must not classify again")
+    },
+    client: store.client,
+    announce: async (event) => { announcements.push(event) },
+  })
+  const withImage = fileMessage("leia esta imagem", ["image/png"], "router-manual")
+  const withoutImage = userMessage("continue daqui", "router-manual")
+
+  await hooks["chat.message"](withImage.input, withImage.output)
+
+  assert.equal(withImage.output.message.agent, "claude")
+  assert.deepEqual(
+    store.sessions["session-1"].metadata[ROUTING_STATE_METADATA_KEY],
+    routingState({ mode: "pinned", currentRoute: "glm", turnsOnCurrent: 3 }),
+  )
+
+  await hooks["chat.message"](withoutImage.input, withoutImage.output)
+
+  assert.equal(withoutImage.output.message.agent, "glm")
+  assert.deepEqual(
+    store.sessions["session-1"].metadata[ROUTING_STATE_METADATA_KEY],
+    routingState({ mode: "pinned", currentRoute: "glm", turnsOnCurrent: 4 }),
+  )
+  assert.deepEqual(announcements.map(({ mediaFallback }) => mediaFallback), [
+    { from: "glm", to: "claude", unsupported: ["image/png"] },
+    undefined,
+  ])
+})
+
+test("a file-only message reuses the session route when it accepts the attachment", async () => {
+  const store = memorySessionClient({
+    "session-1": {
+      agent: "router-auto",
+      metadata: {
+        [ROUTING_STATE_METADATA_KEY]: routingState({
+          mode: "auto",
+          currentRoute: "codex",
+        }),
+      },
+    },
+  })
+  const hooks = createDirectModelHandoff({
+    classify: () => {
+      throw new Error("file-only routing must not invoke the classifier")
+    },
+    client: store.client,
+  })
+  const message = fileMessage("", ["image/png"])
+
+  await hooks["chat.message"](message.input, message.output)
+
+  assert.equal(message.output.message.agent, "codex")
+})
+
+test("a file-only message in a new session uses the cheapest compatible route", async () => {
+  const announcements = []
+  const store = memorySessionClient({ "session-1": { agent: "router-auto", metadata: {} } })
+  const hooks = createDirectModelHandoff({
+    classify: () => {
+      throw new Error("file-only routing must not invoke the classifier")
+    },
+    client: store.client,
+    announce: async (event) => { announcements.push(event) },
+  })
+  const message = fileMessage("", ["image/png"])
+
+  await hooks["chat.message"](message.input, message.output)
+
+  assert.equal(message.output.message.agent, "claude")
+  assert.deepEqual(announcements.map(({ mediaFallback }) => mediaFallback), [undefined])
+})
+
+test("a file-only message leaves a session route that cannot read the attachment", async () => {
+  const announcements = []
+  const store = memorySessionClient({
+    "session-1": {
+      agent: "router-auto",
+      metadata: {
+        [ROUTING_STATE_METADATA_KEY]: routingState({
+          mode: "auto",
+          currentRoute: "glm",
+        }),
+      },
+    },
+  })
+  const hooks = createDirectModelHandoff({
+    classify: () => {
+      throw new Error("file-only routing must not invoke the classifier")
+    },
+    client: store.client,
+    announce: async (event) => { announcements.push(event) },
+  })
+  const message = fileMessage("", ["image/png"])
+
+  await hooks["chat.message"](message.input, message.output)
+
+  assert.equal(message.output.message.agent, "claude")
+  assert.deepEqual(announcements.map(({ mediaFallback }) => mediaFallback), [
+    { from: "glm", to: "claude", unsupported: ["image/png"] },
+  ])
+})
+
+test("a data URL supplies the media type when the attachment declares none", async () => {
+  const store = memorySessionClient({ "session-1": { agent: "router-auto", metadata: {} } })
+  const hooks = createDirectModelHandoff({
+    classify: classifier("glm"),
+    client: store.client,
+  })
+  const message = userMessage("resuma o anexo")
+  message.output.parts.push({
+    type: "file",
+    filename: "evidence.png",
+    url: "data:image/png;base64,cHJpdmF0ZQ==",
+  })
+
+  await hooks["chat.message"](message.input, message.output)
+
+  assert.equal(message.output.message.agent, "claude")
+})
+
+test("auto keeps a literal request with an image on the cheapest route", async () => {
+  const announcements = []
+  const store = memorySessionClient({ "session-1": { agent: "router-auto", metadata: {} } })
+  const hooks = createDirectModelHandoff({
+    classify: classifier("minimax"),
+    client: store.client,
+    announce: async (event) => { announcements.push(event) },
+  })
+  const message = fileMessage("liste os itens desta imagem", ["image/png"])
+
+  await hooks["chat.message"](message.input, message.output)
+
+  assert.equal(message.output.message.agent, "minimax")
+  assert.deepEqual(announcements.map(({ mediaFallback }) => mediaFallback), [undefined])
+})
+
+test("auto leaves MiniMax for an attachment it cannot read", async () => {
+  const announcements = []
+  const store = memorySessionClient({ "session-1": { agent: "router-auto", metadata: {} } })
+  const hooks = createDirectModelHandoff({
+    classify: classifier("minimax"),
+    client: store.client,
+    announce: async (event) => { announcements.push(event) },
+  })
+  const message = fileMessage("liste os itens deste anexo", ["application/pdf"])
+
+  await hooks["chat.message"](message.input, message.output)
+
+  assert.equal(message.output.message.agent, "claude")
+  assert.deepEqual(announcements.map(({ mediaFallback }) => mediaFallback), [
+    { from: "minimax", to: "claude", unsupported: ["application/pdf"] },
+  ])
 })

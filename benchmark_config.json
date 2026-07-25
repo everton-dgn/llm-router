@@ -3,7 +3,7 @@
   "routes": [
     {
       "name": "claude",
-      "display_name": "Claude Opus 4.8 (dynamic effort)",
+      "display_name": "Claude Opus 5 (dynamic effort)",
       "headless": {
         "env": {
           "CLAUDE_CONFIG_DIR": "${HOME}/.claude"
@@ -20,7 +20,7 @@
             "${HOME}/.claude/system-prompt/append.md",
             "--dangerously-skip-permissions",
             "--model",
-            "claude-opus-4-8",
+            "claude-opus-5",
             "--effort",
             "{effort}"
           ],
@@ -37,7 +37,7 @@
             "--tools",
             "",
             "--model",
-            "claude-opus-4-8",
+            "claude-opus-5",
             "--effort",
             "xhigh"
           ],

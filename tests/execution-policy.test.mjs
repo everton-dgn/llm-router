@@ -25,7 +25,7 @@ function basePolicy() {
       claude: { profile: "native" },
     },
     models: {
-      "claude-agent/claude-opus-4-8": { profile: "native" },
+      "claude-agent/claude-opus-5": { profile: "native" },
       "openai/gpt-5.6-sol": { profile: "restricted" },
     },
     profiles: {
@@ -254,12 +254,12 @@ test("exact model override wins over the stable agent assignment", () => {
   const resolved = resolveExecutionPolicy(basePolicy(), {
     agent: "router",
     providerID: "claude-agent",
-    modelID: "claude-opus-4-8",
+    modelID: "claude-opus-5",
   })
 
   assert.equal(resolved.profile, "native")
   assert.equal(resolved.source, "model")
-  assert.equal(resolved.selector, "claude-agent/claude-opus-4-8")
+  assert.equal(resolved.selector, "claude-agent/claude-opus-5")
   assert.deepEqual(resolved.permissions, [])
   assert.deepEqual(resolved.limits, {})
 })
@@ -312,7 +312,7 @@ test("native adds no permission rules while full explicitly allows the wildcard"
   const native = resolveExecutionPolicy(policy, {
     agent: "claude",
     providerID: "claude-agent",
-    modelID: "claude-opus-4-8",
+    modelID: "claude-opus-5",
   })
   const full = resolveExecutionPolicy(policy, {
     agent: "unknown",

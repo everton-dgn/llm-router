@@ -53,9 +53,16 @@ function structuredRequest(text = "request") {
 }
 
 test("accepts exactly one querying user turn in the structured message stream", () => {
-  const historical = {
+  const historicalUser = {
     type: "user",
-    message: { role: "assistant", content: [{ type: "text", text: "history" }] },
+    message: { role: "user", content: [{ type: "text", text: "history" }] },
+    parent_tool_use_id: null,
+    origin: { kind: "human" },
+    shouldQuery: false,
+  }
+  const historicalAssistant = {
+    type: "assistant",
+    message: { role: "assistant", content: [{ type: "text", text: "answer" }] },
     parent_tool_use_id: null,
   }
   const current = {
@@ -66,16 +73,62 @@ test("accepts exactly one querying user turn in the structured message stream", 
   }
 
   assert.doesNotThrow(() => createClaudeMessageStream([
-    { ...historical, shouldQuery: false },
+    historicalUser,
+    historicalAssistant,
     current,
   ]))
   assert.throws(
-    () => createClaudeMessageStream([historical, current]),
+    () => createClaudeMessageStream([{ ...historicalUser, shouldQuery: undefined }, current]),
     /historical SDKUserMessage must set shouldQuery to false/,
   )
   assert.throws(
     () => createClaudeMessageStream([{ ...current, shouldQuery: false }]),
     /final SDKUserMessage must query as the user/,
+  )
+})
+
+// Claude Code parses streaming input line by line and rejects a user envelope
+// whose inner role is "assistant", which broke every handoff that followed an
+// assistant turn.
+test("rejects an assistant turn disguised as a user envelope", () => {
+  const current = {
+    type: "user",
+    message: { role: "user", content: [{ type: "text", text: "current" }] },
+    parent_tool_use_id: null,
+    origin: { kind: "human" },
+  }
+
+  assert.throws(
+    () => createClaudeMessageStream([
+      {
+        type: "user",
+        message: { role: "assistant", content: [{ type: "text", text: "answer" }] },
+        parent_tool_use_id: null,
+        shouldQuery: false,
+      },
+      current,
+    ]),
+    /invalid SDKUserMessage/,
+  )
+  assert.throws(
+    () => createClaudeMessageStream([
+      {
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "text", text: "answer" }] },
+        parent_tool_use_id: null,
+        shouldQuery: false,
+      },
+      current,
+    ]),
+    /assistant SDKMessage must replay as history/,
+  )
+  assert.throws(
+    () => createClaudeMessageStream([{
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "text", text: "answer" }] },
+      parent_tool_use_id: null,
+    }]),
+    /assistant SDKMessage must replay as history/,
   )
 })
 
@@ -85,13 +138,13 @@ test("builds Agent SDK options with the local Claude executable and complete too
     abortController,
     cwd: process.cwd(),
     claudePath: process.execPath,
-    model: "claude-opus-4-8",
+    model: "claude-opus-5",
     maxTurns: 7,
   })
 
   assert.equal(options.abortController, abortController)
   assert.equal(options.cwd, process.cwd())
-  assert.equal(options.model, "claude-opus-4-8")
+  assert.equal(options.model, "claude-opus-5")
   assert.equal(options.maxTurns, 7)
   assert.equal(options.pathToClaudeCodeExecutable, process.execPath)
   assert.deepEqual(options.tools, { type: "preset", preset: "claude_code" })
@@ -110,6 +163,29 @@ test("builds Agent SDK options with the local Claude executable and complete too
   })
   assert.match(CLAUDE_SYSTEM_PROMPT, /Use Claude Code built-in tools/)
   assert.doesNotMatch(CLAUDE_SYSTEM_PROMPT, /no tools|Stay read-only/)
+  assert.equal("effort" in options, false)
+})
+
+test("forwards the configured reasoning effort to the Agent SDK", () => {
+  const options = buildClaudeAgentOptions({
+    abortController: new AbortController(),
+    cwd: process.cwd(),
+    claudePath: process.execPath,
+    model: "claude-opus-5",
+    effort: "xhigh",
+  })
+
+  assert.equal(options.effort, "xhigh")
+  assert.throws(
+    () => buildClaudeAgentOptions({
+      abortController: new AbortController(),
+      cwd: process.cwd(),
+      claudePath: process.execPath,
+      model: "claude-opus-5",
+      effort: "  ",
+    }),
+    /effort must be a non-empty string/,
+  )
 })
 
 test("prepares a provider permission profile without replacing native tools", async () => {
@@ -342,6 +418,42 @@ test("passes only required runtime, Claude authentication, proxy, and TLS variab
   assert.equal("UNRELATED_SECRET" in env, false)
 })
 
+// OpenCode starts from a desktop app whose environment has no CLAUDE_CONFIG_DIR,
+// so Claude Code used to read a profile with no session and report the login as
+// expired on every handoff.
+test("pins the configured Claude profile directory in the child environment", () => {
+  const parentEnv = { HOME: "/safe/home", PATH: "/safe/bin" }
+
+  assert.deepEqual(buildClaudeEnvironment(parentEnv, { configDir: "/safe/home/.claude" }), {
+    HOME: "/safe/home",
+    PATH: "/safe/bin",
+    CLAUDE_CONFIG_DIR: "/safe/home/.claude",
+  })
+  assert.deepEqual(
+    buildClaudeEnvironment(
+      { ...parentEnv, CLAUDE_CONFIG_DIR: "/shell/profile" },
+      { configDir: "/safe/home/.claude" },
+    ).CLAUDE_CONFIG_DIR,
+    "/safe/home/.claude",
+  )
+  assert.equal("CLAUDE_CONFIG_DIR" in buildClaudeEnvironment(parentEnv), false)
+  assert.equal(
+    buildClaudeAgentOptions({
+      abortController: new AbortController(),
+      cwd: process.cwd(),
+      claudePath: process.execPath,
+      model: "claude-opus-5",
+      claudeConfigDir: "/safe/home/.claude",
+      parentEnv,
+    }).env.CLAUDE_CONFIG_DIR,
+    "/safe/home/.claude",
+  )
+  assert.throws(
+    () => buildClaudeEnvironment(parentEnv, { configDir: "relative/.claude" }),
+    /config directory must be an absolute path/,
+  )
+})
+
 test("filters exported shell functions even when their names are allowed", () => {
   assert.deepEqual(buildClaudeEnvironment({
     HOME: "/safe/home",
@@ -360,7 +472,7 @@ test("rejects invalid Agent SDK options", () => {
     abortController: new AbortController(),
     cwd: process.cwd(),
     claudePath: process.execPath,
-    model: "claude-opus-4-8",
+    model: "claude-opus-5",
   }
   assert.throws(() => buildClaudeAgentOptions({ ...common, cwd: "" }), /working directory/)
   assert.throws(() => buildClaudeAgentOptions({ ...common, claudePath: "claude" }), /must be absolute/)
@@ -435,7 +547,7 @@ test("runs query once without closing the exhausted SDK query again", async () =
     query: harness.query,
     request: structuredRequest("serialized request"),
     cwd: process.cwd(),
-    model: "claude-opus-4-8",
+    model: "claude-opus-5",
     claudePath: process.execPath,
     parentSignal: new AbortController().signal,
     timeoutMs: 1_000,
@@ -463,6 +575,7 @@ test("propagates parent abort and closes a non-cooperative SDK query", async () 
     query: harness.query,
     request: structuredRequest(),
     cwd: process.cwd(),
+    model: "claude-opus-5",
     claudePath: process.execPath,
     parentSignal: parent.signal,
     timeoutMs: 1_000,
@@ -486,6 +599,7 @@ test("enforces the timeout even when the SDK query does not settle", async () =>
       query: harness.query,
       request: structuredRequest(),
       cwd: process.cwd(),
+      model: "claude-opus-5",
       claudePath: process.execPath,
       timeoutMs: 20,
     }),
@@ -505,6 +619,7 @@ test("reports synchronous query failures and invalid requests", async () => {
       },
       request: structuredRequest(),
       cwd: process.cwd(),
+      model: "claude-opus-5",
       claudePath: process.execPath,
       timeoutMs: 1_000,
     }),
@@ -524,6 +639,7 @@ test("reports synchronous query failures and invalid requests", async () => {
       query: undefined,
       request: structuredRequest(),
       cwd: process.cwd(),
+      model: "claude-opus-5",
       claudePath: process.execPath,
     }),
     /query factory/,

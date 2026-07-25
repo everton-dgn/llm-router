@@ -1,6 +1,6 @@
 # Claude through the Agent SDK
 
-Claude Opus 4.8 is exposed to OpenCode through the local `claude-agent`
+Claude Opus 5 is exposed to OpenCode through the local `claude-agent`
 provider. The provider implements `LanguageModelV3` and calls `query()` from
 `@anthropic-ai/claude-agent-sdk`.
 
@@ -9,6 +9,30 @@ authentication. The adapter receives its absolute path through
 `pathToClaudeCodeExecutable`, does not search files for credentials, and does
 not persist credentials. It filters the parent environment and passes allowed
 `ANTHROPIC_` and `CLAUDE_` authentication variables to the subprocess.
+
+The Claude profile travels through configuration rather than the environment.
+The installer resolves `CLAUDE_CONFIG_DIR`, falling back to `~/.claude`, and
+writes it as `claudeConfigDir`; the adapter exports it to the subprocess.
+OpenCode usually starts from a desktop app that never inherits the shell
+exports, and without a pinned profile Claude Code reads a directory with no
+session and answers every handoff with an expired-login error. The installer
+also runs `claude auth status` for that directory and warns when it reports no
+active session.
+
+## Reasoning effort
+
+The `effort` option of the `claude-agent` provider sets the reasoning level for
+every call. The bundle ships `xhigh`, and the accepted levels are `low`,
+`medium`, `high`, `xhigh`, and `max`. A model that does not support the
+requested level falls back to the closest one it supports.
+
+```jsonc
+"claude-agent": {
+  "options": {
+    "effort": "xhigh"
+  }
+}
+```
 
 ## Flow
 
@@ -39,7 +63,9 @@ parallel Claude session.
 Before the call, the plugin reads `v2.session.context` and builds a typed
 sequence:
 
-- historical messages use `shouldQuery: false`;
+- historical user messages use `shouldQuery: false`;
+- historical assistant turns travel as `type: "assistant"` messages, because
+  Claude Code rejects a `user` envelope whose inner role is `assistant`;
 - the last message is always the user's current request;
 - synthetic text, reasoning, and arbitrary tool history are excluded;
 - completed `task` or `agent` results may be included as reported context;
@@ -53,7 +79,7 @@ Turn 2: router selects Claude
 Claude turn 2: receives the active conversation, including GLM's visible response
 ```
 
-The transport limit is 2 MiB, with space reserved for the envelope. The current
+The transport limit is 32 MiB, with space reserved for the envelope. The current
 message always has priority. Older messages are selected from newest to oldest
 and may be dropped to fit. This ceiling measures serialized bytes and does not
 estimate tokens.
@@ -192,8 +218,8 @@ add an orchestrator turn after the worker.
 | --- | ---: |
 | Total Claude timeout | 15 minutes |
 | Permission timeout | 30 seconds |
-| Serialized input | 2 MiB |
-| Serialized output | 4 MiB |
+| Serialized input | 32 MiB |
+| Serialized output | 64 MiB |
 
 The Agent SDK does not expose an enforceable limit equivalent to
 `maxOutputTokens`. When OpenCode sends this field, the provider returns an

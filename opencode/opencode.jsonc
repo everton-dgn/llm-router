@@ -41,14 +41,21 @@
       "npm": "__CLAUDE_AGENT_PROVIDER_URL__",
       "name": "Claude Agent SDK",
       "options": {
-        "claudePath": "__CLAUDE_CODE_PATH__"
+        "claudePath": "__CLAUDE_CODE_PATH__",
+        "claudeConfigDir": "__CLAUDE_CONFIG_DIR__",
+        "effort": "xhigh"
       },
       "models": {
-        "claude-opus-4-8": {
-          "name": "Claude Opus 4.8",
+        "claude-opus-5": {
+          "name": "Claude Opus 5",
+          "attachment": true,
+          "modalities": {
+            "input": ["image", "pdf", "text"],
+            "output": ["text"]
+          },
           "limit": {
-            "context": 200000,
-            "output": 32000
+            "context": 1000000,
+            "output": 64000
           }
         }
       }
@@ -190,9 +197,9 @@
       "prompt": "Handle the user's current request directly and completely. Inspect relevant sources before changing code, use the available OpenCode tools as needed, keep edits scoped, and run focused validation. Do not route again."
     },
     "claude": {
-      "description": "Claude Opus 4.8 through the local Claude Agent SDK with its native coding tools.",
+      "description": "Claude Opus 5 through the local Claude Agent SDK with its native coding tools.",
       "mode": "subagent",
-      "model": "claude-agent/claude-opus-4-8",
+      "model": "claude-agent/claude-opus-5",
       "steps": 24,
       "prompt": "Handle the user's current request directly and completely. Use Claude Code tools as needed, inspect relevant sources before changing code, keep edits scoped, and run focused validation. Do not route to another model or wait for another coordinator."
     },

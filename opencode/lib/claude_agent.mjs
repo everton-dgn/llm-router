@@ -1,7 +1,6 @@
 import { realpath } from "node:fs/promises"
 import path from "node:path"
 
-export const CLAUDE_MODEL = "claude-opus-4-8"
 export const CLAUDE_TIMEOUT_MS = 15 * 60 * 1000
 export const CLAUDE_PERMISSION_TIMEOUT_MS = 30 * 1000
 export const CLAUDE_SYSTEM_PROMPT = [
@@ -61,9 +60,16 @@ function isAllowedEnvironmentName(name) {
     || normalized.startsWith("LC_")
 }
 
-export function buildClaudeEnvironment(parentEnv) {
+// OpenCode runs from a desktop app, so `CLAUDE_CONFIG_DIR` is usually absent
+// even when the user's shell exports it. Claude Code then reads a profile with
+// no session and reports the login as expired, so the resolved directory
+// travels with the configuration instead of the surrounding environment.
+export function buildClaudeEnvironment(parentEnv, { configDir } = {}) {
   if (!parentEnv || typeof parentEnv !== "object" || Array.isArray(parentEnv)) {
     throw new Error("Claude parent environment must be an object")
+  }
+  if (configDir !== undefined && (typeof configDir !== "string" || !path.isAbsolute(configDir))) {
+    throw new Error("Claude config directory must be an absolute path")
   }
   const env = {}
   for (const [name, value] of Object.entries(parentEnv)) {
@@ -71,6 +77,7 @@ export function buildClaudeEnvironment(parentEnv) {
     if (value.trimStart().startsWith("()")) continue
     env[name] = value
   }
+  if (configDir !== undefined) env.CLAUDE_CONFIG_DIR = configDir
   return env
 }
 
@@ -79,24 +86,33 @@ export function createClaudeMessageStream(messages) {
     throw new Error("Claude request must contain at least one SDKUserMessage")
   }
   for (const [index, message] of messages.entries()) {
+    const historical = index < messages.length - 1
     if (
-      message?.type !== "user"
+      !message
+      || !["assistant", "user"].includes(message.type)
       || message.parent_tool_use_id !== null
       || !message.message
-      || !["assistant", "user"].includes(message.message.role)
+      || message.message.role !== message.type
       || !Array.isArray(message.message.content)
       || message.message.content.length === 0
       || (message.shouldQuery !== undefined && typeof message.shouldQuery !== "boolean")
     ) {
       throw new Error("Claude request contains an invalid SDKUserMessage")
     }
-    if (index < messages.length - 1 && message.shouldQuery !== false) {
+    // Claude Code parses streaming input line by line and rejects a "user"
+    // envelope whose inner role is "assistant", so replayed assistant turns
+    // travel as assistant messages, which the parser accepts as transcript
+    // replay without starting a turn.
+    if (message.type === "assistant") {
+      if (!historical || message.shouldQuery !== undefined) {
+        throw new Error("Claude assistant SDKMessage must replay as history")
+      }
+      continue
+    }
+    if (historical && message.shouldQuery !== false) {
       throw new Error("Claude historical SDKUserMessage must set shouldQuery to false")
     }
-    if (
-      index === messages.length - 1
-      && (message.message.role !== "user" || message.shouldQuery === false)
-    ) {
+    if (!historical && message.shouldQuery === false) {
       throw new Error("Claude final SDKUserMessage must query as the user")
     }
   }
@@ -315,8 +331,10 @@ export function prepareClaudePermissionPolicy({
 export function buildClaudeAgentOptions({
   abortController,
   cwd,
-  model = CLAUDE_MODEL,
+  model,
+  effort,
   claudePath,
+  claudeConfigDir,
   parentEnv = process.env,
   permissionCallback,
   permissionProfile,
@@ -332,6 +350,9 @@ export function buildClaudeAgentOptions({
   if (typeof model !== "string" || !model.trim()) {
     throw new Error("Claude model must be a non-empty string")
   }
+  if (effort !== undefined && (typeof effort !== "string" || !effort.trim())) {
+    throw new Error("Claude effort must be a non-empty string")
+  }
   if (!(abortController instanceof AbortController)) {
     throw new Error("Claude abort controller is required")
   }
@@ -346,11 +367,12 @@ export function buildClaudeAgentOptions({
   return {
     abortController,
     cwd,
-    env: buildClaudeEnvironment(parentEnv),
+    env: buildClaudeEnvironment(parentEnv, { configDir: claudeConfigDir }),
     extraArgs: {
       "no-chrome": null,
       "safe-mode": null,
     },
+    ...(effort !== undefined ? { effort } : {}),
     includePartialMessages: true,
     mcpServers: {},
     ...(maxTurns !== undefined ? { maxTurns } : {}),
@@ -416,8 +438,10 @@ export async function runClaudeAgent({
   query,
   request,
   cwd,
-  model = CLAUDE_MODEL,
+  model,
+  effort,
   claudePath,
+  claudeConfigDir,
   parentSignal,
   timeoutMs = CLAUDE_TIMEOUT_MS,
   onMessage,
@@ -447,7 +471,9 @@ export async function runClaudeAgent({
     abortController,
     cwd: workspace,
     model,
+    effort,
     claudePath,
+    claudeConfigDir,
     parentEnv,
     permissionCallback,
     permissionProfile,
@@ -461,7 +487,7 @@ export async function runClaudeAgent({
   let failure
   let completed = false
   let interruptReject
-  const interrupted = new Promise((resolve, reject) => {
+  const interrupted = new Promise((_, reject) => {
     interruptReject = reject
   })
   const interrupt = (source, reason) => {
