@@ -8,6 +8,7 @@ import {
   assertRecoveredReleasePullRequest,
   createMergePullRequestArguments,
   createReleaseBranchName,
+  createReleaseCommitArguments,
   deleteRemoteReleaseBranch,
   ensureReleaseBranch,
   findPendingReleaseMerge,
@@ -23,6 +24,8 @@ const sourceSha = 'a'.repeat(40)
 const releaseSha = 'b'.repeat(40)
 const baseSha = 'c'.repeat(40)
 const mergeSha = 'd'.repeat(40)
+const skipMarkerPattern =
+  /\[(?:skip ci|ci skip|no ci|skip actions|actions skip)\]|skip-checks/iu
 
 test('accepts only successful main push CI from the current repository', () => {
   const context = parseAutomaticReleaseContext({
@@ -200,6 +203,39 @@ test('merges only with normal merge and the exact release SHA', () => {
   assert.ok(args.includes(`sha=${releaseSha}`))
   assert.ok(args.includes('merge_method=merge'))
   assert.equal(args.some(argument => /squash|rebase|approve/iu.test(argument)), false)
+  assert.equal(args.some(argument => skipMarkerPattern.test(argument)), false)
+})
+
+test('keeps the release subject exact while skipping the redundant pull request run', () => {
+  const args = createReleaseCommitArguments({ tag: 'v0.1.0' })
+  assert.deepEqual(args, [
+    '-c',
+    'user.name=github-actions[bot]',
+    '-c',
+    'user.email=41898282+github-actions[bot]@users.noreply.github.com',
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '-m',
+    'chore(release): cut v0.1.0',
+    '-m',
+    '[skip ci]'
+  ])
+  const subject = args[args.indexOf('commit') + 2]
+  assert.equal(subject, 'chore(release): cut v0.1.0')
+  assert.equal(skipMarkerPattern.test(subject), false)
+  assert.equal(
+    args.filter(argument => skipMarkerPattern.test(argument)).length,
+    1
+  )
+  assert.throws(
+    () => createReleaseCommitArguments({ tag: '0.1.0' }),
+    /Unsupported release tag/u
+  )
+  assert.throws(
+    () => createReleaseCommitArguments({ tag: 'v0.1.0-rc.1' }),
+    /Unsupported release tag/u
+  )
 })
 
 test('uses the actual merge commit for new and recovered merged PRs', () => {
@@ -669,4 +705,13 @@ test('workflow confines write permissions to the automatic release job', async (
   for (const match of workflow.matchAll(/uses:\s+\S+@(\S+)/gu)) {
     assert.match(match[1], /^[0-9a-f]{40}$/u)
   }
+})
+
+test('CI stays on the events that honor the release skip marker', async () => {
+  const workflow = await readFile(
+    new URL('../.github/workflows/ci.yml', import.meta.url),
+    'utf8'
+  )
+  assert.match(workflow, /^ {2}pull_request:$/mu)
+  assert.doesNotMatch(workflow, /pull_request_target/u)
 })

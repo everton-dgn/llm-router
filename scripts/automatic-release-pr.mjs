@@ -10,7 +10,10 @@ import {
   assertReleaseChangedFiles,
   assertReleasePayload
 } from './release-payload.mjs'
-import { parseReleaseVersion } from './release-version-utils.mjs'
+import {
+  normalizeReleaseTag,
+  parseReleaseVersion
+} from './release-version-utils.mjs'
 import {
   syncReleaseNotes
 } from './sync-release-notes-from-changelog.mjs'
@@ -796,6 +799,23 @@ function findReleaseCoveringSource(sourceSha) {
   return null
 }
 
+export function createReleaseCommitArguments({ tag }) {
+  const releaseTag = normalizeReleaseTag(tag)
+  return [
+    '-c',
+    'user.name=github-actions[bot]',
+    '-c',
+    'user.email=41898282+github-actions[bot]@users.noreply.github.com',
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '-m',
+    `chore(release): cut ${releaseTag}`,
+    '-m',
+    '[skip ci]'
+  ]
+}
+
 function createReleaseCommit({ context, plan }) {
   writeGit(['add', '--', ...plan.changedFiles])
   const stagedFiles = readGit([
@@ -815,28 +835,12 @@ function createReleaseCommit({ context, plan }) {
     '--format=%cI',
     context.sourceSha
   ])
-  const identityArguments = [
-    '-c',
-    'user.name=github-actions[bot]',
-    '-c',
-    'user.email=41898282+github-actions[bot]@users.noreply.github.com',
-    '-c',
-    'commit.gpgsign=false'
-  ]
-  writeGit(
-    [
-      ...identityArguments,
-      'commit',
-      '-m',
-      `chore(release): cut ${plan.tag}`
-    ],
-    {
-      env: {
-        GIT_AUTHOR_DATE: sourceTimestamp,
-        GIT_COMMITTER_DATE: sourceTimestamp
-      }
+  writeGit(createReleaseCommitArguments({ tag: plan.tag }), {
+    env: {
+      GIT_AUTHOR_DATE: sourceTimestamp,
+      GIT_COMMITTER_DATE: sourceTimestamp
     }
-  )
+  })
   const releaseSha = readGit(['rev-parse', '--verify', 'HEAD^{commit}'])
   const parent = readGit([
     'rev-parse',
