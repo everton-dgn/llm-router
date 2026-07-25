@@ -240,8 +240,14 @@ test('release notes sync workflow only runs on manual dispatch', async () => {
     new URL('../.github/workflows/release-notes-sync.yml', import.meta.url),
     'utf8'
   )
-  assert.match(workflow, /^on:\n {2}workflow_dispatch:$/mu)
-  assert.doesNotMatch(workflow, /^ {2}push:$/mu)
+  const onBlock = /^on:\n(?<triggers>(?:[ \t].*\n|\n)*)/mu.exec(workflow)
+  assert.ok(onBlock, 'the workflow must declare an on block')
+  assert.deepEqual(
+    [...onBlock.groups.triggers.matchAll(/^ {2}(\w+):/gmu)].map(
+      match => match[1]
+    ),
+    ['workflow_dispatch']
+  )
   assert.doesNotMatch(workflow, /github\.ref_name|github\.event_name/u)
   assert.match(workflow, /permissions:\n\s+actions: read\n\s+contents: write/u)
   assert.match(workflow, /--print-commit/u)
