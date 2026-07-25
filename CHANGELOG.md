@@ -4,6 +4,19 @@ Notable user-visible changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## 1.1.0 - 2026-07-25
+
+### Added
+- **opencode:** Report the routing state and harden the installer
+- **router:** Drive routes and attachment support from the manifest
+
+### Fixed
+- **install:** Decide the provider lookup by status, not by error wording
+- **router:** Address review findings on routing, install and tests
+- **claude:** Replay assistant history and pin the signed-in profile
+- **router:** Keep the non-literal veto as defense in depth
+- **router:** Trust classifier intent for literal read-only routing
+
 ## 1.0.0 - 2026-07-23
 
 ### Added
@@ -15,3 +28,4 @@ Notable user-visible changes are documented here. The format follows
 - Install the OpenCode bundle with preflight validation, recoverable backups, preserved user configuration and policy, hash-verified legacy cleanup, and idempotent updates.
 - Validate routing, policies, provider transports, installation, benchmarks, and release tooling with deterministic test suites.
 - Prepare public contribution, security, support, CI, documentation, SemVer, changelog, and GitHub Release workflows.
+
