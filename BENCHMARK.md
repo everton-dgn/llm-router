@@ -86,8 +86,8 @@ No additional call was made.
 
 The six audited failures were:
 
-- MiniMax created `.serena/` in two implementations and two reviews, despite
-  the allowlist and the prohibition against new files.
+- MiniMax created local metadata directories in two implementations and two reviews,
+  despite the allowlist and the prohibition against new files.
 - GLM produced the malformed Portuguese word `répapas` in one translation.
 - Claude wrote the Portuguese word `replicas` without the required accent in
   one translation.
@@ -132,7 +132,7 @@ score.
 - Codex: difficult implementation, deep debugging, audits, and code review.
 
 MiniMax read-only containment was applied after this run in response to the
-four `.serena/` creations. At that point, it had passed only preflight and
+four local metadata directory creations. At that point, it had passed only preflight and
 local tests. V2 below executed 36 real slots with a profile limited to
 `Read,Glob,Grep`.
 
