@@ -4,6 +4,18 @@ Notable user-visible changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## 1.2.0 - 2026-07-26
+
+### Added
+- **install:** Set up the OpenCode integration with one command
+
+### Fixed
+- **tooling:** Stop pnpm test from reinstalling node\_modules
+- **benchmark:** Stop inheriting credential prefixes across routes
+- **install:** Bound the provider lookup without coreutils
+- **benchmark:** Give each route only the environment it declares
+- **router:** Bound and settle delegated agent mentions
+
 ## 1.1.2 - 2026-07-25
 
 ### Fixed
@@ -40,6 +52,7 @@ Notable user-visible changes are documented here. The format follows
 - Install the OpenCode bundle with preflight validation, recoverable backups, preserved user configuration and policy, hash-verified legacy cleanup, and idempotent updates.
 - Validate routing, policies, provider transports, installation, benchmarks, and release tooling with deterministic test suites.
 - Prepare public contribution, security, support, CI, documentation, SemVer, changelog, and GitHub Release workflows.
+
 
 
 
