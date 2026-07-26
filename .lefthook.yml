@@ -41,6 +41,7 @@ pre-commit:
       glob:
         - "route"
         - "config.json"
+        - "setup.sh"
         - "opencode/install.sh"
         - "tests/*.sh"
       run: pnpm test:shell

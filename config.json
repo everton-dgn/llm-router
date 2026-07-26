@@ -221,7 +221,9 @@
             "tests/route-manifest.test.mjs",
             "tests/startup-notice.test.mjs",
             "tests/uninstall.test.mjs",
-            "tests/opencode-bundle.sh"
+            "tests/opencode-bundle.sh",
+            "setup.sh",
+            "tests/setup.sh"
           ],
           "commands_all": [
             "bash",
@@ -242,6 +244,19 @@
               "tests/opencode-bundle.sh"
             ],
             "timeout_seconds": 180
+          },
+          {
+            "type": "command",
+            "argv": [
+              "bash",
+              "tests/setup.sh"
+            ],
+            "cwd": "{project_root}",
+            "untrusted_if_changed": [
+              "setup.sh",
+              "tests/setup.sh"
+            ],
+            "timeout_seconds": 300
           },
           {
             "type": "command",
