@@ -116,10 +116,18 @@ command -v curl >/dev/null 2>&1 \
     'install curl with your package manager'
 ok 'curl'
 
-[[ -n "$CLAUDE_PATH" ]] || CLAUDE_PATH=$(command -v claude || true)
-[[ -n "$CLAUDE_PATH" ]] \
-  || fail 'Claude Code is required by the claude route' \
-    'install Claude Code, then confirm with: claude --version'
+if [[ -n "$CLAUDE_PATH" ]]; then
+  # Discovery through PATH already proves the binary runs; an explicit path
+  # does not, and the bundle installer would only fail much later.
+  [[ -x "$CLAUDE_PATH" ]] \
+    || fail "--claude-path is not an executable file: $CLAUDE_PATH" \
+      'pass the path printed by: command -v claude'
+else
+  CLAUDE_PATH=$(command -v claude || true)
+  [[ -n "$CLAUDE_PATH" ]] \
+    || fail 'Claude Code is required by the claude route' \
+      'install Claude Code, then confirm with: claude --version'
+fi
 ok 'claude'
 
 # The classifier endpoint and models are read from config.json, so a retargeted

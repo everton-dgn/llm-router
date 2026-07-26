@@ -200,6 +200,15 @@ NO_PNPM=$(run_setup) && fail "setup.sh ran without a package manager"
 assert_contains "$NO_PNPM" "corepack prepare $PNPM_PIN --activate"
 mv "$FIXTURE/pnpm.hidden" "$STUB_BIN/pnpm"
 
+BAD_CLAUDE=$(env -i \
+  PATH="$STUB_BIN" \
+  HOME="$FIXTURE/home" \
+  TMPDIR="${TMPDIR:-/tmp}" \
+  bash "$WORK/setup.sh" --config-dir "$FIXTURE/config" \
+  --claude-path "$FIXTURE/tags.json" 2>&1) \
+  && fail "setup.sh accepted a --claude-path that cannot be executed"
+assert_contains "$BAD_CLAUDE" "not an executable file"
+
 mv "$STUB_BIN/ollama" "$FIXTURE/ollama.hidden"
 stub curl 'exit 7'
 NO_OLLAMA=$(run_setup) && fail "setup.sh ran with no reachable classifier"

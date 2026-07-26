@@ -2887,7 +2887,9 @@ class BenchmarkExecutorEnvironmentTests(unittest.TestCase):
                 "MINIMAX_API_KEY": "minimax-secret",
                 "ZAI_API_KEY": "zai-secret",
                 "UNRELATED_SECRET": "leaked",
-                "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1000000",
+                "ANTHROPIC_API_KEY": "anthropic-secret",
+                "CLAUDE_CODE_OAUTH_TOKEN": "claude-secret",
+                "LC_ALL": "en_US.UTF-8",
             }
             with patch.dict(os.environ, environment, clear=True):
                 resolved = executor._resolve_env(self.route["headless"])
@@ -2897,10 +2899,16 @@ class BenchmarkExecutorEnvironmentTests(unittest.TestCase):
             # Runtime settings the child still needs.
             self.assertEqual(resolved["HOME"], directory)
             self.assertIn("PATH", resolved)
-            # Allowed by prefix, because three routes drive the Claude binary.
-            self.assertEqual(resolved["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "1000000")
-            # Secrets this route never asked for.
-            for leaked in ("MINIMAX_API_KEY", "ZAI_API_KEY", "UNRELATED_SECRET"):
+            self.assertEqual(resolved["LC_ALL"], "en_US.UTF-8")
+            # No secret is inherited, not even one this route could plausibly
+            # use: the same baseline reaches the Codex and MiniMax routes too.
+            for leaked in (
+                "MINIMAX_API_KEY",
+                "ZAI_API_KEY",
+                "UNRELATED_SECRET",
+                "ANTHROPIC_API_KEY",
+                "CLAUDE_CODE_OAUTH_TOKEN",
+            ):
                 self.assertNotIn(leaked, resolved)
 
     def test_a_route_still_receives_the_secret_it_declares(self) -> None:

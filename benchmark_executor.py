@@ -55,7 +55,11 @@ ALLOWED_ENVIRONMENT_NAMES = frozenset({
     "XDG_RUNTIME_DIR",
     "XDG_STATE_HOME",
 })
-ALLOWED_ENVIRONMENT_PREFIXES = ("ANTHROPIC_", "CLAUDE_", "LC_")
+# Locale only. Credential-bearing prefixes such as ANTHROPIC_ and CLAUDE_ stay
+# out on purpose: the same baseline reaches every route, so inheriting them
+# would hand a Codex or MiniMax run the Anthropic credentials of the machine.
+# A route that needs one declares it under headless.env.
+ALLOWED_ENVIRONMENT_PREFIXES = ("LC_",)
 CLAUDE_MAX_EFFORT_PATTERN = re.compile(
     r"arquitet|architecture|architectural|produto|product|idea|ideia|brainstorm|"
     r"copy|venda|sales|marketing|rede social|social media|criativ|creative|roadmap|"
@@ -98,10 +102,13 @@ def runtime_environment() -> dict[str, str]:
     """Return the runtime-only slice of the parent environment.
 
     Routes declare every credential they need under `headless.env`, so an
-    executor inherits paths, locale, proxy and TLS settings but no unrelated
-    secret. Without this filter a Claude run also received MINIMAX_API_KEY and
-    ZAI_API_KEY. The allowlist mirrors opencode/lib/claude_agent.mjs, keeping
-    one policy for both the runtime and the benchmark.
+    executor inherits paths, locale, proxy and TLS settings but no secret at
+    all. Without this filter a Claude run also received MINIMAX_API_KEY and
+    ZAI_API_KEY, and a Codex run received the Anthropic credentials.
+
+    The name list matches opencode/lib/claude_agent.mjs, but the prefixes do
+    not: there the subprocess is always Claude, while one baseline here feeds
+    four different providers.
     """
     return {
         name: value
