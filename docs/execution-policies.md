@@ -28,22 +28,19 @@ justify that access.
 
 ## Mode and profile matrix
 
-Every combination is valid:
+The two axes compose freely, so all nine combinations are valid: the mode
+decides when the worker changes, the profile decides which tools it receives,
+and neither affects the other. Changing the mode preserves the profile, and
+changing the profile preserves the mode.
 
-| Combination | Behavior |
+Three combinations are worth naming, because the pairing itself carries the
+recommendation:
+
+| Combination | Why |
 | --- | --- |
-| `auto + native` | Switches on every message and uses native permissions |
-| `auto + restricted` | Switches on every message and applies restricted limits to the selected worker |
-| `auto + full` | Switches on every message with broad authorization |
-| `adaptive + native` | Avoids unnecessary switches and uses native permissions |
-| `adaptive + restricted` | Controls cost and reduces tool risk, recommended for general use with smaller models |
-| `adaptive + full` | Preserves model hysteresis while allowing every tool |
-| `pinned + native` | Pins the worker and preserves native behavior |
-| `pinned + restricted` | Pins the worker with limits, recommended for predictable loops |
-| `pinned + full` | Pins the worker and allows every tool, recommended only with supervision |
-
-Changing the mode preserves the profile. Changing the profile preserves the
-mode.
+| `adaptive + restricted` | Controls cost and reduces tool risk, and is the general recommendation with smaller models |
+| `pinned + restricted` | Predictable loops: one worker, bounded tools |
+| `pinned + full` | Every tool on a fixed worker, so use it only under supervision |
 
 ## Permission format
 

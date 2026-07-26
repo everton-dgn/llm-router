@@ -14,7 +14,7 @@ the hook did not switch the message to a worker.
 Check:
 
 ```bash
-bash opencode/install.sh --dry-run
+bash setup.sh --dry-run
 opencode debug agent router
 ```
 
@@ -199,34 +199,9 @@ Use:
 /router-restricted
 ```
 
-Then lower the limits in the project:
-
-```json
-{
-  "schemaVersion": 1,
-  "defaultProfile": "restricted",
-  "models": {
-    "minimax-coding-plan/MiniMax-M3": "restricted",
-    "zai-coding-plan/glm-5.2": "restricted",
-    "claude-agent/claude-opus-5": "restricted",
-    "openai/gpt-5.6-sol": "restricted"
-  },
-  "profiles": {
-    "restricted": {
-      "permissions": [
-        { "permission": "bash", "pattern": "*", "action": "deny" },
-        { "permission": "edit", "pattern": "*", "action": "deny" },
-        { "permission": "task", "pattern": "*", "action": "deny" }
-      ],
-      "limits": {
-        "max_steps": 12,
-        "max_tool_calls": 20,
-        "max_child_depth": 0
-      }
-    }
-  }
-}
-```
+Then lower the limits in the project, following the read-only loop policy
+example in
+[execution policies](execution-policies.md#project-example-read-only-loop).
 
 `adaptive` allows promotion to a more capable worker when the request becomes
 difficult. `restricted` prevents that switch from expanding tools as a side
@@ -246,7 +221,7 @@ does not need long-term memory or a later coordination turn.
 Run:
 
 ```bash
-bash opencode/install.sh --dry-run
+bash setup.sh --dry-run
 ```
 
 Managed files are backed up before replacement. The installer creates
@@ -278,19 +253,18 @@ shared entries that were preserved for manual review. See
 
 ## Regression tests
 
+Run the whole deterministic gate:
+
 ```bash
-bash tests/smoke.sh
-bash tests/routing-eval.sh
-bash tests/opencode-bundle.sh
-node --test \
-  tests/route-manifest.test.mjs \
-  tests/router-handoff.test.mjs \
-  tests/execution-policy.test.mjs \
-  tests/router-control.test.mjs \
-  tests/startup-notice.test.mjs \
-  tests/claude-agent.test.mjs \
-  tests/claude-agent-provider.test.mjs \
-  tests/repo-query.test.mjs \
-  tests/documentation.test.mjs \
-  tests/uninstall.test.mjs
+pnpm test
 ```
+
+Add the live Ollama routing contract when the classifier itself is suspect:
+
+```bash
+pnpm test:integration
+```
+
+Both commands stay correct as suites are added. See
+[development](development.md#validation) for the focused suites to run while
+narrowing a failure down.
