@@ -83,6 +83,12 @@ pnpm test:integration
 evaluations and provider-backed benchmark execution, so it does not require
 MiniMax, Z.AI, Anthropic, or OpenAI credentials.
 
+Running the suite never installs anything: `verifyDepsBeforeRun` is off in
+`pnpm-workspace.yaml`, because the pnpm default reinstalls `node_modules`
+before every `pnpm run`. Install dependencies yourself with
+`pnpm install --frozen-lockfile`, which is also what CI and `setup.sh` run, and
+which is the command that fails when the lockfile and `package.json` disagree.
+
 ## Local Git hooks
 
 Lefthook uses staged-file globs during `pre-commit`:
