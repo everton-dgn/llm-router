@@ -2862,5 +2862,143 @@ class SafetyTests(unittest.TestCase):
         self.assertTrue(fixture.is_dir())
 
 
+class BenchmarkExecutorEnvironmentTests(unittest.TestCase):
+    route = {
+        "name": "claude",
+        "headless": {
+            "env": {"CLAUDE_CONFIG_DIR": "${HOME}/.claude"},
+            "worker": {
+                "argv": [sys.executable, "-c", "import os,sys;print(os.environ.get(sys.argv[1],''))"],
+                "output_format": "text",
+                "timeout_seconds": 30,
+            },
+        },
+    }
+
+    def _executor(self, cwd: Path) -> BenchmarkExecutor:
+        return BenchmarkExecutor(cwd / "benchmark.json", {"routes": [self.route]}, cwd)
+
+    def test_route_environment_drops_secrets_it_never_declared(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            executor = self._executor(Path(directory))
+            environment = {
+                "HOME": directory,
+                "PATH": os.environ.get("PATH", ""),
+                "MINIMAX_API_KEY": "minimax-secret",
+                "ZAI_API_KEY": "zai-secret",
+                "UNRELATED_SECRET": "leaked",
+                "ANTHROPIC_API_KEY": "anthropic-secret",
+                "CLAUDE_CODE_OAUTH_TOKEN": "claude-secret",
+                "LC_ALL": "en_US.UTF-8",
+            }
+            with patch.dict(os.environ, environment, clear=True):
+                resolved = executor._resolve_env(self.route["headless"])
+
+            # Declared by the route, so it must survive.
+            self.assertEqual(resolved["CLAUDE_CONFIG_DIR"], f"{directory}/.claude")
+            # Runtime settings the child still needs.
+            self.assertEqual(resolved["HOME"], directory)
+            self.assertIn("PATH", resolved)
+            self.assertEqual(resolved["LC_ALL"], "en_US.UTF-8")
+            # No secret is inherited, not even one this route could plausibly
+            # use: the same baseline reaches the Codex and MiniMax routes too.
+            for leaked in (
+                "MINIMAX_API_KEY",
+                "ZAI_API_KEY",
+                "UNRELATED_SECRET",
+                "ANTHROPIC_API_KEY",
+                "CLAUDE_CODE_OAUTH_TOKEN",
+            ):
+                self.assertNotIn(leaked, resolved)
+
+    def test_a_route_still_receives_the_secret_it_declares(self) -> None:
+        route = {
+            "name": "minimax",
+            "headless": {
+                "env": {"ANTHROPIC_AUTH_TOKEN": {"from_env": "MINIMAX_API_KEY"}},
+                "worker": {"argv": ["true"], "output_format": "text", "timeout_seconds": 30},
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            executor = BenchmarkExecutor(
+                Path(directory) / "benchmark.json", {"routes": [route]}, Path(directory)
+            )
+            with patch.dict(os.environ, {"MINIMAX_API_KEY": "minimax-secret"}, clear=True):
+                resolved = executor._resolve_env(route["headless"])
+
+            self.assertEqual(resolved["ANTHROPIC_AUTH_TOKEN"], "minimax-secret")
+            self.assertNotIn("MINIMAX_API_KEY", resolved)
+
+    def _codex_executor(self, directory: str, script: str, timeout: float = 30) -> BenchmarkExecutor:
+        route = {
+            "name": "codex",
+            "headless": {
+                "env": {},
+                "worker": {
+                    "argv": [sys.executable, "-c", script, "{output_file}"],
+                    "output_format": "codex_last_message",
+                    "timeout_seconds": timeout,
+                },
+            },
+        }
+        return BenchmarkExecutor(
+            Path(directory) / "benchmark.json", {"routes": [route]}, Path(directory)
+        )
+
+    def test_the_codex_scratch_file_is_removed_on_every_exit_path(self) -> None:
+        write = "import pathlib,sys;pathlib.Path(sys.argv[-1]).write_text('final message')"
+        cases = {
+            # The child writes and exits cleanly.
+            "success": (write, 30, "success"),
+            # The child fails before writing anything.
+            "process_error": ("import sys;sys.exit(1)", 30, "process_error"),
+            # The child exits zero without writing, so the scratch file stays
+            # empty and the call reports an empty answer rather than a failure.
+            "empty_output": ("pass", 30, "success"),
+            # The child outlives its deadline and the process group is stopped.
+            "timeout": ("import time;time.sleep(30)", 1, "timeout"),
+        }
+
+        for label, (script, timeout, expected) in cases.items():
+            with self.subTest(exit_path=label), tempfile.TemporaryDirectory() as directory:
+                created: list[Path] = []
+                real_mkstemp = tempfile.mkstemp
+
+                def scoped_mkstemp(*args: Any, **kwargs: Any) -> tuple[int, str]:
+                    # Keep the scratch file inside this test's directory so the
+                    # assertion never depends on shared /tmp state.
+                    kwargs["dir"] = directory
+                    descriptor, path = real_mkstemp(*args, **kwargs)
+                    created.append(Path(path))
+                    return descriptor, path
+
+                executor = self._codex_executor(directory, script, timeout)
+                with patch("benchmark_executor.tempfile.mkstemp", scoped_mkstemp):
+                    result = executor.execute_model("codex", "worker", "prompt")
+
+                self.assertEqual(result.status, expected)
+                self.assertEqual(len(created), 1)
+                self.assertFalse(created[0].exists())
+
+    def test_a_codex_call_never_reads_the_message_of_an_earlier_one(self) -> None:
+        # Without a unique scratch file per call, a child that exits zero
+        # without writing would surface the previous call's answer as its own.
+        with tempfile.TemporaryDirectory() as directory:
+            writer = self._codex_executor(
+                directory,
+                "import pathlib,sys;pathlib.Path(sys.argv[-1]).write_text('first answer')",
+            )
+            silent = self._codex_executor(directory, "pass")
+
+            first = writer.execute_model("codex", "worker", "prompt")
+            second = silent.execute_model("codex", "worker", "prompt")
+
+            self.assertEqual(first.status, "success")
+            self.assertEqual(first.output, "first answer")
+            # The silent call gets its own empty scratch file, so it reports an
+            # empty answer instead of inheriting the previous one.
+            self.assertEqual(second.output, "")
+
+
 if __name__ == "__main__":
     unittest.main()

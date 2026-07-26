@@ -12,7 +12,7 @@ CLAUDE_PATH=""
 RENDER_DIR=""
 PENDING_TARGET=""
 BACKUP_DIR=""
-PROVIDER_LOOKUP_TIMEOUT=20
+PROVIDER_LOOKUP_TIMEOUT="${LLM_ROUTER_PROVIDER_LOOKUP_TIMEOUT:-20}"
 
 show_help() {
   cat <<'HELP'
@@ -42,6 +42,31 @@ fail() {
 
 require_value() {
   [[ $# -ge 2 && -n "$2" ]] || fail "$1 requires a path"
+}
+
+# Runs a command under a deadline and exits 124 when it expires, the status GNU
+# timeout uses. A stock macOS ships no timeout or gtimeout, so the bound comes
+# from the Node the installer already requires instead of from coreutils.
+run_bounded() {
+  local seconds="$1"
+  shift
+  LLM_ROUTER_DEADLINE_SECONDS="$seconds" "${LLM_ROUTER_NODE_BIN:-node}" -e '
+    const { spawnSync } = require("node:child_process")
+    const [command, ...args] = process.argv.slice(1)
+    const seconds = Number(process.env.LLM_ROUTER_DEADLINE_SECONDS)
+    const result = spawnSync(command, args, {
+      encoding: "utf8",
+      timeout: seconds * 1000,
+    })
+    if (result.stdout) process.stdout.write(result.stdout)
+    if (result.stderr) process.stderr.write(result.stderr)
+    if (result.error?.code === "ETIMEDOUT" || result.signal === "SIGTERM") process.exit(124)
+    if (result.error) {
+      process.stderr.write(`${result.error.message}\n`)
+      process.exit(127)
+    }
+    process.exit(result.status ?? 1)
+  ' "$@"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -91,18 +116,18 @@ fi
 [[ -n "$ROUTER_PATH" ]] || ROUTER_PATH="$REPO_ROOT/route"
 [[ -n "$CLAUDE_PATH" ]] || CLAUDE_PATH=$(command -v claude || true)
 JQ_PATH=$(command -v jq || true)
-NODE_PATH=$(command -v node || true)
+LLM_ROUTER_NODE_BIN=$(command -v node || true)
 CONFIG_MERGER="$REPO_ROOT/scripts/merge-opencode-config.mjs"
 [[ -n "$JQ_PATH" ]] || fail "jq is required to merge package.json"
-[[ -n "$NODE_PATH" ]] || fail "node is required to render and validate the bundle"
+[[ -n "$LLM_ROUTER_NODE_BIN" ]] || fail "node is required to render and validate the bundle"
 [[ -f "$CONFIG_MERGER" ]] || fail "OpenCode config merger is missing: $CONFIG_MERGER"
-if ! (cd "$REPO_ROOT" && "$NODE_PATH" -e 'import("jsonc-parser")') >/dev/null 2>&1; then
+if ! (cd "$REPO_ROOT" && "$LLM_ROUTER_NODE_BIN" -e 'import("jsonc-parser")') >/dev/null 2>&1; then
   fail "repository dependencies are missing; run pnpm install --frozen-lockfile"
 fi
 
 case "$CONFIG_DIR" in /*) ;; *) CONFIG_DIR="$PWD/$CONFIG_DIR" ;; esac
 case "$BACKUP_ROOT" in /*) ;; *) BACKUP_ROOT="$PWD/$BACKUP_ROOT" ;; esac
-CONFIG_DIR=$("$NODE_PATH" -e '
+CONFIG_DIR=$("$LLM_ROUTER_NODE_BIN" -e '
   const { existsSync, realpathSync } = require("node:fs")
   const { basename, dirname, resolve } = require("node:path")
   let current = resolve(process.argv[1])
@@ -213,7 +238,7 @@ RENDER_DIR=$(mktemp -d "${TMPDIR:-/tmp}/llm-router-opencode.XXXXXX")
 mkdir -p "$RENDER_DIR/tools" "$RENDER_DIR/lib" "$RENDER_DIR/plugins" "$RENDER_DIR/providers"
 "$ROUTER_PATH" --manifest --json | tee "$RENDER_DIR/route-manifest.json" >/dev/null \
   || fail "cannot load the validated route manifest"
-if ! "$NODE_PATH" --input-type=module - \
+if ! "$LLM_ROUTER_NODE_BIN" --input-type=module - \
   "$SCRIPT_DIR/lib/route_manifest.mjs" \
   "$RENDER_DIR/route-manifest.json" <<'NODE'
 import { readFileSync } from "node:fs"
@@ -257,16 +282,16 @@ cp "$SCRIPT_DIR/providers/router_control_provider.mjs" "$RENDER_DIR/providers/ro
 cp "$SCRIPT_DIR/llm-router.policy.defaults.json" "$RENDER_DIR/llm-router.policy.defaults.json"
 cp "$SCRIPT_DIR/llm-router.policy.schema.json" "$RENDER_DIR/llm-router.policy.schema.json"
 
-PROVIDER_URL=$("$NODE_PATH" -e '
+PROVIDER_URL=$("$LLM_ROUTER_NODE_BIN" -e '
   const { pathToFileURL } = require("node:url")
   process.stdout.write(pathToFileURL(process.argv[1]).href)
 ' "$CONFIG_DIR/providers/claude_agent_provider.mjs")
-CONTROL_PROVIDER_URL=$("$NODE_PATH" -e '
+CONTROL_PROVIDER_URL=$("$LLM_ROUTER_NODE_BIN" -e '
   const { pathToFileURL } = require("node:url")
   process.stdout.write(pathToFileURL(process.argv[1]).href)
 ' "$CONFIG_DIR/providers/router_control_provider.mjs")
 
-ROUTER_PATH_VALUE="$ROUTER_PATH" "$NODE_PATH" -e '
+ROUTER_PATH_VALUE="$ROUTER_PATH" "$LLM_ROUTER_NODE_BIN" -e '
   const { readFileSync } = require("node:fs")
   const template = readFileSync(process.argv[1], "utf8")
   const token = "__LLM_ROUTER_PATH_LITERAL__"
@@ -354,9 +379,6 @@ UNDECLARED_PROVIDERS=$("$JQ_PATH" -r \
 ' "$RENDER_DIR/opencode.required.json")
 if [[ -n "$UNDECLARED_PROVIDERS" ]]; then
   OPENCODE_PATH=$(command -v opencode || true)
-  # coreutils is not part of a stock macOS, so the lookup is bounded when the
-  # command is available and runs unbounded otherwise.
-  TIMEOUT_PATH=$(command -v timeout || command -v gtimeout || true)
   for provider_id in $UNDECLARED_PROVIDERS; do
     if [[ -z "$OPENCODE_PATH" ]]; then
       printf 'warning: route provider %s is not declared by the bundle and OpenCode is not on PATH to confirm it exists\n' \
@@ -366,12 +388,9 @@ if [[ -n "$UNDECLARED_PROVIDERS" ]]; then
     # A provider OpenCode resolves is answered with its model list and a zero
     # status, so the status carries the verdict and no error wording is parsed.
     provider_lookup_status=0
-    if [[ -n "$TIMEOUT_PATH" ]]; then
-      provider_lookup=$("$TIMEOUT_PATH" "$PROVIDER_LOOKUP_TIMEOUT" "$OPENCODE_PATH" models "$provider_id" 2>&1) \
-        || provider_lookup_status=$?
-    else
-      provider_lookup=$("$OPENCODE_PATH" models "$provider_id" 2>&1) || provider_lookup_status=$?
-    fi
+    provider_lookup=$(run_bounded "$PROVIDER_LOOKUP_TIMEOUT" \
+      "$OPENCODE_PATH" models "$provider_id" 2>&1) \
+      || provider_lookup_status=$?
     case "$provider_lookup_status" in
       0) ;;
       124)
@@ -401,12 +420,12 @@ if [[ -e "$CONFIG_DIR/opencode.jsonc" ]]; then
       || fail "refusing to read invalid installation state: $CONFIG_DIR/llm-router.install-state.json"
     CONFIG_MERGER_ARGS+=(--state "$CONFIG_DIR/llm-router.install-state.json")
   fi
-  "$NODE_PATH" "$CONFIG_MERGER" "${CONFIG_MERGER_ARGS[@]}" \
+  "$LLM_ROUTER_NODE_BIN" "$CONFIG_MERGER" "${CONFIG_MERGER_ARGS[@]}" \
     || fail "cannot merge the existing OpenCode configuration"
 else
   cp "$RENDER_DIR/opencode.required.json" "$RENDER_DIR/opencode.jsonc"
 fi
-"$NODE_PATH" --check "$RENDER_DIR/plugins/llm_router_handoff.ts" >/dev/null 2>&1 \
+"$LLM_ROUTER_NODE_BIN" --check "$RENDER_DIR/plugins/llm_router_handoff.ts" >/dev/null 2>&1 \
   || fail "rendered llm_router_handoff.ts is invalid"
 
 PACKAGE_TARGET="$CONFIG_DIR/package.json"
@@ -549,7 +568,7 @@ is_known_retired_file() {
   local actual_hash
   local expected_hashes
   [[ -f "$target" && ! -L "$target" ]] || return 1
-  actual_hash=$("$NODE_PATH" --input-type=module - "$target" <<'NODE'
+  actual_hash=$("$LLM_ROUTER_NODE_BIN" --input-type=module - "$target" <<'NODE'
 import { createHash } from "node:crypto"
 import { readFileSync } from "node:fs"
 
@@ -678,7 +697,7 @@ for index in "${!TARGETS[@]}"; do
 done
 
 if [[ "$DRY_RUN" != true ]]; then
-  "$NODE_PATH" "$SCRIPT_DIR/lib/install_state.mjs" prepare "${INSTALL_STATE_ARGS[@]}" \
+  "$LLM_ROUTER_NODE_BIN" "$SCRIPT_DIR/lib/install_state.mjs" prepare "${INSTALL_STATE_ARGS[@]}" \
     || fail "cannot prepare the persistent installation state"
   for index in "${!TARGETS[@]}"; do
     if [[ -e "${TARGETS[$index]}" ]] && ! cmp -s "${SOURCES[$index]}" "${TARGETS[$index]}"; then
@@ -701,7 +720,7 @@ for target in "${RETIRED_TARGETS[@]}"; do
 done
 
 if [[ "$DRY_RUN" != true ]]; then
-  "$NODE_PATH" "$SCRIPT_DIR/lib/install_state.mjs" finalize "${INSTALL_STATE_ARGS[@]}" \
+  "$LLM_ROUTER_NODE_BIN" "$SCRIPT_DIR/lib/install_state.mjs" finalize "${INSTALL_STATE_ARGS[@]}" \
     || fail "cannot finalize the persistent installation state"
 fi
 

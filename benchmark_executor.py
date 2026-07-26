@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -16,6 +17,49 @@ from typing import Any
 
 
 ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+ALLOWED_ENVIRONMENT_NAMES = frozenset({
+    "ALL_PROXY",
+    "APPDATA",
+    "COLORTERM",
+    "COMSPEC",
+    "FORCE_COLOR",
+    "HOME",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "LANG",
+    "LANGUAGE",
+    "LOCALAPPDATA",
+    "LOGNAME",
+    "NODE_EXTRA_CA_CERTS",
+    "NO_COLOR",
+    "NO_PROXY",
+    "PATH",
+    "PATHEXT",
+    "SHELL",
+    "SSL_CERT_DIR",
+    "SSL_CERT_FILE",
+    "SYSTEMROOT",
+    "TEMP",
+    "TERM",
+    "TERM_PROGRAM",
+    "TERM_PROGRAM_VERSION",
+    "TMP",
+    "TMPDIR",
+    "TZ",
+    "USER",
+    "USERPROFILE",
+    "WINDIR",
+    "XDG_CACHE_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_RUNTIME_DIR",
+    "XDG_STATE_HOME",
+})
+# Locale only. Credential-bearing prefixes such as ANTHROPIC_ and CLAUDE_ stay
+# out on purpose: the same baseline reaches every route, so inheriting them
+# would hand a Codex or MiniMax run the Anthropic credentials of the machine.
+# A route that needs one declares it under headless.env.
+ALLOWED_ENVIRONMENT_PREFIXES = ("LC_",)
 CLAUDE_MAX_EFFORT_PATTERN = re.compile(
     r"arquitet|architecture|architectural|produto|product|idea|ideia|brainstorm|"
     r"copy|venda|sales|marketing|rede social|social media|criativ|creative|roadmap|"
@@ -52,6 +96,26 @@ def expand_env_string(value: str) -> str:
         return os.environ[name]
 
     return ENV_PATTERN.sub(replace, value)
+
+
+def runtime_environment() -> dict[str, str]:
+    """Return the runtime-only slice of the parent environment.
+
+    Routes declare every credential they need under `headless.env`, so an
+    executor inherits paths, locale, proxy and TLS settings but no secret at
+    all. Without this filter a Claude run also received MINIMAX_API_KEY and
+    ZAI_API_KEY, and a Codex run received the Anthropic credentials.
+
+    The name list matches opencode/lib/claude_agent.mjs, but the prefixes do
+    not: there the subprocess is always Claude, while one baseline here feeds
+    four different providers.
+    """
+    return {
+        name: value
+        for name, value in os.environ.items()
+        if name.upper() in ALLOWED_ENVIRONMENT_NAMES
+        or name.upper().startswith(ALLOWED_ENVIRONMENT_PREFIXES)
+    }
 
 
 def select_claude_effort(prompt: str) -> str:
@@ -203,7 +267,7 @@ class BenchmarkExecutor:
 
     def _configured_env(self, raw_env: Any, path: str) -> dict[str, str]:
         raw_env = self._require_dict(raw_env, path)
-        env = os.environ.copy()
+        env = runtime_environment()
         for name, value in raw_env.items():
             if not isinstance(name, str) or not name:
                 raise ConfigError(f"invalid name in {path}")
@@ -360,3 +424,11 @@ class BenchmarkExecutor:
                 str(error),
                 time.monotonic() - started,
             )
+        finally:
+            # The scratch file only carries the final message between the child
+            # process and normalize_output, so it is runtime state of this call
+            # and never user content. Every exit path drops it, including the
+            # timeout and process_error returns above.
+            if output_file is not None:
+                with contextlib.suppress(OSError):
+                    os.unlink(output_file)

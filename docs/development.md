@@ -64,11 +64,14 @@ uv run --no-project --no-python-downloads python -m unittest \
 ```bash
 bash tests/smoke.sh
 bash tests/opencode-bundle.sh
+bash tests/setup.sh
 ```
 
 `tests/smoke.sh` uses a fake `curl` implementation and does not call Ollama.
 `tests/opencode-bundle.sh` uses a fake Claude executable and a temporary
-configuration directory.
+configuration directory. `tests/setup.sh` drives `setup.sh` against stubs for
+every external command, so it makes no network calls and never touches
+the OpenCode configuration of the machine.
 
 The real routing evaluation needs the configured Ollama model:
 
@@ -79,6 +82,12 @@ pnpm test:integration
 `pnpm test` matches the deterministic CI gate. CI omits the live Ollama routing
 evaluations and provider-backed benchmark execution, so it does not require
 MiniMax, Z.AI, Anthropic, or OpenAI credentials.
+
+Running the suite never installs anything: `verifyDepsBeforeRun` is off in
+`pnpm-workspace.yaml`, because the pnpm default reinstalls `node_modules`
+before every `pnpm run`. Install dependencies yourself with
+`pnpm install --frozen-lockfile`, which is also what CI and `setup.sh` run, and
+which is the command that fails when the lockfile and `package.json` disagree.
 
 ## Local Git hooks
 
@@ -156,6 +165,27 @@ When changing an OpenCode or provider contract:
 2. update `docs/compatibility.md`;
 3. run the bundle installer test;
 4. update public examples that contain exact provider or agent IDs.
+
+## Offline benchmark
+
+`quality_eval.py` and `qeval/` implement the offline single-shot benchmark
+runner. They are not installed in OpenCode and do not participate in message
+routing.
+
+Validate the benchmark configuration without provider calls:
+
+```bash
+uv run --no-project --no-python-downloads python quality_eval.py \
+  --config benchmark_config.json \
+  --cases tests/quality-cases-v2.json \
+  --output /tmp/llm-router-quality.json \
+  --validate-only
+```
+
+Each route receives only the environment it declares under `headless.env`, so a
+run never hands one provider the credentials of another. The published
+benchmark includes methodology and artifact hashes; raw provider outputs and
+private mappings are intentionally excluded. See [benchmark](../BENCHMARK.md).
 
 ## Commit and release conventions
 

@@ -546,6 +546,65 @@ test("pinned Claude resolves explicit OpenCode agent mentions in a child session
   await assert.rejects(runtime.chatParams(childInput, { options: {} }), /max_steps 2/)
 })
 
+test("a child session that never answers fails the mention instead of hanging", async () => {
+  const store = fakeSessions({ "session-1": { id: "session-1", metadata: {} } })
+  let settledSiblings = 0
+  const runtime = createRouterControlRuntime({
+    directory: "/workspace",
+    agentMentionTimeoutMs: 20,
+    v2SessionClient: {
+      permission: {},
+      async prompt() {
+        return response({ id: "input-1" })
+      },
+      async wait(input) {
+        // The stalled child never resolves, which is what used to hold the
+        // whole message forever.
+        if (input.sessionID === "child-1") return new Promise(() => {})
+        settledSiblings += 1
+      },
+      async context() {
+        return response([{
+          type: "assistant",
+          agent: "writer",
+          content: [{ type: "text", text: "Resumo pronto." }],
+        }])
+      },
+    },
+    sessionClient: store.client,
+    loadPolicy: async () => ({}),
+    resolvePolicy: () => ({
+      ...restrictedPolicy,
+      profile: "restricted",
+      source: "agent",
+      selector: "reviewer",
+    }),
+  })
+
+  const mention = (name, id) => ({
+    type: "agent",
+    name,
+    id,
+    sessionID: "session-1",
+    messageID: "msg_1",
+  })
+
+  await assert.rejects(
+    runtime.resolveAgentMentions({
+      sessionID: "session-1",
+      parts: [
+        { type: "text", text: "Delegue as duas tarefas." },
+        mention("reviewer", "prt_a"),
+        mention("writer", "prt_b"),
+      ],
+    }),
+    /@reviewer did not answer within 20ms/,
+  )
+  // The sibling reached its own end before the message failed, so it is not
+  // left running unattended.
+  assert.equal(settledSiblings, 1)
+})
+
 test("agent mentions and Claude tools obey child depth and permission cancellation", async () => {
   const store = fakeSessions({
     root: { id: "root", metadata: {} },

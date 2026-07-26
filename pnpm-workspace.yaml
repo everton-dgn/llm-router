@@ -2,3 +2,15 @@ allowBuilds:
   lefthook: false
 engineStrict: true
 saveExact: true
+# The pnpm default here is "install", so every `pnpm run` reinstalls
+# node_modules whenever it considers the tree stale, and `pnpm test` fails with
+# ERR_PNPM_ABORTED_REMOVE_MODULES_DIR wherever the directory cannot be removed,
+# before a single test runs. Running the suite must not mutate the
+# installation.
+#
+# "warn" is not the answer either: pnpm only rewrites
+# node_modules/.pnpm-workspace-state-v1.json during a real install, so a no-op
+# `pnpm install` leaves the marker untouched and the warning becomes permanent.
+# A check nothing can satisfy is noise. Dependency drift is caught where it
+# matters, by `pnpm install --frozen-lockfile` in CI and in setup.sh.
+verifyDepsBeforeRun: false

@@ -38,9 +38,14 @@ release test suite. The tag points to the normal merge commit on `main`, not to
 the release branch head.
 
 The release commit body carries `[skip ci]` so that no pull-request run is
-created at all. A pull request opened with `GITHUB_TOKEN` produces a run that
-waits for maintainer approval, and a maintainer would only release it after the
-merge, the tag, and the GitHub Release already exist. Audit such a run with
+created at all. A pull request opened with `GITHUB_TOKEN` can produce a run
+that waits for maintainer approval, and a maintainer would only release it
+after the merge, the tag, and the GitHub Release already exist.
+
+That outcome is intermittent rather than guaranteed: of the four release pull
+requests opened so far, all identical in author and timing, only the one for
+v1.1.0 produced such a run. The marker is a cheap defense against the case, not
+a fix for a behavior that happens every time. Audit a suspect run with
 `gh api /repos/<owner>/<repo>/actions/runs/<id>/attempts/1 --jq '.conclusion'`,
 because the top-level run object hides a retained first attempt.
 

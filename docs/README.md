@@ -3,23 +3,6 @@
 The primary [README](../README.md) and all public documentation in this
 directory are maintained in English.
 
-## Start here
-
-| Document | Purpose | Language |
-| --- | --- | --- |
-| [Quick start](quick-start.md) | Install, update, and run the first commands | English |
-| [Routing modes](routing-modes.md) | Understand `auto`, `adaptive`, `pinned`, context, resume, and fork | English |
-| [Execution policies](execution-policies.md) | Configure `native`, `restricted`, or `full` permissions | English |
-| [Claude Agent SDK](claude.md) | Context, attachments, subtasks, tools, and authentication | English |
-| [Troubleshooting and security](troubleshooting.md) | Diagnose failures and constrain long loops | English |
-| [Compatibility](compatibility.md) | Supported versions, operating systems, and upgrade boundaries | English |
-| [Privacy and costs](privacy-and-costs.md) | Data flow, credentials, and provider billing | English |
-| [Uninstall and rollback](uninstall.md) | Restore a backup or remove the installed bundle | English |
-| [Development](development.md) | Repository setup, validation, and contribution workflow | English |
-| [Release](RELEASE.md) | Changelog, SemVer, tags, and GitHub Releases | English |
-| [Public repository checklist](publication-checklist.md) | Repository controls, security reporting, and publication maintenance | English |
-| [Benchmark](../BENCHMARK.md) | Offline methodology, results, and limitations | English |
-
 ## Mental model
 
 A session carries two separate decisions:
@@ -30,6 +13,35 @@ A session carries two separate decisions:
 For example, `adaptive + restricted` can move from GLM to Codex when risk
 increases while preserving the tool restrictions. `pinned + native` keeps the
 first worker and lets each provider operate with its native behavior.
+
+## Using llm-router
+
+| Document | Purpose |
+| --- | --- |
+| [Quick start](quick-start.md) | Install, update, and run the first commands |
+| [Session commands](commands.md) | What each `/router-*` command does |
+| [Routing modes](routing-modes.md) | Understand `auto`, `adaptive`, `pinned`, context, resume, and fork |
+| [Troubleshooting](troubleshooting.md) | Diagnose failures and recover safely |
+| [Privacy and costs](privacy-and-costs.md) | Data flow, credentials, and provider billing |
+| [Uninstall and rollback](uninstall.md) | Restore a backup or remove the installed bundle |
+
+## Configuring it
+
+| Document | Purpose |
+| --- | --- |
+| [Configuration reference](config-reference.md) | `config.json`, route manifest, and project override |
+| [Execution policies](execution-policies.md) | Configure `native`, `restricted`, or `full` permissions |
+| [Claude Agent SDK](claude.md) | Context, attachments, subtasks, tools, and authentication |
+| [Compatibility](compatibility.md) | Supported versions, operating systems, and upgrade boundaries |
+
+## Maintaining the repository
+
+| Document | Purpose |
+| --- | --- |
+| [Development](development.md) | Repository setup, validation, and contribution workflow |
+| [Release](RELEASE.md) | Changelog, SemVer, tags, and GitHub Releases |
+| [Public repository checklist](publication-checklist.md) | Repository controls, security reporting, and publication maintenance |
+| [Benchmark](../BENCHMARK.md) | Offline methodology, results, and limitations |
 
 The main contract implementations are:
 

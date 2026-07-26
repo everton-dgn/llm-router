@@ -28,6 +28,7 @@ const LEGACY_AGENT_MODES = Object.freeze({
 })
 const MAX_AGENT_MENTIONS = 4
 const MAX_AGENT_RESULT_BYTES = 256 * 1024
+const MAX_AGENT_MENTION_MS = 5 * 60 * 1000
 const MAX_TRACKED_SESSIONS = 1024
 const CONTROL_RESULT_PREFIX = "<llm-router-control-result>\n"
 
@@ -175,6 +176,7 @@ export function createRouterControlRuntime({
   resolvePolicy,
   uninstall,
   permissionTimeoutMs = 120_000,
+  agentMentionTimeoutMs = MAX_AGENT_MENTION_MS,
 }) {
   const sessions = exactSessionClient(sessionClient)
   if (typeof loadPolicy !== "function" || typeof resolvePolicy !== "function") {
@@ -362,7 +364,7 @@ export function createRouterControlRuntime({
       })
     const depth = await sessionDepth(sessionID)
 
-    const results = await Promise.all(mentions.map(async (mention) => {
+    const delegate = async (mention) => {
       if (["router", "router-control", ...Object.keys(LEGACY_AGENT_MODES)].includes(mention.name)) {
         throw new Error(`Claude cannot delegate an explicit mention to managed router agent ${mention.name}`)
       }
@@ -416,7 +418,38 @@ export function createRouterControlRuntime({
         type: "text",
         text: `\n\n[Completed result from OpenCode agent @${mention.name}]\n${text}`,
       }
-    }))
+    }
+
+    // A child session that never answers would otherwise hold the whole message
+    // forever, because the OpenCode client exposes no way to cancel one. The
+    // deadline bounds the wait; the underlying request may still finish later,
+    // so the router only stops depending on it.
+    const withDeadline = async (mention) => {
+      let timer
+      try {
+        return await Promise.race([
+          delegate(mention),
+          new Promise((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error(
+                `OpenCode agent @${mention.name} did not answer within ${agentMentionTimeoutMs}ms`,
+              )),
+              agentMentionTimeoutMs,
+            )
+          }),
+        ])
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+
+    // allSettled instead of all: every delegation reaches its own deadline
+    // before the message fails, so a single rejection leaves no sibling running
+    // unattended. The first failure is still what the caller sees.
+    const settled = await Promise.allSettled(mentions.map(withDeadline))
+    const rejected = settled.find((entry) => entry.status === "rejected")
+    if (rejected) throw rejected.reason
+    const results = settled.map((entry) => entry.value)
 
     let resultIndex = 0
     // OpenCode validates every part before saving the message and rejects one
