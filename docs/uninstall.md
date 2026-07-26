@@ -181,9 +181,12 @@ were absent before installation:
 /absolute/path/to/opencode/lib/opencode_transport.mjs
 /absolute/path/to/opencode/lib/repo_query.mjs
 /absolute/path/to/opencode/lib/route_contract.mjs
+/absolute/path/to/opencode/lib/route_manifest.mjs
 /absolute/path/to/opencode/lib/router_control.mjs
+/absolute/path/to/opencode/lib/router_feedback.mjs
 /absolute/path/to/opencode/lib/routing_policy.mjs
 /absolute/path/to/opencode/lib/session_metadata.mjs
+/absolute/path/to/opencode/lib/startup_notice.mjs
 /absolute/path/to/opencode/llm-router.install-state.json
 ```
 

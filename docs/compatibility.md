@@ -13,9 +13,9 @@ Treat upgrades to any of these surfaces as compatibility changes.
 | `@opencode-ai/sdk` | 1.18.4 | Pinned in `opencode/package.json` |
 | `@anthropic-ai/claude-agent-sdk` | 0.3.218 | Pinned in `opencode/package.json` |
 | pnpm | 11.16.0 | Pinned in the root `packageManager` field and CI |
-| Node.js | 22.22.2, 24.15.0, or a newer supported release | Package engine, dependency engine, and CI |
+| Node.js | The `engines` range in `package.json`: `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` | Package engine, dependency engine, and CI |
 | Python | 3.11 or newer | `uv` unit tests and benchmark validation |
-| macOS | Supported | Local development and installer tests |
+| macOS | Supported | macOS CI and installer tests |
 | Linux | Supported | Ubuntu CI and POSIX installer tests |
 | Windows | Not validated | Use WSL only after running the full local validation |
 
