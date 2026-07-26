@@ -3,63 +3,109 @@
 [![CI](https://github.com/everton-dgn/llm-router/actions/workflows/ci.yml/badge.svg)](https://github.com/everton-dgn/llm-router/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-Local message router for OpenCode. It keeps one visible conversation while
-selecting MiniMax M3, GLM 5.2, Claude Opus 5, or GPT-5.6 Sol as the worker for
-each message.
+Local message router for OpenCode. You keep one visible conversation while a
+small local model picks MiniMax M3, GLM 5.2, Claude Opus 5, or GPT-5.6 Sol as
+the worker for each message. There is no orchestrator turn and no second model
+rewriting your request.
 
-The composer always stays on the primary `router` agent. The plugin changes the
-effective worker for the current message and displays that destination in the
-OpenCode interface.
-
-> Project status: stable 1.x and under active development. The current
-> integration is pinned to OpenCode 1.18.4. Review the
-> [compatibility contract](docs/compatibility.md) before upgrading OpenCode or
-> the provider SDKs.
+```text
+your message in the router
+  -> OpenCode chat.message hook
+  -> local classifier on Ollama, one call, then it exits
+  -> auto, adaptive, or pinned picks the destination
+  -> MiniMax, GLM, Claude Agent SDK, or Codex answers in the same session
+```
 
 ## Why
 
-A full orchestration turn adds latency, cost, and another model that can distort
-the request. llm-router uses a small local Ollama model for one deterministic
-route classification, then hands the original message to the selected native
-worker. The classifier exits immediately after returning the route.
+A full orchestration turn costs latency, money, and fidelity, because another
+model rewrites what you asked. Here the classifier returns one route and exits,
+and the original message reaches the native worker with its native OpenCode
+capabilities.
 
-Routing and tool control are independent:
+A session carries two independent decisions. The routing mode decides when the
+worker can change:
 
-- routing mode: `auto`, `adaptive`, or `pinned`;
-- execution profile: `native`, `restricted`, or `full`.
-
-All nine combinations are valid. A model selected by the router keeps its native
-OpenCode capabilities unless the user explicitly selects a restrictive profile.
-
-## Routing modes
-
-| Mode | Behavior | Typical use |
-| --- | --- | --- |
-| `auto` | Classifies every message independently | Short, mixed requests |
-| `adaptive` | Promotes immediately and requires evidence before downgrading | General use with fewer unnecessary switches |
-| `pinned` | Selects the first worker and keeps it for the session | Long work that must stay on one model |
-
-Resuming a session preserves its routing state. A fork gets a new session ID,
-copies the visible conversation, and makes an independent routing decision.
-
-## Execution profiles
-
-| Profile | Behavior |
+| Routing mode | Behavior |
 | --- | --- |
-| `native` | Adds no llm-router tool restrictions |
+| `auto` | Classifies every message independently |
+| `adaptive` | Promotes immediately, demands evidence to downgrade |
+| `pinned` | Keeps the first worker for the session |
+
+The execution profile decides which tools the worker receives:
+
+| Execution profile | Behavior |
+| --- | --- |
+| `native` | Adds no llm-router restrictions; ships as the default |
 | `restricted` | Applies configured `allow`, `ask`, `deny`, and turn limits |
-| `full` | Explicitly allows every tool exposed by the host |
+| `full` | Explicitly allows every tool the host exposes |
 
-The shipped default is `native` for every worker. Project policy files may reduce
-permissions, but they cannot silently expand a user's global policy.
+The two axes are independent, and all nine combinations are valid. Full
+contracts: [routing modes](docs/routing-modes.md) and
+[execution policies](docs/execution-policies.md).
 
-See [routing modes](docs/routing-modes.md) and
-[execution policies](docs/execution-policies.md) for the complete state and
-configuration contracts.
+## Install
+
+You need macOS or Linux, OpenCode 1.18.4, a Node.js release inside the
+`engines` range in `package.json`, Ollama running, and Claude Code installed.
+On top of that, `curl`, `jq`, `git`, and `pnpm` must be in `PATH`, and
+benchmarks and the Python tests also need Python 3.11 or newer through `uv`.
+
+You need OpenAI authenticated in OpenCode, and `MINIMAX_API_KEY` and
+`ZAI_API_KEY` exported in the environment that starts OpenCode. The integration
+is pinned to OpenCode 1.18.4; read the
+[compatibility contract](docs/compatibility.md) before upgrading OpenCode or
+the provider SDKs.
+
+```bash
+git clone https://github.com/everton-dgn/llm-router.git
+cd llm-router
+bash setup.sh
+```
+
+`setup.sh` stops at the first missing prerequisite and names the command that
+fixes it, installs the repository and bundle dependencies, installs the
+OpenCode bundle, and pulls the local classifier model. It ends with the
+interactive steps it will never do for you: the Claude Code login and the two
+API keys.
+
+An existing `opencode.jsonc` is merged, not replaced: comments, custom
+providers, and unrelated settings stay in place, your `llm-router.policy.json`
+is preserved, and every managed file it changes is copied to a timestamped
+backup directory first. Running it again on an unchanged installation changes
+nothing and creates no backup.
+
+Preview the OpenCode changes with `bash setup.sh --dry-run`. Contributors who
+want the test toolchain and the Git hooks add `--dev`.
+
+Keep the clone where it is. The installed plugin stores its absolute path.
+
+Step-by-step installation, update, and verification:
+[quick start](docs/quick-start.md).
+
+## First session
+
+```bash
+opencode .
+```
+
+The composer stays on the `router` agent and the session starts in
+`adaptive + native`. Send a normal request. The notice above the answer reports
+which worker took it.
+
+```text
+/router-status      show the session mode and profile
+/router-pinned      keep one worker for the rest of the session
+/router-restricted  apply the restricted profile's limits and permissions
+```
+
+All eight commands, with their exact effects, are in
+[session commands](docs/commands.md). They run on a local provider and never
+call an LLM.
 
 ## Default routes
 
-The shipped schema 2 config defines four classifier intents:
+The shipped configuration maps four classifier intents to four workers:
 
 | Classifier intent | Route |
 | --- | --- |
@@ -70,317 +116,42 @@ The shipped schema 2 config defines four classifier intents:
 
 These assignments choose a preferred worker. The seven route capabilities are
 an orthogonal eligibility filter applied after classification; they do not
-grant or remove OpenCode tools.
+grant or remove OpenCode tools. Attachments pass through the same filter, and
+[attachments](docs/routing-modes.md#attachments) documents every outcome.
 
-Attachments use the same filter through `acceptedMediaTypes`. The classified
-route is preserved whenever it reads every attached file; otherwise the message
-moves to a route that does, and the TUI reports the change once. See
-[Routing modes](docs/routing-modes.md#attachments).
+Intents, routes, and capabilities live in `config.json`. You can add, remove,
+or retarget a route without touching code; see the
+[configuration reference](docs/config-reference.md).
 
-## Config-driven routes
+## Privacy and costs
 
-`config.json` schema 2 is the source of truth for route IDs, display names, cost
-order, OpenCode targets, the seven routing capabilities, the accepted media
-types, and intent mappings. Each routing entry declares one `intent` and one
-`route`:
-
-```json
-{
-  "intent": "translation_simple_brainstorm_docs_or_intermediate_work",
-  "route": "glm"
-}
-```
-
-The runtime does not assume a fixed route count or fixed model IDs. Inspect the
-normalized schema 2 manifest without starting Ollama:
-
-```bash
-./route --manifest --json
-```
-
-The installer validates this manifest and generates the required OpenCode agent
-and provider model entries. A version 1 config, identified by a missing
-`schema_version` or `schema_version: 1`, expands to the four legacy routes.
-Version 2 configs may add, remove, or retarget routes. Both versions normalize
-to schema 2 and must pass the complete validation.
-
-Successful classifier output uses exact schema 1 keys:
-
-```json
-{
-  "schema_version": 1,
-  "intent": "translation_simple_brainstorm_docs_or_intermediate_work",
-  "route": "glm"
-}
-```
-
-Classification failures also use schema 1 and write an exact error object to
-standard error:
-
-```json
-{
-  "schema_version": 1,
-  "error": {
-    "code": "invalid_classifier_response",
-    "message": "classifier did not return a valid route"
-  }
-}
-```
-
-A project may reduce route eligibility in
-`.opencode/llm-router.routes.json`. The override can only set existing
-capabilities to `false`; route IDs, order, targets, and intent mappings stay
-global. For example:
-
-```json
-{
-  "schema_version": 1,
-  "routes": {
-    "minimax": {
-      "capabilities": {
-        "canReadRepository": false
-      }
-    }
-  }
-}
-```
-
-The manifest is cached when the plugin starts. After adding, removing, or
-retargeting a route in `config.json`, rerun `opencode/install.sh` and restart
-OpenCode. Intent and capability changes in `config.json`, plus project override
-changes, require an OpenCode restart.
-
-## How one message flows
-
-```text
-user message in the router
-  -> OpenCode chat.message hook
-  -> read session routing mode and execution profile
-  -> local route --classify --json
-  -> Ollama Plano-Orchestrator-4B
-  -> auto, adaptive, or pinned selects the destination
-  -> replace agent/model on the same message
-  -> MiniMax, GLM, Claude Agent SDK, or Codex executes
-  -> response appears in the current session
-```
-
-There is no coordinator turn after the worker responds. In `pinned` mode, the
-stored worker is reused without calling the classifier again.
-
-Before an OpenCode compaction, the same local model performs a separate,
-bounded summarization job over an already sanitized transcript. The resulting
-checkpoint is versioned and bound to one compaction ID. A failed or invalid
-summary falls back to the active conversation tail and produces a visible
-warning.
-
-## Requirements
-
-- macOS or Linux;
-- OpenCode 1.18.4;
-- Node.js 22.22.2, 24.15.0, or a newer supported release, plus `pnpm`;
-- Python 3.11 or newer through `uv`, for benchmarks and Python tests;
-- Ollama with the configured local classifier;
-- Claude Code installed and authenticated;
-- `curl`, `jq`, and a POSIX shell;
-- OpenAI authenticated in OpenCode;
-- `MINIMAX_API_KEY` and `ZAI_API_KEY` in the environment that starts OpenCode.
-
-Windows has not been validated. See [compatibility](docs/compatibility.md) for
-the tested and untested surfaces.
-
-## Quick start
-
-Clone the repository:
-
-```bash
-git clone https://github.com/everton-dgn/llm-router.git
-cd llm-router
-```
-
-Install the repository tooling. This also installs the versioned Git hooks:
-
-```bash
-corepack enable
-pnpm install --frozen-lockfile
-```
-
-Install the local classifier:
-
-```bash
-ollama pull hf.co/mradermacher/Plano-Orchestrator-4B-GGUF:Q4_K_M
-```
-
-Authenticate Claude Code:
-
-```bash
-claude auth login
-claude auth status
-```
-
-Preview the OpenCode bundle installation:
-
-```bash
-opencode_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
-bash opencode/install.sh --config-dir "$opencode_config_dir" --dry-run
-```
-
-Install it:
-
-```bash
-bash opencode/install.sh --config-dir "$opencode_config_dir"
-pnpm --dir "$opencode_config_dir" install --no-optional
-```
-
-The installer does not run a package manager. It merges the router-owned
-providers, agents, commands, and defaults into an existing `opencode.jsonc`
-while preserving comments and unrelated settings. Every changed managed file
-is backed up under `/tmp/claude-backups/<timestamp>/`; the user's policy file
-is preserved, and repeated identical installations are a no-op.
-
-Start OpenCode in the project where you want to work:
-
-```bash
-opencode .
-```
-
-The default session uses `adaptive + native`.
-
-## Session commands
-
-```text
-/router-status
-/router-auto
-/router-adaptive
-/router-pinned
-/router-native
-/router-restricted
-/router-full
-/router-uninstall
-```
-
-Routing commands preserve the current execution profile. Profile commands
-preserve the current routing mode. The control provider handles these commands
-locally without calling an LLM.
-
-`/router-uninstall` first previews the exact changes and returns a confirmation
-token. Run `/router-uninstall <token>` to apply the preview only while the
-fingerprints of the affected files still match. The command preserves the
-user-created policy, saves shared configuration before editing it, and moves
-bundle files into a timestamped recovery directory. Restart OpenCode after it
-completes. See [uninstall and rollback](docs/uninstall.md) for the full contract.
-
-## Claude Agent SDK integration
-
-The local `claude-agent` provider implements the `LanguageModelV3` contract
-expected by OpenCode and calls `query()` from the official
-`@anthropic-ai/claude-agent-sdk`.
-
-It points at the Claude Code executable already installed on the machine. The
-adapter does not load credentials from files or persist them. It filters the
-parent environment and passes allowed Claude or Anthropic authentication
-variables to the Claude Code subprocess. OpenCode remains the source of
-conversation history, while the adapter projects only approved user and
-assistant text, supported attachments, completed task results, and the
-validated compaction checkpoint.
-
-Supported attachments are plain text, PDF, GIF, JPEG, PNG, and WebP. Agent
-mentions run as OpenCode child sessions and their completed results are inserted
-before Claude receives the message.
-
-Read [Claude via Agent SDK](docs/claude.md) for the context, attachment,
-permission, and transport limits.
-
-## Privacy and cost
-
-The classifier and compaction summarizer run through the configured local Ollama
-service. The selected worker still receives the approved message context through
-its own provider, so its normal provider privacy and billing terms apply.
+The classifier and the compaction summarizer run on the configured local Ollama
+service. The selected worker still receives the approved message context
+through its own provider, so that provider's privacy and billing terms apply.
 
 Do not publish `opencode debug config`; it may expand environment values. Use
-the agent-specific debug commands documented in
+the agent-specific commands in
 [privacy and costs](docs/privacy-and-costs.md).
 
 ## Documentation
 
-| Document | Purpose |
+| Document | Read it when |
 | --- | --- |
-| [Documentation index](docs/README.md) | Complete map |
-| [Quick start](docs/quick-start.md) | Installation and first session |
-| [Routing modes](docs/routing-modes.md) | Mode state, context, resume, and fork |
-| [Execution policies](docs/execution-policies.md) | Permissions, profiles, and configuration |
-| [Claude Agent SDK](docs/claude.md) | Context, attachments, tools, and authentication |
-| [Compatibility](docs/compatibility.md) | Version and operating-system contract |
-| [Privacy and costs](docs/privacy-and-costs.md) | Data boundaries and provider billing |
-| [Uninstall and rollback](docs/uninstall.md) | Restore or remove the installed bundle |
-| [Development](docs/development.md) | Local validation and contribution workflow |
-| [Troubleshooting](docs/troubleshooting.md) | Diagnostics and safe recovery |
-| [Release](docs/RELEASE.md) | Changelog, SemVer, tags, and GitHub Releases |
-| [Public repository checklist](docs/publication-checklist.md) | Repository controls, security reporting, and publication maintenance |
-| [Benchmark](BENCHMARK.md) | Offline methodology, results, and limitations |
+| [Quick start](docs/quick-start.md) | You want the full install, update, or verification procedure |
+| [Session commands](docs/commands.md) | You need to know what a `/router-*` command does |
+| [Routing modes](docs/routing-modes.md) | The worker changed, or did not, and you want to know why |
+| [Execution policies](docs/execution-policies.md) | You need to restrict tools, permissions, or turn limits |
+| [Configuration reference](docs/config-reference.md) | You are editing `config.json` or a project override |
+| [Claude Agent SDK](docs/claude.md) | You need Claude's context, attachment, or permission limits |
+| [Troubleshooting](docs/troubleshooting.md) | Something failed and you want the fix |
+| [Compatibility](docs/compatibility.md) | You are upgrading OpenCode, Node.js, or a provider SDK |
+| [Privacy and costs](docs/privacy-and-costs.md) | You need to know what leaves the machine and who bills it |
+| [Uninstall and rollback](docs/uninstall.md) | You want the bundle removed or a backup restored |
+| [Development](docs/development.md) | You are changing this repository |
+| [Documentation index](docs/README.md) | You want the complete map, including release documents |
 
-## Development
+## Contributing and license
 
-The runtime bundle has its own pinned dependencies under `opencode/`. Root
-scripts cover repository validation and release tooling.
-
-Install repository tooling. This also installs the local Lefthook hooks:
-
-```bash
-pnpm install --frozen-lockfile
-```
-
-Run local validation:
-
-```bash
-pnpm test
-```
-
-Run the live Ollama routing contract separately:
-
-```bash
-pnpm test:integration
-```
-
-The underlying suites can also be run directly:
-
-```bash
-bash tests/smoke.sh
-bash tests/routing-eval.sh
-bash tests/opencode-bundle.sh
-node --test tests/*.test.mjs
-uv run --no-project --no-python-downloads python -m unittest \
-  tests/test_stage_verifier.py tests/test_quality_eval.py
-```
-
-The integration evaluation calls the local Ollama classifier. `pnpm test` does
-not require provider credentials or a running Ollama service. Lefthook runs
-Commitlint for commit messages, selects focused tests from staged files before
-a commit, and runs the deterministic gate before a push.
-
-## Offline benchmark
-
-`quality_eval.py` and `qeval/` reproduce the offline single-shot benchmark
-runner. They are not installed into OpenCode and do not participate in message
-routing.
-
-Validate the benchmark configuration without provider calls:
-
-```bash
-uv run --no-project --no-python-downloads python quality_eval.py \
-  --config benchmark_config.json \
-  --cases tests/quality-cases-v2.json \
-  --output /tmp/llm-router-quality.json \
-  --validate-only
-```
-
-The published benchmark includes methodology and artifact hashes. Raw provider
-outputs and private mappings are intentionally excluded.
-
-## Contributing
-
-Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a change. Security issues
-must follow [SECURITY.md](SECURITY.md).
-
-## License
-
-Licensed under the [Apache License 2.0](LICENSE).
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a change, and report
+security issues through [SECURITY.md](SECURITY.md). Licensed under the
+[Apache License 2.0](LICENSE).

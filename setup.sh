@@ -25,7 +25,7 @@ Usage:
 Options:
   --dry-run           Preview the OpenCode changes without applying them.
   --dev               Also install the development toolchain and the Git hooks.
-  --config-dir PATH   OpenCode config directory. Defaults to the XDG or user config path.
+  --config-dir PATH   OpenCode configuration directory. Defaults to the XDG or user config path.
   --backup-root PATH  Backup root forwarded to the bundle installer.
   --router-path PATH  llm-router executable forwarded to the bundle installer.
   --claude-path PATH  Claude Code executable. Defaults to claude from PATH.
