@@ -206,75 +206,17 @@ target changed, pinned and adaptive sessions use the new target for that ID.
 
 ## Route manifest
 
-Run the following command to inspect the exact validated manifest used by the
-OpenCode plugin:
+The plugin routes using a validated schema 2 manifest, not a lookup table in
+the code. Inspect the exact manifest it uses:
 
 ```bash
 ./route --manifest --json
 ```
 
-Schema version 2 defines every route with an `id`, `display_name`, `order`,
-OpenCode `target`, all seven routing capabilities, and `acceptedMediaTypes`.
-Each routing entry contains an `intent` plus one `route`. Duplicate IDs,
-agents, or order values, unknown route references, incomplete targets, and
-incomplete capability sets stop startup with a named validation error.
-
-`acceptedMediaTypes` lists lowercase `type/subtype` values plus `type/*`
-wildcards:
-
-```json
-{
-  "id": "codex",
-  "acceptedMediaTypes": ["application/pdf", "image/*", "text/plain"]
-}
-```
-
-The list fails closed. A duplicate value, a value already covered by a wildcard
-in the same route, `*/*`, a parameterized value such as
-`text/plain; charset=utf-8`, and a list that contradicts `canUseAttachments`
-(enabled with an empty list, or disabled with a non-empty one) all stop startup.
-
-The installer generates an OpenCode subagent for every manifest route. This
-allows the route count and model targets to change without editing the runtime.
-Configs without `schema_version`, and configs with `schema_version: 1`, retain
-the four-route legacy expansion.
-
-### Default intent routes
-
-The shipped config contains four intent routes:
-
-| `intent` | Route |
-| --- | --- |
-| `literal_read_only_no_writing` | MiniMax |
-| `translation_simple_brainstorm_docs_or_intermediate_work` | GLM |
-| `complex_creative_product_or_architecture` | Claude |
-| `review_security_hard_engineering_or_technical_writing` | Codex |
-
-### Project restrictions
-
-A project can place a `.opencode/llm-router.routes.json` file at its root. The
-file uses override schema version 1 and may only set capabilities on existing
-routes to `false`:
-
-```json
-{
-  "schema_version": 1,
-  "routes": {
-    "minimax": {
-      "capabilities": {
-        "canReadRepository": false
-      }
-    }
-  }
-}
-```
-
-The project file cannot add routes, change targets, reorder routes, remap
-intents, or enable a capability disabled by the global manifest. Invalid
-overrides fail closed. After adding, removing, or retargeting a global route,
-rerun `opencode/install.sh` and restart OpenCode. Intent, capability, and
-project override changes require a restart because the effective manifest is
-cached during plugin startup.
+Route IDs, targets, capabilities, accepted media types, intent mappings, and
+the project override are documented in the
+[configuration reference](config-reference.md), including the rules that stop
+startup and when a change takes effect.
 
 ## Context when switching models
 
@@ -302,31 +244,8 @@ A fork receives a new `sessionID`. The cloned history remains available, but
 inherited routing decisions are ignored. The new branch can classify and
 select another worker without changing the original session.
 
-## Compatibility
+## Compatibility and future layers
 
-Legacy aliases remain available during migration:
-
-| Alias | Current semantics |
-| --- | --- |
-| `router-auto` | `auto` |
-| `router-adaptive` | `adaptive` |
-| `router-manual` | `pinned` |
-
-`router-manual` retains the legacy `llm-router.manual.target` key only to read
-existing sessions. New decisions use `llm-router.routing.state`.
-
-The composer displays `router` as the primary agent. Aliases remain hidden and
-exist only for compatibility and internal resolution. After each handoff, the
-notice reports the effective mode, worker, and profile.
-
-## Routing layers
-
-The current runtime includes the config-driven manifest. Competence by
-difficulty and response-confidence deferral remain future layers.
-
-OpenCode 1.18.4 exposes completed text to a post-response hook, but it does not
-provide a safe same-turn contract for replacing the executor after tools may
-have run. Sending another model request creates another session message and can
-repeat tool calls or project mutations. The third layer stays blocked until the
-OpenCode integration can defer or retry a response without duplicating those
-effects.
+Legacy mode aliases and the boundary that keeps response-confidence routing out
+of the runtime are documented in
+[compatibility](compatibility.md#legacy-mode-aliases).

@@ -41,6 +41,32 @@ and provider model entries. A version 1 config, identified by a missing
 Version 2 configs may add, remove, or retarget routes. Both versions normalize
 to schema 2 and must pass the complete validation.
 
+## Route validation
+
+Schema version 2 defines every route with an `id`, `display_name`, `order`,
+OpenCode `target`, all seven route capabilities, and `acceptedMediaTypes`.
+Duplicate IDs, agents, or order values, unknown route references, incomplete
+targets, and incomplete capability sets stop startup with a named validation
+error.
+
+`acceptedMediaTypes` lists lowercase `type/subtype` values plus `type/*`
+wildcards:
+
+```json
+{
+  "id": "codex",
+  "acceptedMediaTypes": ["application/pdf", "image/*", "text/plain"]
+}
+```
+
+The list fails closed. A duplicate value, a value already covered by a wildcard
+in the same route, `*/*`, a parameterized value such as
+`text/plain; charset=utf-8`, and a list that contradicts `canUseAttachments`
+(enabled with an empty list, or disabled with a non-empty one) all stop startup.
+
+The installer generates an OpenCode subagent for every manifest route, so the
+route count and model targets change without editing the runtime.
+
 ## Classifier output contract
 
 Successful classifier output uses exact schema 1 keys:
@@ -85,6 +111,10 @@ global. For example:
   }
 }
 ```
+
+The project file cannot add routes, change targets, reorder routes, remap
+intents, or enable a capability the global manifest disabled. Invalid overrides
+fail closed.
 
 ## When changes take effect
 

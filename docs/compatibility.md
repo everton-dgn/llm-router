@@ -89,13 +89,30 @@ openai/gpt-5.6-sol
 Route and model IDs are read from `config.json`; the runtime does not contain
 this four-target list. The installer generates the corresponding OpenCode agent
 and provider model entries. After adding, removing, or retargeting a route,
-rerun `opencode/install.sh` and restart OpenCode. Removing a route causes a
+run `bash setup.sh` again and restart OpenCode. Removing a route causes a
 stored decision for that route to be reclassified on the next request.
 
 Run `./route --manifest --json` before installation to validate a changed
 manifest without starting Ollama. OpenCode caches the manifest at plugin
 startup. Intent and capability changes in `config.json`, plus changes to
 `.opencode/llm-router.routes.json`, require an OpenCode restart.
+
+## Legacy mode aliases
+
+Legacy aliases remain available during migration:
+
+| Alias | Current semantics |
+| --- | --- |
+| `router-auto` | `auto` |
+| `router-adaptive` | `adaptive` |
+| `router-manual` | `pinned` |
+
+`router-manual` retains the legacy `llm-router.manual.target` key only to read
+existing sessions. New decisions use `llm-router.routing.state`.
+
+The composer displays `router` as the primary agent. Aliases remain hidden and
+exist only for compatibility and internal resolution. After each handoff, the
+notice reports the effective mode, worker, and profile.
 
 ## Response-confidence boundary
 
@@ -115,6 +132,6 @@ boundary or the design can prove equivalent safety.
    a lockfile update.
 4. Run `pnpm test`.
 5. Run `pnpm test:integration` with Ollama available.
-6. Perform `bash opencode/install.sh --dry-run` against a temporary config
+6. Perform `bash setup.sh --dry-run` against a temporary config
    directory.
 7. Review the generated diff and update this matrix.
