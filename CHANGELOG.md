@@ -4,6 +4,11 @@ Notable user-visible changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## 1.2.2 - 2026-08-18
+
+### Fixed
+- **deps:** Bump astral-sh/setup-uv from 9.0.0 to 10.0.1
+
 ## 1.2.1 - 2026-08-10
 
 ### Fixed
@@ -57,6 +62,7 @@ Notable user-visible changes are documented here. The format follows
 - Install the OpenCode bundle with preflight validation, recoverable backups, preserved user configuration and policy, hash-verified legacy cleanup, and idempotent updates.
 - Validate routing, policies, provider transports, installation, benchmarks, and release tooling with deterministic test suites.
 - Prepare public contribution, security, support, CI, documentation, SemVer, changelog, and GitHub Release workflows.
+
 
 
 
